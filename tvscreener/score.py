@@ -17,6 +17,8 @@ class ScoringConfig:
     ma_weight: float = 0.3
     osc_weight: float = 0.2
     roc_weight: float = 0.1
+    volatility_weight: float = 0.0  # Optional volatility scaling
+    min_volatility_threshold: float = 0.0  # Minimum ATR/RVOL for full score
 
 
 DEFAULT_SCORING_CONFIG = ScoringConfig()
@@ -46,7 +48,7 @@ class ScoringEngine:
         df: pd.DataFrame,
         factor_name: str,
         col_pattern: str,
-        copy: bool = True,
+        copy: bool = False,
     ) -> pd.DataFrame:
         """Calculate weighted factor scores across timeframes."""
         if copy:
@@ -72,15 +74,23 @@ class ScoringEngine:
             if weight_sum == 0:
                 df[f"{factor_name}_SCORE"] = 0.0
             else:
-                # Performance: Use native pandas dot product to stay in Arrow/Vectorized domain
-                # instead of dropping to .values (NumPy)
-                df[f"{factor_name}_SCORE"] = (df[cols].fillna(0) @ weights) / weight_sum
+                # Use Narwhals for zero-copy scoring across backends (Todo 153)
+                import narwhals as nw
+
+                nw_df = nw.from_native(df[cols])
+                expr = (
+                    sum(nw.col(c).fill_null(0) * w for c, w in zip(cols, weights, strict=False))
+                    / weight_sum
+                )
+                df[f"{factor_name}_SCORE"] = nw.to_native(nw_df.select(expr.alias("score")))[
+                    "score"
+                ]
         else:
             df[f"{factor_name}_SCORE"] = 0.0
 
         return df
 
-    def calculate_roc_score(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
+    def calculate_roc_score(self, df: pd.DataFrame, copy: bool = False) -> pd.DataFrame:
         """Calculate momentum (ROC) score across timeframes.
 
         Args:
@@ -101,7 +111,31 @@ class ScoringEngine:
 
         return df
 
-    def calculate_ensemble_score(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
+    def calculate_volatility_score(self, df: pd.DataFrame, copy: bool = False) -> pd.DataFrame:
+        """Calculate volatility factor score across timeframes.
+
+        Args:
+            df: DataFrame with ATR or RVOL columns
+            copy: If True, copy DataFrame to avoid mutation
+
+        Returns:
+            DataFrame with added VOLATILITY_SCORE column (normalized 0.0 to 1.0)
+        """
+        if copy:
+            df = df.copy()
+
+        # Look for relative volume (RVOL) or ATR %
+        rvol_cols = [c for c in df.columns if "RELATIVE_VOLUME" in c or "RVOL" in c]
+        if rvol_cols:
+            # Average RVOL, capped at 2.0 (high) and normalized
+            avg_rvol = df[rvol_cols].mean(axis=1).fillna(1.0)
+            df["VOLATILITY_SCORE"] = (avg_rvol / 2.0).clip(0.0, 1.0)
+        else:
+            df["VOLATILITY_SCORE"] = 1.0  # Default to neutral if not available
+
+        return df
+
+    def calculate_ensemble_score(self, df: pd.DataFrame, copy: bool = False) -> pd.DataFrame:
         """Combine all factor scores into ensemble score using weights.
 
         Args:
@@ -122,13 +156,22 @@ class ScoringEngine:
             + df["ROC_SCORE"].fillna(0) * cfg.roc_weight
         )
 
+        # Apply volatility scaling if configured
+        if cfg.volatility_weight > 0 and "VOLATILITY_SCORE" in df.columns:
+            # Scale the core ensemble score by volatility factor
+            # Higher volatility (within range) = higher ensemble score
+            scale_factor = df["VOLATILITY_SCORE"].fillna(1.0)
+            df["ENSEMBLE_SCORE"] = df["ENSEMBLE_SCORE"] * (
+                (1.0 - cfg.volatility_weight) + (cfg.volatility_weight * scale_factor)
+            )
+
         df["DIRECTION"] = np.where(
             df["ENSEMBLE_SCORE"] > 0, Direction.LONG.value, Direction.SHORT.value
         )
 
         return df
 
-    def calculate_confluence(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
+    def calculate_confluence(self, df: pd.DataFrame, copy: bool = False) -> pd.DataFrame:
         """Calculate confluence using a TF × Factor grid."""
         if copy:
             df = df.copy()
@@ -261,7 +304,7 @@ class ScoringEngine:
             index=series.index,
         )
 
-    def rank_opportunities(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
+    def rank_opportunities(self, df: pd.DataFrame, copy: bool = False) -> pd.DataFrame:
         """Full ranking pipeline: scores, ensemble, confluence, sorting.
 
         Args:
@@ -282,6 +325,7 @@ class ScoringEngine:
         df = self.calculate_factor_scores(df, "OSC", "Recommend Other|", copy=False)
 
         df = self.calculate_roc_score(df, copy=False)
+        df = self.calculate_volatility_score(df, copy=False)
 
         df = self.calculate_ensemble_score(df, copy=False)
 
@@ -292,12 +336,14 @@ class ScoringEngine:
 
         df.sort_values(by=["ENSEMBLE_SCORE"], ascending=[False], inplace=True)
 
-        df = calculate_grades(df, copy=False)
+        df = calculate_grades(df, copy=False, config=self.config)
 
         return df
 
 
-def calculate_grades(df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
+def calculate_grades(
+    df: pd.DataFrame, copy: bool = False, config: ScoringConfig | None = None
+) -> pd.DataFrame:
     """Calculate confluence grade based on grid confluence percentage.
 
     Uses the grid-based TF × Factor confluence (GRID_PCT) which is
@@ -311,9 +357,13 @@ def calculate_grades(df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
         D  ≥ 25%  (≥3/12)
         F  < 25%
 
+    Low volatility penalties:
+        If RVOL < 1.0 (or custom threshold), drop one grade level (e.g. A -> B).
+
     Args:
         df: DataFrame with GRID_PCT and supplementary confluence columns
         copy: If True, copy DataFrame to avoid mutation
+        config: Optional scoring configuration for volatility penalties
 
     Returns:
         DataFrame with GRADE, TF_CONFLUENCE, and FACTOR_CONFLUENCE columns
@@ -324,6 +374,7 @@ def calculate_grades(df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
     grid_pct = df["GRID_PCT"] if "GRID_PCT" in df.columns else pd.Series(0, index=df.index)
     grid_pct = pd.to_numeric(grid_pct, errors="coerce").fillna(0)
 
+    # Initial Grade assignment
     df["GRADE"] = np.select(
         [
             grid_pct >= 83,
@@ -335,6 +386,24 @@ def calculate_grades(df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
         ["A+", "A", "B", "C", "D"],
         default="F",
     )
+
+    # Apply Volatility Penalty (Todo 172)
+    if config and config.min_volatility_threshold > 0:
+        vol_score = df.get("VOLATILITY_SCORE", pd.Series(1.0, index=df.index))
+        low_vol = vol_score < (config.min_volatility_threshold / 2.0)  # RVOL normalized by 2.0
+
+        # Grade downgrade map
+        downgrades = {
+            "A+": "A",
+            "A": "B",
+            "B": "C",
+            "C": "D",
+            "D": "F",
+            "F": "F",
+        }
+        df["GRADE"] = np.where(
+            low_vol, df["GRADE"].map(downgrades).fillna(df["GRADE"]), df["GRADE"]
+        )
 
     # Supplementary display columns (direction-aware)
     direction = (

@@ -538,10 +538,7 @@ class ForexStrategyScanner(ExportMixin):
         is_long = mr_entry_long | trend_cont_long | trend_pullback_long | mr_rev_long
         direction = np.where(is_long, Direction.LONG.value, Direction.SHORT.value)
 
-        mr_extremity = pd.Series(
-            np.max([osc_htf.abs().values, osc_stf.abs().values, osc_ltf.abs().values], axis=0),
-            index=df.index,
-        )
+        mr_extremity = pd.concat([osc_htf.abs(), osc_stf.abs(), osc_ltf.abs()], axis=1).max(axis=1)
 
         # Optional momentum confirmation: add +1 when ROC aligns across available TFs.
         roc_cols = [f"Roc|{tf}" for tf in self.timeframes if f"Roc|{tf}" in df.columns]

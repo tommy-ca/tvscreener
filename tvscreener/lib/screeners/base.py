@@ -8,10 +8,7 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import narwhals as nw
 import pandas as pd
-from pyiceberg.exceptions import NoSuchTableError
 
-from tvscreener.lib.lakehouse import get_catalog
-from tvscreener.lib.lakehouse.storage import write_iceberg
 from tvscreener.lib.screeners.metadata_utils import MetadataCollector
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
 from tvscreener.score import DEFAULT_SCORING_CONFIG, ScoringConfig, ScoringEngine
@@ -43,6 +40,10 @@ class ScreenerConfig:
     min_risk_reward_ratio: float = RISK_DEFAULTS.min_risk_reward_ratio
     account_balance: float = RISK_DEFAULTS.account_balance
     pip_value: float = RISK_DEFAULTS.pip_value
+
+    # Volume outlier detection (Todo 182)
+    volume_outlier_detection: bool = False
+    volume_outlier_threshold: float = 3.0
 
     extra_options: dict[str, Any] = field(default_factory=dict)
 
@@ -235,6 +236,26 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         )
         return df
 
+    def _ingest(self) -> pd.DataFrame:
+        """Stage 1: API Ingestion (Bronze)."""
+        from tvscreener.lib.screeners.pipeline import Ingestor
+
+        return cast(pd.DataFrame, self._resume_or_run("bronze", lambda: Ingestor().run(self)))
+
+    def _standardize(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Stage 2: Standardization (Silver)."""
+        from tvscreener.lib.screeners.pipeline import Standardizer
+
+        return cast(
+            pd.DataFrame, self._resume_or_run("silver", lambda: Standardizer().run(self, df))
+        )
+
+    def _score(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Stage 3: Scoring (Gold)."""
+        from tvscreener.lib.screeners.pipeline import Scorer
+
+        return cast(pd.DataFrame, self._resume_or_run("gold", lambda: Scorer().run(self, df)))
+
     def _resume_or_run(
         self,
         stage: str,
@@ -242,88 +263,91 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         persist: bool = True,
         mode: str | None = None,
     ) -> pd.DataFrame:
-        """Helper to either resume a stage from Iceberg or run its logic."""
-        replay = self.config.extra_options.get("replay")
-        table_name = f"tvscreener.{stage}"
+        """Centralized helper for Medallion stage execution and Iceberg persistence (Todo 167)."""
+        from tvscreener.lib.screeners.pipeline import resume_or_run
 
-        if mode is None:
-            # Default to overwrite for Gold and Silver to ensure idempotency
-            # Bronze might still use append if we want to keep raw history,
-            # but usually even Bronze is better with overwrite-by-partition.
-            mode = "overwrite" if stage in ["gold", "silver"] else "append"
-
-        if replay:
-            try:
-                catalog = get_catalog()
-                table = catalog.load_table(table_name)
-                logger.info("Resuming from %s Iceberg table", stage.capitalize())
-                return table.to_pandas()
-            except NoSuchTableError:
-                pass
-            except Exception as e:
-                logger.debug("Failed to load from %s: %s", stage.capitalize(), e)
-
-        df = runner_func()
-
-        if persist:
-            try:
-                partition_by = None
-                # Add metadata columns and set partitioning based on medallion layer
-                if stage == "bronze":
-                    if "ingest_date" not in df.columns:
-                        df["ingest_date"] = pd.Timestamp.now().strftime("%Y-%m-%d")
-                    partition_by = ["ingest_date"]
-                elif stage == "silver":
-                    # asset_type should ideally come from the screener
-                    if "asset_type" not in df.columns:
-                        # Try to infer from class name or use a default
-                        df["asset_type"] = self.__class__.__name__.replace("Screener", "").lower()
-                    partition_by = ["asset_type"]
-                elif stage == "gold":
-                    if "signal_date" not in df.columns:
-                        df["signal_date"] = pd.Timestamp.now().strftime("%Y-%m-%d")
-                    partition_by = ["signal_date"]
-
-                write_iceberg(df, table_name, mode=mode, partition_by=partition_by)
-            except Exception as e:
-                logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
-
-        return df
-
-    def _ingest(self) -> pd.DataFrame:
-        """Stage 1: API Ingestion (Bronze)."""
-        return cast(pd.DataFrame, self._resume_or_run("bronze", self._fetch_all_data))
-
-    def _standardize(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Stage 2: Standardization (Silver)."""
-        return cast(
-            pd.DataFrame, self._resume_or_run("silver", lambda: self._apply_standardization(df))
-        )
+        return resume_or_run(self, stage, runner_func, persist=persist, mode=mode)
 
     def _apply_standardization(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Apply filters and normalization logic using narwhals where possible."""
-        # Hooks (operate on native pandas for backward compatibility with subclasses)
+        """Centralized standardization logic for the Silver stage."""
+        if df.empty:
+            return df
+
+        # Step 1: Enrich with canonical names
+        df = self._prepare_enriched_data(df)
+
+        # Step 2: Apply asset-specific filters
         df = self._apply_asset_filters(df)
+
+        # Step 3: Handle duplicates
         df = self._merge_duplicates(df)
 
-        from tvscreener.lib.screeners.transformer import DataTransformer
+        # Step 4: Outlier Detection (Todo 182)
+        if self.config.volume_outlier_detection:
+            df = self._detect_volume_outliers(df)
 
-        # Let the @narwhalify decorators handle the conversion
-        df = cast(pd.DataFrame, DataTransformer.rename_technical_columns(df, self.timeframes))
-        df = cast(pd.DataFrame, DataTransformer.standardize_stat_columns(df))
         return df
 
-    def _score(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Stage 3: Scoring (Gold)."""
+    def _detect_volume_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove symbols with abnormal volume spikes using Z-Score."""
+        import numpy as np
 
-        def run_score():
-            # Scoring logic using ScoringEngine
-            scored_df = self._engine.rank_opportunities(df, copy=False)
-            if self.config.show_risk:
-                scored_df = self._risk_engine.apply(scored_df, copy=False)
-            return scored_df
+        # We prefer RVOL if available, else VOLUME
+        vol_col = (
+            "relative_volume_10d_calc"
+            if "relative_volume_10d_calc" in df.columns
+            else "VOLUME"
+            if "VOLUME" in df.columns
+            else None
+        )
+        if vol_col is None:
+            return df
 
-        return cast(pd.DataFrame, self._resume_or_run("gold", run_score))
+        # Vectorized Z-Score calculation using log transform to handle positive skew
+        vols = df[vol_col].astype(float)
+        vols_log = np.log1p(vols.clip(lower=0))
+
+        mean = vols_log.mean()
+        std = vols_log.std()
+
+        if std == 0:
+            return df
+
+        z_scores = (vols_log - mean) / std
+        mask = z_scores.abs() <= self.config.volume_outlier_threshold
+
+        removed = len(df) - mask.sum()
+        if removed > 0:
+            logger.info(
+                "Removed %d volume outliers (Threshold: %.1f)",
+                removed,
+                self.config.volume_outlier_threshold,
+            )
+
+        return df[mask]
+
+    def _validate_health(self, df: pd.DataFrame, stage: str) -> bool:
+        """Validate health of the data before committing to the next stage (WAP Pattern).
+
+        Subclasses can override this to implement circuit breakers for bad data.
+        """
+        if df.empty:
+            logger.warning("Data is empty in stage '%s'", stage)
+            return True  # Empty isn't always "unhealthy" but it depends
+
+        # Basic health checks
+        if stage == "gold" and "ENSEMBLE_SCORE" not in df.columns:
+            logger.error("Missing ENSEMBLE_SCORE in Gold stage")
+            return False
+
+        # Check for catastrophic data loss (e.g. >90% nulls in critical columns)
+        if "PRICE" in df.columns:
+            null_pct = df["PRICE"].isna().mean()
+            if null_pct > 0.9:
+                logger.error("Too many null prices (%.1f%%) in stage '%s'", null_pct * 100, stage)
+                return False
+
+        return True
 
     def _get_tickers(self) -> list[str]:
         """Return the list of tickers to fetch. Subclasses can override for prefixing/formatting."""

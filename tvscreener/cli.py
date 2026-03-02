@@ -35,6 +35,21 @@ def main() -> int:
         parser.add_argument("--config", help="Path to YAML config")
 
         args = parser.parse_args()
+    elif len(sys.argv) > 1 and sys.argv[1] == "query":
+        parser = argparse.ArgumentParser(description="Query Iceberg tables using DuckDB")
+        parser.add_argument("command", choices=["query"])
+        parser.add_argument("table", help="Table identifier (e.g. forex.opportunities)")
+        parser.add_argument(
+            "--sql",
+            help="SQL query to execute (can use MiniJinja 'df' as the table alias)",
+        )
+        parser.add_argument("--snapshot-id", type=int, help="Iceberg snapshot ID for time-travel")
+        parser.add_argument("--output", "-o", help="Output file (csv/parquet)")
+        parser.add_argument("--head", type=int, default=10, help="Number of rows to show")
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+
+        args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(
             description="Run forex scanners",

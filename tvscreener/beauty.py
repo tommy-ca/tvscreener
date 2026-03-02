@@ -90,6 +90,38 @@ def _rating_letter(rating: Rating):
     return NEUTRAL_CHAR
 
 
+class Formatter:
+    """Centralized logic for formatting values (numbers, percentages, prices)."""
+
+    @staticmethod
+    def price(val: float | None, precision: int = 5) -> str:
+        """Format price with specified precision."""
+        if val is None or _is_nan(val):
+            return "N/A"
+        return f"{val:.{precision}f}"
+
+    @staticmethod
+    def percent(val: float | None) -> str:
+        """Format percentage with sign and 2 decimal places."""
+        if val is None or _is_nan(val):
+            return "N/A"
+        return f"{val:+.2f}%"
+
+    @staticmethod
+    def score(val: float | None) -> str:
+        """Format numeric score with sign."""
+        if val is None or _is_nan(val):
+            return "N/A"
+        return f"{val:+.2f}"
+
+    @staticmethod
+    def rvol(val: float | None) -> str:
+        """Format relative volume with 'x' suffix."""
+        if val is None or _is_nan(val):
+            return "N/A"
+        return f"{val:.2f}x"
+
+
 class VisualStyler:
     """Centralized logic for visual indicators (emojis, signs) in terminal output."""
 
@@ -148,6 +180,26 @@ class VisualStyler:
     def legend() -> str:
         """Return the standard legend for terminal output."""
         return f"Legend: {VisualStyler.BULL}=Bullish  {VisualStyler.BEAR}=Bearish  {VisualStyler.NEUTRAL}=Neutral"
+
+    @staticmethod
+    def format_sl(val: float) -> str:
+        """Format Stop Loss for terminal display."""
+        return f"[red]SL {Formatter.price(val)}[/red]"
+
+    @staticmethod
+    def format_tp(val: float) -> str:
+        """Format Take Profit for terminal display."""
+        return f"[green]TP {Formatter.price(val)}[/green]"
+
+    @staticmethod
+    def format_rr(val: float) -> str:
+        """Format Risk:Reward ratio for terminal display."""
+        return f"[yellow]RR {val:.2f}[/yellow]" if val else "N/A"
+
+    @staticmethod
+    def format_size(val: float) -> str:
+        """Format Position Size for terminal display."""
+        return f"[cyan]Size {val:.2f}[/cyan]" if val else "N/A"
 
     @staticmethod
     def get_strength_expression(scores_col: str) -> nw.Expr:

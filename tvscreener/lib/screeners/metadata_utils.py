@@ -1,6 +1,6 @@
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
@@ -36,7 +36,7 @@ class MetadataCollector:
     def __init__(self, version: str = "1.0", max_api_calls: int = 100):
         self.version = version
         self.max_api_calls = max_api_calls
-        self.start_time = datetime.now()
+        self.start_time = datetime.now(timezone.utc)
         self.end_time: datetime | None = None
         self.config: dict[str, Any] = {}
         self.api_calls: list[dict[str, Any]] = []
@@ -70,7 +70,7 @@ class MetadataCollector:
             if len(self.api_calls) < self.max_api_calls:
                 self.api_calls.append(
                     {
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
                         "url": url,
                         "method": method,
                         "status_code": status_code,
@@ -83,7 +83,7 @@ class MetadataCollector:
     def finish(self, results_count: int, **extra_stats) -> None:
         """Mark the scan as finished and record summary statistics."""
         with self._lock:
-            self.end_time = datetime.now()
+            self.end_time = datetime.now(timezone.utc)
             self.summary_stats = {"results_count": results_count, **extra_stats}
 
     def to_dict(self) -> dict[str, Any]:

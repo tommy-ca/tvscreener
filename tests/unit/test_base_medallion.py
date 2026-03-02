@@ -21,13 +21,13 @@ class MockScreener(BaseOpportunityScreener):
 
 @pytest.fixture
 def mock_catalog():
-    with patch("tvscreener.lib.screeners.base.get_catalog") as mock:
+    with patch("tvscreener.lib.screeners.pipeline.get_catalog") as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_write_iceberg():
-    with patch("tvscreener.lib.screeners.base.write_iceberg") as mock:
+    with patch("tvscreener.lib.screeners.pipeline.write_iceberg") as mock:
         yield mock
 
 
@@ -87,7 +87,7 @@ def test_standardize_no_replay(mock_catalog, mock_write_iceberg):
 def test_score_no_replay(mock_catalog, mock_write_iceberg):
     config = ScreenerConfig()
     screener = MockScreener(symbols=["TEST"], config=config)
-    input_df = pd.DataFrame({"Name": ["TEST"], "Price": [1.0]})
+    input_df = pd.DataFrame({"Name": ["TEST"], "Price": [1.0], "ENSEMBLE_SCORE": [0.5]})
 
     # Mock ScoringEngine class method instead of instance method
     with patch(

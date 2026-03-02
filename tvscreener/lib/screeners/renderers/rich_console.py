@@ -180,10 +180,10 @@ class RichConsoleRenderer(BaseRenderer):
                 size = float(row.get("POSITION_SIZE", 0) or 0)
                 row_data.extend(
                     [
-                        f"{sl:.5f}" if sl else "N/A",
-                        f"{tp:.5f}" if tp else "N/A",
-                        f"{rr:.2f}" if rr else "N/A",
-                        f"{size:.2f}" if size else "N/A",
+                        VisualStyler.format_sl(sl),
+                        VisualStyler.format_tp(tp),
+                        VisualStyler.format_rr(rr),
+                        VisualStyler.format_size(size),
                     ]
                 )
 
@@ -257,9 +257,20 @@ class RichConsoleRenderer(BaseRenderer):
                 atr = float(get_enriched_col(row, f"ATR_{htf}", f"ATR|{htf}", 0))
                 rvol = float(get_enriched_col(row, "RVOL", "relative_volume_10d_calc", 0))
 
+                from rich.text import Text
+
                 console.print(footer)
                 console.print(
-                    f"  [dim]Risk:[/dim] [red]SL {sl:.5f}[/red] | [green]TP {tp:.5f}[/green] | [yellow]RR {rr:.2f}[/yellow] | [cyan]Size {size:.2f}[/cyan]"
+                    Text.assemble(
+                        "  ",
+                        VisualStyler.format_sl(sl),
+                        " | ",
+                        VisualStyler.format_tp(tp),
+                        " | ",
+                        VisualStyler.format_rr(rr),
+                        " | ",
+                        VisualStyler.format_size(size),
+                    )
                 )
                 console.print(f"  [dim]Stats: ATR {atr:.5f} | RVOL {rvol:.2f}x[/dim]\n")
             else:
@@ -537,13 +548,13 @@ class RichConsoleRenderer(BaseRenderer):
 
                     risk_info = Text.assemble(
                         ("\nRisk: ", "dim"),
-                        (f"SL {sl:.5f}", "red"),
+                        VisualStyler.format_sl(sl),
                         (" | ", "dim"),
-                        (f"TP {tp:.5f}", "green"),
+                        VisualStyler.format_tp(tp),
                         (" | ", "dim"),
-                        (f"RR {rr:.2f}", "yellow"),
+                        VisualStyler.format_rr(rr),
                         (" | ", "dim"),
-                        (f"Size {size:.2f}", "cyan"),
+                        VisualStyler.format_size(size),
                         (f"\nStats: ATR {atr:.5f} | RVOL {rvol:.2f}x", "dim"),
                     )
                     content = Group(grid, risk_info)

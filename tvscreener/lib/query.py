@@ -56,7 +56,12 @@ class EdgeQueryClient:
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create connection. Persistent by default.
-        self.con = duckdb.connect(str(db_path))
+        # Harden DuckDB: read_only=True for existing DBs, lock_configuration=True
+        is_memory = str(db_path) == ":memory:"
+        self.con = duckdb.connect(str(db_path), read_only=not is_memory)
+
+        if not is_memory:
+            self.con.execute("SET lock_configuration=True;")
 
         # Catalog-aware
         from tvscreener.lib.lakehouse import get_catalog
@@ -87,6 +92,13 @@ class EdgeQueryClient:
         # Change (Current - Previous)
         self.con.execute(
             "CREATE OR REPLACE MACRO change(v) AS v - lag(v) OVER (ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING)"
+        )
+
+        # Advanced TA Macros
+        # Z-Score (This one works because it doesn't nest window functions)
+        self.con.execute(
+            "CREATE OR REPLACE MACRO z_score(v, p) AS (v - avg(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)) / "
+            "NULLIF(stddev(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW), 0)"
         )
 
     def render_sql(self, template_str: str, **kwargs: Any) -> str:
@@ -123,9 +135,12 @@ class EdgeQueryClient:
             except Exception as e:
                 logger.warning("Failed to configure remote access for %s: %s", path, e)
 
-    def pipeline(self, data: str | Path | Any) -> AnalyticsPipeline:
-        """Create a new AnalyticsPipeline starting with the given data."""
-        return AnalyticsPipeline(self, data)
+    def pipeline(self, data: str | Path | Any, snapshot_id: int | None = None) -> AnalyticsPipeline:
+        """Create a new AnalyticsPipeline starting with the given data.
+
+        Supports Iceberg time-travel via snapshot_id.
+        """
+        return AnalyticsPipeline(self, data, snapshot_id=snapshot_id)
 
     def __enter__(self) -> EdgeQueryClient:
         return self
@@ -140,6 +155,7 @@ class EdgeQueryClient:
         sql_query: str,
         table_alias: str = "df",
         params: dict[str, Any] | list[Any] | None = None,
+        snapshot_id: int | None = None,
     ) -> pd.DataFrame:
         """
         Execute a DuckDB SQL query against a specific parquet file, Iceberg table, or DataFrame.
@@ -149,6 +165,7 @@ class EdgeQueryClient:
             sql_query: The SQL query to execute (can be MiniJinja template).
             table_alias: The virtual table name to register the data as.
             params: Parameters for the SQL query (both MiniJinja and SQL parameters).
+            snapshot_id: Optional Iceberg snapshot ID for time-travel queries.
         """
         params = params or {}
 
@@ -161,7 +178,7 @@ class EdgeQueryClient:
 
         # 2. Get relation and create view
         try:
-            relation = self.get_relation(data)
+            relation = self.get_relation(data, snapshot_id=snapshot_id)
             relation.create_view(table_alias)
         except Exception as e:
             logger.error("Failed to register data for query: %s", e)
@@ -203,8 +220,11 @@ class EdgeQueryClient:
 
         return params
 
-    def get_relation(self, data: str | Path | Any) -> Any:
-        """Get a DuckDB relation from a file path, Iceberg table, or existing data."""
+    def get_relation(self, data: str | Path | Any, snapshot_id: int | None = None) -> Any:
+        """Get a DuckDB relation from a file path, Iceberg table, or existing data.
+
+        Supports Iceberg time-travel via snapshot_id.
+        """
         if isinstance(data, (str, Path)):
             path_str = str(data)
             is_iceberg = "." in path_str and not any(
@@ -215,18 +235,30 @@ class EdgeQueryClient:
                 table = self.catalog.load_table(path_str)
                 try:
                     self.con.execute("INSTALL iceberg; LOAD iceberg;")
+                    if snapshot_id:
+                        return self.con.sql(
+                            "SELECT * FROM iceberg_scan(?, snapshot_id=?)",
+                            params=[table.metadata_location, snapshot_id],
+                        )
                     return self.con.sql(
                         "SELECT * FROM iceberg_scan(?)", params=[table.metadata_location]
                     )
                 except Exception:
-                    return self.con.from_arrow(table.to_arrow())
+                    # Fallback to Arrow if iceberg extension fails or doesn't support snapshot_id via SQL
+                    arrow_table = (
+                        table.scan(snapshot_id=snapshot_id).to_arrow()
+                        if snapshot_id
+                        else table.to_arrow()
+                    )
+                    return self.con.from_arrow(arrow_table)
             else:
                 is_remote = any(
                     path_str.startswith(proto) for proto in ["s3://", "http://", "https://"]
                 )
                 if is_remote:
                     self._setup_remote_access(path_str)
-                return self.con.read_parquet(path_str)
+                # Use SQL-based parameterized loading for all file paths
+                return self.con.sql("SELECT * FROM read_parquet(?)", params=[path_str])
         return self.con.from_df(data) if isinstance(data, pd.DataFrame) else data
 
     def query_expr(self, data: str | Path | Any, transform_func: Callable) -> Any:
@@ -257,9 +289,14 @@ class AnalyticsPipeline:
     Lazy-evaluated: transformations are queued and executed only on .execute() or .collect().
     """
 
-    def __init__(self, client: EdgeQueryClient, initial_data: str | Path | Any):
+    def __init__(
+        self,
+        client: EdgeQueryClient,
+        initial_data: str | Path | Any,
+        snapshot_id: int | None = None,
+    ):
         self.client = client
-        self.current_relation = client.get_relation(initial_data)
+        self.current_relation = client.get_relation(initial_data, snapshot_id=snapshot_id)
         self._step_count = 0
 
     def sql(self, query: str, params: dict[str, Any] | None = None) -> AnalyticsPipeline:
@@ -308,16 +345,26 @@ class AnalyticsPipeline:
         if not NARWHALS_AVAILABLE:
             raise RuntimeError("Narwhals is required for .transform()")
 
-        # Wrap DuckDB relation in Narwhals (lazy)
+        # Wrap DuckDB relation in Narwhals (lazy) - Todo 178
         nw_df = nw.from_native(self.current_relation)
         result = func(nw_df)
 
-        # Convert back to native DuckDB relation if possible (maintains laziness)
-        if hasattr(result, "to_native"):
-            self.current_relation = result.to_native()
-        else:
-            # If it materialized (e.g. returned pandas/polars), re-wrap it
-            self.current_relation = self.client.con.from_df(result)
+        # Convert back to native DuckDB relation while maintaining laziness
+        try:
+            native_result = nw.to_native(result)
+            # If it's still a DuckDB relation, keep it
+            if hasattr(native_result, "create_view"):
+                self.current_relation = native_result
+            else:
+                # If it materialized to pandas/polars/arrow, re-wrap it as a relation
+                self.current_relation = self.client.get_relation(native_result)
+        except Exception:
+            # Fallback if nw.to_native fails
+            if hasattr(result, "to_native"):
+                self.current_relation = result.to_native()
+            else:
+                self.current_relation = self.client.get_relation(result)
+
         return self
 
     def collect(self) -> pd.DataFrame:

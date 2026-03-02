@@ -306,7 +306,9 @@ def scanner_strategies(
 
 
 @mcp.tool()
-def scanner_inspect(path: str, head: int = 10, metadata_only: bool = False) -> str:
+def scanner_inspect(
+    path: str, head: int = 10, metadata_only: bool = False, sql: str | None = None
+) -> str:
     """
     Inspect a Parquet file with embedded metadata.
 
@@ -314,9 +316,10 @@ def scanner_inspect(path: str, head: int = 10, metadata_only: bool = False) -> s
         path: Path to the parquet file to inspect
         head: Number of rows to show (default 10)
         metadata_only: Only show metadata, skip data table
+        sql: DuckDB SQL string to query the file
     """
     try:
-        return inspect_file(path, head=head, metadata_only=metadata_only)
+        return inspect_file(path, head=head, metadata_only=metadata_only, sql=sql)
     except Exception as e:
         return f"Error inspecting file: {e}"
 
@@ -458,6 +461,7 @@ def custom_query(
     sort_by: str | None = None,
     ascending: bool = False,
     limit: int = 25,
+    sql: str | None = None,
 ) -> str:
     """
     Flexible query with any fields and filters.
@@ -477,19 +481,7 @@ def custom_query(
         sort_by: Field name to sort by
         ascending: Sort direction (default False = descending)
         limit: Maximum results (default 25, max 100)
-
-    Returns:
-        Markdown table with query results
-
-    Examples:
-        1. Stocks with RSI between 30-70 and price > $50:
-           fields="NAME,PRICE,RSI,VOLUME"
-           filters='[{"field": "PRICE", "op": ">", "value": 50}, {"field": "RSI", "op": "in_range", "value": [30, 70]}]'
-
-        2. High dividend stocks:
-           fields="NAME,PRICE,DIVIDEND_YIELD_FY"
-           filters='[{"field": "DIVIDEND_YIELD_FY", "op": ">=", "value": 3}]'
-           sort_by="DIVIDEND_YIELD_FY"
+        sql: Optional DuckDB SQL query to apply to the results (e.g. 'SELECT * FROM df WHERE RSI > 70')
     """
     # Parse fields
     select_fields = None
@@ -514,6 +506,7 @@ def custom_query(
             sort_by=sort_by,
             ascending=ascending,
             limit=limit,
+            sql=sql,
         )
 
         if df.empty:
@@ -718,7 +711,7 @@ def query_historical_scan(sql: str, file_path: str) -> str:
 
 
 @mcp.tool()
-def lakehouse_list_tables() -> str:
+def list_tables() -> str:
     """
     List all tables in the Iceberg lakehouse catalog.
     Use this to discover available datasets (bronze, silver, gold, etc).
@@ -727,7 +720,7 @@ def lakehouse_list_tables() -> str:
 
 
 @mcp.tool()
-def lakehouse_get_schema(table_name: str) -> str:
+def get_schema(table_name: str) -> str:
     """
     Get the schema (fields and types) of a specific lakehouse table.
 

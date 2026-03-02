@@ -36,6 +36,7 @@ This document details the data ingestion and transformation logic for each stage
         *   `Recommend.Other|{tf}` -> `osc_{tf}`
         *   `Roc|{tf}` -> `roc_{tf}`
     3.  **Null Management**: Imputing neutral values (0.0) for missing technical indicators to prevent NaN-poisoning in scoring math.
+    4.  **Optional Outlier Detection**: Implement Z-Score based volume outlier detection to filter anomalies. **(Disabled by default)**.
 *   **Action**: Overwrite (Latest State) or Upsert.
 
 ## 3. Gold Stage (Analytics / "Scored")

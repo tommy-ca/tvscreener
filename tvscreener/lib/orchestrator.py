@@ -24,7 +24,7 @@ from tvscreener.constants.forex import (
 from tvscreener.constants.stocks import STOCK_UNIVERSE
 from tvscreener.core.enums import Direction
 from tvscreener.filter import AtrFilter, RocFilter, ScoreFilter, VolumeFilter
-from tvscreener.lib.lakehouse.catalog import IcebergCatalogManager
+from tvscreener.lib.lakehouse import get_manager
 from tvscreener.lib.screeners.base import BaseOpportunityScreener
 from tvscreener.lib.screeners.factory import AssetScreenerFactory
 from tvscreener.lib.screeners.forex_opportunity import ContractType, ForexScreenerConfig
@@ -282,7 +282,7 @@ class ScreenerController:
         if self.console:
             self.console.print("[bold cyan]Running Lakehouse Maintenance...[/bold cyan]")
 
-        manager = IcebergCatalogManager()
+        manager = get_manager()
         table_name = getattr(args, "table", "forex.opportunities")
 
         if getattr(args, "expire_snapshots", False):
@@ -291,22 +291,81 @@ class ScreenerController:
                 self.console.print(
                     f" - Expiring snapshots older than {days} days for {table_name}..."
                 )
-            manager.expire_snapshots(table_name, days)
+            manager.maintenance(table_name, "expire_snapshots", older_than_days=days)
 
         if getattr(args, "compact", False):
             if self.console:
                 self.console.print(f" - Compacting files for {table_name}...")
-            manager.compact_files(table_name)
+            manager.maintenance(table_name, "compact")
 
         if self.console:
             self.console.print("[bold green]Maintenance complete.[/bold green]")
         return 0
+
+    def run_query(self, args: argparse.Namespace) -> int:
+        """Run an Edge SQL query on a table (Todo 144)."""
+        from tvscreener.lib.query import EdgeQueryClient
+
+        table = args.table
+        sql = getattr(args, "sql", "SELECT * FROM df")
+        snapshot_id = getattr(args, "snapshot_id", None)
+        limit = getattr(args, "head", 10)
+
+        if self.console:
+            msg = f"[cyan]Querying {table}[/cyan]"
+            if snapshot_id:
+                msg += f" [dim](Snapshot: {snapshot_id})[/dim]"
+            self.console.print(msg)
+
+        try:
+            with EdgeQueryClient() as client:
+                df = client.query_sql(table, sql, snapshot_id=snapshot_id)
+
+                if self.console:
+                    if df.empty:
+                        self.console.print("[yellow]Query returned no results.[/yellow]")
+                    else:
+                        from rich.table import Table
+
+                        title = f"SQL Results: {table}"
+                        if snapshot_id:
+                            title += f" @ {snapshot_id}"
+                        rich_table = Table(title=title)
+
+                        for col in df.columns:
+                            rich_table.add_column(str(col))
+
+                        for _, row in df.head(limit).iterrows():
+                            rich_table.add_row(*[str(val) for val in row])
+
+                        self.console.print(rich_table)
+                        self.console.print(
+                            f"\n[dim]Showing {len(df.head(limit))} of {len(df)} results[/dim]"
+                        )
+
+                if getattr(args, "output", None):
+                    out_path = Path(args.output)
+                    if out_path.suffix == ".csv":
+                        df.to_csv(out_path, index=False)
+                    else:
+                        df.to_parquet(out_path, index=False)
+                    if self.console:
+                        self.console.print(f"[green]Saved to {out_path}[/green]")
+
+                return len(df)
+        except Exception as e:
+            if self.console:
+                self.console.print(f"[red]Query failed: {e}[/red]")
+            logger.error("Edge Query failed: %s", e)
+            return -1
 
     def run_from_args(self, args: argparse.Namespace) -> int:
         """Run scan from argparse namespace."""
         command = getattr(args, "command", "scan")
         if command == "maintenance":
             return self.run_maintenance(args)
+        if command == "query":
+            return self.run_query(args)
 
         request = ScanRequest(
             assets=AssetSelection(

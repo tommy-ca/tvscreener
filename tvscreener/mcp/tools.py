@@ -165,6 +165,7 @@ def custom_screen(
     sort_by: str | None = None,
     ascending: bool = False,
     limit: int = 25,
+    sql: str | None = None,
 ) -> pd.DataFrame:
     """
     Flexible screener with custom fields and filters.
@@ -176,9 +177,7 @@ def custom_screen(
         sort_by: Field name to sort by
         ascending: Sort direction
         limit: Maximum results
-
-    Returns:
-        DataFrame with query results
+        sql: Optional SQL query to apply to results
     """
     config = ASSET_CONFIG.get(asset_type, ASSET_CONFIG["stock"])
     screener = config["screener_class"]()
@@ -217,6 +216,13 @@ def custom_screen(
             screener.sort_by(sort_field, ascending=ascending)
 
     df = screener.get()
+
+    if sql:
+        from tvscreener.lib.query import EdgeQueryClient
+
+        with EdgeQueryClient() as client:
+            df = client.query_sql(df, sql)
+
     return df.head(limit)
 
 
@@ -613,7 +619,9 @@ def load_mcp_config(path: str) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def inspect_file(path: str, head: int = 10, metadata_only: bool = False) -> str:
+def inspect_file(
+    path: str, head: int = 10, metadata_only: bool = False, sql: str | None = None
+) -> str:
     """
     Inspect a Parquet file with embedded metadata.
     """
@@ -622,6 +630,7 @@ def inspect_file(path: str, head: int = 10, metadata_only: bool = False) -> str:
     from rich.console import Console
 
     from tvscreener.lib.inspect_utils import inspect_parquet
+    from tvscreener.lib.orchestrator import OutputConfig, ScanRequest, ScreenerController
 
     try:
         validated_path = validate_path(path, allow_tmp=True)
@@ -631,7 +640,21 @@ def inspect_file(path: str, head: int = 10, metadata_only: bool = False) -> str:
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=100)
 
-    inspect_parquet(str(validated_path), head=head, metadata_only=metadata_only, console=console)
+    if sql:
+        controller = ScreenerController(console=console)
+        request = ScanRequest(
+            output=OutputConfig(
+                output=str(validated_path),
+                sql=sql,
+                head=head,
+                metadata_only=metadata_only,
+            )
+        )
+        controller.run_inspect_parquet(request)
+    else:
+        inspect_parquet(
+            str(validated_path), head=head, metadata_only=metadata_only, console=console
+        )
 
     return output.getvalue()
 

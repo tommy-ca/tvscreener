@@ -12,7 +12,7 @@ We will use `pyiceberg` to manage a local SQLite-backed catalog. Data processing
 
 ### 1.1 Medallion Layers
 1.  **Bronze (`tvscreener.bronze`)**: Raw TradingView API response schema. Partitioned by `ingest_date` and `ingest_hour`. Used for idempotency and replaying scans.
-2.  **Silver (`tvscreener.silver`)**: Normalized and cleaned data. Deduplicated by pair/broker using `EXCHANGE_PRIORITY`. Brittle raw columns (e.g. `Recommend.All|15`) are mapped to canonical technical names (`trend_15`). Null values are filled with neutral 0.0. Partitioned by `asset_type`.
+2.  **Silver (`tvscreener.silver`)**: Normalized and cleaned data. Deduplicated by pair/broker using `EXCHANGE_PRIORITY`. Brittle raw columns (e.g. `Recommend.All|15`) are mapped to canonical technical names (`trend_15`). Null values are filled with neutral 0.0. Partitioned by `asset_type`. *Optional Z-Score volume outlier detection is available but disabled by default.*
 3.  **Gold (`tvscreener.gold`)**: Scored signals and strategy features. Includes `ENSEMBLE_SCORE`, `CONFLUENCE_SCORE`, Grading, and Signal Detection results. Includes full Risk management outputs (SL/TP). Partitioned by `signal_date`. This is the source of truth for the UI and edge analytics.
 
 ## 2. Phase 1: Storage Layer & Catalog (Infrastructure)

@@ -11,9 +11,11 @@ def apply_volume_filter(df: FrameT, min_volume: float | None) -> FrameT:
     if min_volume is None:
         return df
 
-    vol_col = "Average Volume (10 day Calc)"
-    if vol_col in df.columns:
-        return df.filter(nw.col(vol_col) >= min_volume)
+    # Support both raw and canonical names
+    candidates = ["Average Volume (10 day Calc)", "AVG_VOLUME", "volume"]
+    for col in candidates:
+        if col in df.columns:
+            return df.filter(nw.col(col) >= min_volume)
     return df
 
 
@@ -22,7 +24,8 @@ def apply_atr_filter(df: FrameT, max_atr: float | None) -> FrameT:
     if max_atr is None:
         return df
 
-    atr_cols = [c for c in df.columns if c.startswith("ATR|")]
+    # Support both raw "ATR|{tf}" and canonical "ATR_{tf}"
+    atr_cols = [c for c in df.columns if c.startswith("ATR|") or c.startswith("ATR_") or c == "ATR"]
     if not atr_cols:
         return df
 
@@ -34,7 +37,8 @@ def apply_ma_score_filter(df: FrameT, min_ma_score: float | None) -> FrameT:
     if min_ma_score is None:
         return df
 
-    ma_cols = [c for c in df.columns if c.startswith("Recommend Ma|")]
+    # Support both raw "Recommend Ma|{tf}" and canonical "MA_{tf}"
+    ma_cols = [c for c in df.columns if c.startswith("Recommend Ma|") or c.startswith("MA_")]
     if not ma_cols:
         return df
 

@@ -166,7 +166,7 @@ def export_to_iceberg(
 ) -> None:
     from pathlib import Path
 
-    from tvscreener.lib.lakehouse.storage import write_iceberg
+    from tvscreener.lib.lakehouse import write_iceberg
 
     df = df_getter()
     if df.empty:
