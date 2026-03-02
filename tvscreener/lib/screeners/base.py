@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
 import narwhals as nw
 import pandas as pd
+from pyiceberg.exceptions import NoSuchTableError
 
+from tvscreener.lib.lakehouse import get_catalog
+from tvscreener.lib.lakehouse.storage import write_iceberg
 from tvscreener.lib.screeners.metadata_utils import MetadataCollector
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
 from tvscreener.score import DEFAULT_SCORING_CONFIG, ScoringConfig, ScoringEngine
@@ -90,11 +93,15 @@ class ExportMixin(ABC):
         from tvscreener.lib.screeners.export_helpers import get_export_function
 
         # Security: Validate path before exporting
-        try:
-            validated_path = validate_path(path)
-        except ValueError as e:
-            logger.error("Cannot export results: %s", e)
-            return
+        if format_name.lower() == "iceberg":
+            # For Iceberg, path is used as a table identifier
+            validated_path = path
+        else:
+            try:
+                validated_path = str(validate_path(path))
+            except ValueError as e:
+                logger.error("Cannot export results: %s", e)
+                return
 
         # Merge manual metadata with collector metadata
         cli_metadata = kwargs.pop("metadata", {})
@@ -209,21 +216,22 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             len(self.timeframes),
         )
 
-        df = self._fetch_all_data()
+        # Stage 1: Bronze (Ingestion)
+        df = self._ingest()
 
         if df.empty:
             self.metadata.finish(results_count=0)
             return df
 
-        df = self._apply_asset_filters(df)
-        df = self._merge_duplicates(df)
-        df = self._rank_opportunities(df)
+        # Stage 2: Silver (Standardization)
+        df = self._standardize(df)
 
-        # Normalize column names early (Silver/Gold boundary) so exports use canonical names
-        from tvscreener.lib.screeners.transformer import DataTransformer
+        if df.empty:
+            self.metadata.finish(results_count=0)
+            return df
 
-        df = DataTransformer.rename_technical_columns(df, self.timeframes)
-        df = DataTransformer.standardize_stat_columns(df)
+        # Stage 3: Gold (Scoring)
+        df = self._score(df)
 
         # Apply post_filters so all consumers (CLI, MCP, API) get filtered data
         if self.post_filters:
@@ -233,11 +241,98 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                     break
 
         self._cached_data = df
+        avg_score = 0.0
+        if not df.empty and "ENSEMBLE_SCORE" in df.columns:
+            avg_score = float(df["ENSEMBLE_SCORE"].mean())
+
         self.metadata.finish(
             results_count=len(df),
             total_scanned=len(self.symbols),
-            average_ensemble=float(df["ENSEMBLE_SCORE"].mean()) if not df.empty else 0.0,  # type: ignore
+            average_ensemble=avg_score,
         )
+        return df
+
+    def _ingest(self) -> pd.DataFrame:
+        """Stage 1: API Ingestion (Bronze)."""
+        replay = self.config.extra_options.get("replay")
+        if replay:
+            try:
+                catalog = get_catalog()
+                table = catalog.load_table("tvscreener.bronze")
+                logger.info("Resuming from Bronze Iceberg table")
+                return table.to_pandas()
+            except NoSuchTableError:
+                pass
+            except Exception as e:
+                logger.debug("Failed to load from Bronze: %s", e)
+
+        return self._fetch_all_data()
+
+    def _standardize(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Stage 2: Standardization (Silver)."""
+        replay = self.config.extra_options.get("replay")
+        if replay:
+            try:
+                catalog = get_catalog()
+                table = catalog.load_table("tvscreener.silver")
+                logger.info("Resuming from Silver Iceberg table")
+                return table.to_pandas()
+            except NoSuchTableError:
+                pass
+            except Exception as e:
+                logger.debug("Failed to load from Silver: %s", e)
+
+        # Standardize using narwhals
+        df = self._apply_standardization(df)
+
+        # Persist to Silver
+        try:
+            write_iceberg(df, "tvscreener.silver")
+        except Exception as e:
+            logger.debug("Iceberg Silver persistence failed: %s", e)
+
+        return df
+
+    def _apply_standardization(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply filters and normalization logic using narwhals where possible."""
+        # Hooks (operate on native pandas for backward compatibility with subclasses)
+        df = self._apply_asset_filters(df)
+        df = self._merge_duplicates(df)
+
+        # Standard technical normalization using narwhals
+        df_nw = nw.from_native(df)
+        from tvscreener.lib.screeners.transformer import DataTransformer
+
+        df_nw = DataTransformer.rename_technical_columns(df_nw, self.timeframes)
+        df_nw = DataTransformer.standardize_stat_columns(df_nw)
+        return cast(pd.DataFrame, df_nw.to_native())
+
+    def _score(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Stage 3: Scoring (Gold)."""
+        replay = self.config.extra_options.get("replay")
+        if replay:
+            try:
+                catalog = get_catalog()
+                table = catalog.load_table("tvscreener.gold")
+                logger.info("Resuming from Gold Iceberg table")
+                return table.to_pandas()
+            except NoSuchTableError:
+                pass
+            except Exception as e:
+                logger.debug("Failed to load from Gold: %s", e)
+
+        # Scoring logic using ScoringEngine
+        df = self._engine.rank_opportunities(df)
+
+        if self.config.show_risk:
+            df = self._risk_engine.apply(df)
+
+        # Persist to Gold
+        try:
+            write_iceberg(df, "tvscreener.gold")
+        except Exception as e:
+            logger.debug("Iceberg Gold persistence failed: %s", e)
+
         return df
 
     def _get_tickers(self) -> list[str]:
@@ -295,6 +390,11 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         # Enforce PyArrow backend at the Silver boundary for zero-copy efficiency
         if not combined_df.empty:
             combined_df = cast(pd.DataFrame, combined_df.convert_dtypes(dtype_backend="pyarrow"))
+            try:
+                # Optionally persist to tvscreener.bronze if an Iceberg catalog is available.
+                write_iceberg(combined_df, "tvscreener.bronze")
+            except Exception as e:
+                logger.debug("Iceberg Bronze persistence skipped: %s", e)
         return combined_df
 
     def _get_base_fields(self, field_class: Any) -> list[Any]:
@@ -348,18 +448,8 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         """Handle duplicate results (e.g. from different exchanges)."""
         if df.empty:
             return df
-        # Default implementation: just keep first by name
-        if "Name" in df.columns:
-            return df.drop_duplicates(subset=["Name"])
-        return df
-
-    def _rank_opportunities(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Apply scoring and ranking."""
-        if df.empty:
-            return df
-        df = self._engine.rank_opportunities(df)
-
-        if self.config.show_risk:
-            df = self._risk_engine.apply(df)
-
-        return df
+        # Default implementation: just keep first by name using narwhals
+        df_nw = nw.from_native(df)
+        if "Name" in df_nw.columns:
+            df_nw = df_nw.unique(subset=["Name"])
+        return cast(pd.DataFrame, df_nw.to_native())

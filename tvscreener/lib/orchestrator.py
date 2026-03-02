@@ -24,6 +24,7 @@ from tvscreener.constants.forex import (
 from tvscreener.constants.stocks import STOCK_UNIVERSE
 from tvscreener.core.enums import Direction
 from tvscreener.filter import AtrFilter, RocFilter, ScoreFilter, VolumeFilter
+from tvscreener.lib.lakehouse.catalog import IcebergCatalogManager
 from tvscreener.lib.screeners.base import BaseOpportunityScreener
 from tvscreener.lib.screeners.factory import AssetScreenerFactory
 from tvscreener.lib.screeners.forex_opportunity import ContractType, ForexScreenerConfig
@@ -234,8 +235,37 @@ class ScreenerController:
         else:
             raise ValueError(f"Unknown scanner type: {request.scanner}")
 
+    def run_maintenance(self, args: argparse.Namespace) -> int:
+        """Run lakehouse maintenance tasks."""
+        if self.console:
+            self.console.print("[bold cyan]Running Lakehouse Maintenance...[/bold cyan]")
+
+        manager = IcebergCatalogManager()
+        table_name = getattr(args, "table", "forex.opportunities")
+
+        if getattr(args, "expire_snapshots", False):
+            days = getattr(args, "days", 7)
+            if self.console:
+                self.console.print(
+                    f" - Expiring snapshots older than {days} days for {table_name}..."
+                )
+            manager.expire_snapshots(table_name, days)
+
+        if getattr(args, "compact", False):
+            if self.console:
+                self.console.print(f" - Compacting files for {table_name}...")
+            manager.compact_files(table_name)
+
+        if self.console:
+            self.console.print("[bold green]Maintenance complete.[/bold green]")
+        return 0
+
     def run_from_args(self, args: argparse.Namespace) -> int:
         """Run scan from argparse namespace."""
+        command = getattr(args, "command", "scan")
+        if command == "maintenance":
+            return self.run_maintenance(args)
+
         request = ScanRequest(
             scanner=args.scanner,
             asset_type=args.asset_type,
@@ -305,7 +335,7 @@ class ScreenerController:
 
             try:
                 with EdgeQueryClient() as edge_client:
-                    results = edge_client.query_sql(output_path, request.sql)
+                    results = edge_client.query_sql(cast(str, output_path), request.sql)
 
                 if self.console:
                     if results.empty:
@@ -392,7 +422,7 @@ class ScreenerController:
 
             try:
                 with EdgeQueryClient() as edge_client:
-                    results = edge_client.query_sql(output_path, request.sql)
+                    results = edge_client.query_sql(cast(str, output_path), request.sql)
 
                 if self.console:
                     if results.empty:
@@ -451,32 +481,83 @@ class ScreenerController:
         return results, scanner
 
     def run_inspect_parquet(self, request: ScanRequest) -> int:
-        """Inspect a parquet file."""
+        """Inspect a parquet file or Iceberg table."""
         from tvscreener.lib.inspect_utils import inspect_parquet
+        from tvscreener.lib.query import EdgeQueryClient
 
         if not request.output:
             if self.console:
                 self.console.print(
-                    "[red]Error: Please specify a file to inspect using --output or -o[/red]"
+                    "[red]Error: Please specify a file or table to inspect using --output or -o[/red]"
                 )
             return -1
 
-        # Security: Validate path before inspection
-        try:
-            validated_path = self._validate_path(request.output)
-        except ValueError as e:
-            if self.console:
-                self.console.print(f"[red]Error: {e}[/red]")
-            return -1
-
-        # We need head and metadata_only which are currently not in ScanRequest
-        # but we can pass them via request if we add them, or just use defaults.
-        # For now, let's assume they might be added or we just use common values.
-        inspect_parquet(
-            path=str(validated_path),
-            head=request.head or 10,
-            metadata_only=request.metadata_only,
+        # Check if it looks like an Iceberg table identifier
+        is_iceberg = (
+            "." in request.output
+            and not any(
+                request.output.endswith(ext) for ext in [".parquet", ".csv", ".json", ".xml"]
+            )
+            and not Path(request.output).exists()
         )
+
+        if request.sql:
+            try:
+                with EdgeQueryClient() as edge_client:
+                    results = edge_client.query_sql(request.output, request.sql)
+
+                if self.console:
+                    if results.empty:
+                        self.console.print("[yellow]Edge query returned 0 rows.[/yellow]")
+                    else:
+                        from rich.table import Table
+
+                        table = Table(title=f"SQL Results from {request.output}")
+                        for col in results.columns:
+                            table.add_column(col)
+                        for _, row in results.head(request.head or 10).iterrows():
+                            table.add_row(*[str(val) for val in row])
+                        self.console.print(table)
+                return len(results)
+            except Exception as e:
+                if self.console:
+                    self.console.print(f"[red]Edge Query execution failed: {e}[/red]")
+                logger.error(f"Edge Query execution failed: {e}")
+                return 0
+
+        if not is_iceberg:
+            # Security: Validate path before inspection
+            try:
+                validated_path = self._validate_path(request.output)
+            except ValueError as e:
+                if self.console:
+                    self.console.print(f"[red]Error: {e}[/red]")
+                return -1
+
+            inspect_parquet(
+                path=str(validated_path),
+                head=request.head or 10,
+                metadata_only=request.metadata_only,
+            )
+        else:
+            if self.console:
+                self.console.print(f"[cyan]Inspecting Iceberg Table: {request.output}[/cyan]")
+                try:
+                    with EdgeQueryClient() as edge_client:
+                        # Simple preview for Iceberg
+                        results = edge_client.query_sql(
+                            request.output, f"SELECT * FROM df LIMIT {request.head or 10}"
+                        )
+                        from rich.table import Table
+
+                        table = Table(title=f"Preview of {request.output}")
+                        for col in results.columns:
+                            table.add_column(col)
+                        for _, row in results.iterrows():
+                            table.add_row(*[str(val) for val in row])
+                        self.console.print(table)
+                except Exception as e:
+                    self.console.print(f"[red]Failed to inspect Iceberg table: {e}[/red]")
         return 0
 
     def _fetch_data_with_progress(self, fetch_func: Any) -> Any:

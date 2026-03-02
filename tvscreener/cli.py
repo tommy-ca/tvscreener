@@ -21,211 +21,228 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Run forex scanners",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
+    # Handle maintenance subcommand separately to preserve top-level compatibility for scans
+    if len(sys.argv) > 1 and sys.argv[1] == "maintenance":
+        parser = argparse.ArgumentParser(description="Lakehouse maintenance tools")
+        parser.add_argument("command", choices=["maintenance"])
+        parser.add_argument(
+            "--expire-snapshots", action="store_true", help="Expire snapshots older than X days"
+        )
+        parser.add_argument("--days", type=int, default=7, help="Days to keep snapshots")
+        parser.add_argument("--table", default="forex.opportunities", help="Table name")
+        parser.add_argument("--compact", action="store_true", help="Trigger file compaction (Hook)")
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
 
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Path to YAML config (default: tvscreener.yaml)",
-    )
+        args = parser.parse_args()
+    else:
+        parser = argparse.ArgumentParser(
+            description="Run forex scanners",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
 
-    parser.add_argument(
-        "--scanner",
-        "-s",
-        choices=["opportunity", "strategy", "inspect"],
-        default="strategy",
-    )
-    parser.add_argument(
-        "--asset-type",
-        choices=["forex", "stocks", "commodity", "crypto"],
-        default="forex",
-    )
-    parser.add_argument("--universe", "-u", choices=["majors", "minors", "all"], default=None)
-    parser.add_argument("--pairs", nargs="+", help="Specific pairs to scan")
-    parser.add_argument("--timeframes", "-t", default=None, help="Comma-separated timeframes")
-    parser.add_argument(
-        "--contract-type",
-        choices=["spot", "cfd", "spreadbet", "all"],
-        default=None,
-        help="Contract type to filter (default: cfd)",
-    )
-    parser.add_argument("--output", "-o", help="Output file (csv/json/parquet/xml)")
-    parser.add_argument("--save-config", help="Save opportunity config to YAML")
-    parser.add_argument("--load-config", help="Load opportunity config from YAML")
-    parser.add_argument(
-        "--strategy",
-        choices=["all", "trend", "mean_reversion", "hybrid", "breakout", "confluence"],
-        default="all",
-    )
-    parser.add_argument("--direction", choices=["long", "short"], help="Filter by direction")
-    parser.add_argument(
-        "--filter", action="append", help="MTF filter expression (e.g. '1H:TREND > 0')"
-    )
-    parser.add_argument("--sql", help="Raw SQL query to filter the results")
-    parser.add_argument("--min-volume", type=float, help="Minimum average volume")
-    parser.add_argument("--max-atr", type=float, help="Maximum ATR (volatility proxy)")
-    parser.add_argument("--min-ma-score", type=float, help="Minimum MA score (-2 to 2)")
-    parser.add_argument(
-        "--min-confluence",
-        type=int,
-        help="Minimum confluence score (strategy scanner)",
-    )
-    parser.add_argument(
-        "--trend-threshold",
-        type=float,
-        help="Trend score threshold (strategy scanner)",
-    )
-    parser.add_argument(
-        "--mr-threshold",
-        type=float,
-        help="Mean-reversion score threshold (strategy scanner)",
-    )
-    parser.add_argument(
-        "--rsi-lower",
-        type=float,
-        help="Lower RSI threshold for oversold signals",
-    )
-    parser.add_argument(
-        "--rsi-upper",
-        type=float,
-        help="Upper RSI threshold for overbought signals",
-    )
-    parser.add_argument(
-        "--min-roc",
-        type=float,
-        help="Minimum ROC value for breakout filter",
-    )
-    parser.add_argument(
-        "--opportunity-trend-weight",
-        type=float,
-        help="Trend weight for opportunity scoring",
-    )
-    parser.add_argument(
-        "--opportunity-ma-weight",
-        type=float,
-        help="MA weight for opportunity scoring",
-    )
-    parser.add_argument(
-        "--opportunity-osc-weight",
-        type=float,
-        help="Oscillator weight for opportunity scoring",
-    )
-    parser.add_argument(
-        "--opportunity-roc-weight",
-        type=float,
-        help="ROC weight for opportunity scoring",
-    )
-    parser.add_argument(
-        "--opportunity-timeframe-weights",
-        help="Timeframe weights for opportunity scoring (format 240:0.2,60:0.3,15:0.5)",
-    )
-    parser.add_argument(
-        "--include-atr",
-        action="store_true",
-        help="Request ATR fields when running strategy scan",
-    )
-    parser.add_argument(
-        "--include-rsi",
-        action="store_true",
-        help="Request RSI fields when running strategy scan",
-    )
-    parser.add_argument(
-        "--mr-signal",
-        choices=["rsi_oversold", "rsi_overbought"],
-        action="append",
-        help="Mean reversion signal (can be specified multiple times)",
-    )
-    # Risk management signal quality filters
-    parser.add_argument(
-        "--min-tf-alignment",
-        type=int,
-        choices=[1, 2, 3],
-        help="Minimum aligned timeframes for signal quality",
-    )
-    parser.add_argument(
-        "--require-momentum",
-        action="store_true",
-        help="Require ROC to align with direction",
-    )
-    parser.add_argument(
-        "--min-rvol",
-        type=float,
-        help="Minimum relative volume (1.0 = average)",
-    )
-    parser.add_argument(
-        "--require-volume-spike",
-        action="store_true",
-        help="Require volume > 1.5x average",
-    )
-    # Risk management parameters
-    parser.add_argument(
-        "--risk-per-trade",
-        type=float,
-        help="Risk per trade as percentage (default from settings)",
-    )
-    parser.add_argument(
-        "--atr-multiplier",
-        type=float,
-        help="ATR multiplier for stop loss calculation",
-    )
-    parser.add_argument(
-        "--min-risk-reward",
-        type=float,
-        help="Minimum risk:reward ratio",
-    )
-    parser.add_argument(
-        "--account-balance",
-        type=float,
-        help="Account balance for position sizing",
-    )
-    # Output format options
-    parser.add_argument(
-        "--detailed",
-        action="store_true",
-        help="Show detailed per-pair breakdown with TF analysis",
-    )
-    parser.add_argument(
-        "--matrix",
-        action="store_true",
-        help="Show confluence matrix view for all pairs",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        help="Number of results to show in summary/detailed/matrix views",
-    )
-    parser.add_argument(
-        "--confluence-grade",
-        choices=["A+", "A", "B", "C", "D", "F"],
-        help="Filter by confluence grade",
-    )
-    parser.add_argument(
-        "--min-opportunity-confluence",
-        type=int,
-        help="Minimum grid-aligned cells (0-12) for opportunity scanner",
-    )
-    # Inspect options
-    parser.add_argument(
-        "--head",
-        type=int,
-        help="Number of rows to show when inspecting parquet",
-    )
-    parser.add_argument(
-        "--metadata-only",
-        action="store_true",
-        help="Only show metadata when inspecting parquet",
-    )
-    parser.add_argument(
-        "--show-risk",
-        action="store_true",
-        help="Show risk management metadata (SL/TP/RR/Size) in output",
-    )
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument(
+            "--config",
+            default=None,
+            help="Path to YAML config (default: tvscreener.yaml)",
+        )
 
-    args = parser.parse_args()
+        parser.add_argument(
+            "--scanner",
+            "-s",
+            choices=["opportunity", "strategy", "inspect"],
+            default="strategy",
+        )
+        parser.add_argument(
+            "--asset-type",
+            choices=["forex", "stocks", "commodity", "crypto"],
+            default="forex",
+        )
+        parser.add_argument("--universe", "-u", choices=["majors", "minors", "all"], default=None)
+        parser.add_argument("--pairs", nargs="+", help="Specific pairs to scan")
+        parser.add_argument("--timeframes", "-t", default=None, help="Comma-separated timeframes")
+        parser.add_argument(
+            "--contract-type",
+            choices=["spot", "cfd", "spreadbet", "all"],
+            default=None,
+            help="Contract type to filter (default: cfd)",
+        )
+        parser.add_argument("--output", "-o", help="Output file (csv/json/parquet/xml)")
+        parser.add_argument("--save-config", help="Save opportunity config to YAML")
+        parser.add_argument("--load-config", help="Load opportunity config from YAML")
+        parser.add_argument(
+            "--strategy",
+            choices=["all", "trend", "mean_reversion", "hybrid", "breakout", "confluence"],
+            default="all",
+        )
+        parser.add_argument("--direction", choices=["long", "short"], help="Filter by direction")
+        parser.add_argument(
+            "--filter", action="append", help="MTF filter expression (e.g. '1H:TREND > 0')"
+        )
+        parser.add_argument("--sql", help="Raw SQL query to filter the results")
+        parser.add_argument("--min-volume", type=float, help="Minimum average volume")
+        parser.add_argument("--max-atr", type=float, help="Maximum ATR (volatility proxy)")
+        parser.add_argument("--min-ma-score", type=float, help="Minimum MA score (-2 to 2)")
+        parser.add_argument(
+            "--min-confluence",
+            type=int,
+            help="Minimum confluence score (strategy scanner)",
+        )
+        parser.add_argument(
+            "--trend-threshold",
+            type=float,
+            help="Trend score threshold (strategy scanner)",
+        )
+        parser.add_argument(
+            "--mr-threshold",
+            type=float,
+            help="Mean-reversion score threshold (strategy scanner)",
+        )
+        parser.add_argument(
+            "--rsi-lower",
+            type=float,
+            help="Lower RSI threshold for oversold signals",
+        )
+        parser.add_argument(
+            "--rsi-upper",
+            type=float,
+            help="Upper RSI threshold for overbought signals",
+        )
+        parser.add_argument(
+            "--min-roc",
+            type=float,
+            help="Minimum ROC value for breakout filter",
+        )
+        parser.add_argument(
+            "--opportunity-trend-weight",
+            type=float,
+            help="Trend weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-ma-weight",
+            type=float,
+            help="MA weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-osc-weight",
+            type=float,
+            help="Oscillator weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-roc-weight",
+            type=float,
+            help="ROC weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-timeframe-weights",
+            help="Timeframe weights for opportunity scoring (format 240:0.2,60:0.3,15:0.5)",
+        )
+        parser.add_argument(
+            "--include-atr",
+            action="store_true",
+            help="Request ATR fields when running strategy scan",
+        )
+        parser.add_argument(
+            "--include-rsi",
+            action="store_true",
+            help="Request RSI fields when running strategy scan",
+        )
+        parser.add_argument(
+            "--mr-signal",
+            choices=["rsi_oversold", "rsi_overbought"],
+            action="append",
+            help="Mean reversion signal (can be specified multiple times)",
+        )
+        # Risk management signal quality filters
+        parser.add_argument(
+            "--min-tf-alignment",
+            type=int,
+            choices=[1, 2, 3],
+            help="Minimum aligned timeframes for signal quality",
+        )
+        parser.add_argument(
+            "--require-momentum",
+            action="store_true",
+            help="Require ROC to align with direction",
+        )
+        parser.add_argument(
+            "--min-rvol",
+            type=float,
+            help="Minimum relative volume (1.0 = average)",
+        )
+        parser.add_argument(
+            "--require-volume-spike",
+            action="store_true",
+            help="Require volume > 1.5x average",
+        )
+        # Risk management parameters
+        parser.add_argument(
+            "--risk-per-trade",
+            type=float,
+            help="Risk per trade as percentage (default from settings)",
+        )
+        parser.add_argument(
+            "--atr-multiplier",
+            type=float,
+            help="ATR multiplier for stop loss calculation",
+        )
+        parser.add_argument(
+            "--min-risk-reward",
+            type=float,
+            help="Minimum risk:reward ratio",
+        )
+        parser.add_argument(
+            "--account-balance",
+            type=float,
+            help="Account balance for position sizing",
+        )
+        # Output format options
+        parser.add_argument(
+            "--detailed",
+            action="store_true",
+            help="Show detailed per-pair breakdown with TF analysis",
+        )
+        parser.add_argument(
+            "--matrix",
+            action="store_true",
+            help="Show confluence matrix view for all pairs",
+        )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            help="Number of results to show in summary/detailed/matrix views",
+        )
+        parser.add_argument(
+            "--confluence-grade",
+            choices=["A+", "A", "B", "C", "D", "F"],
+            help="Filter by confluence grade",
+        )
+        parser.add_argument(
+            "--min-opportunity-confluence",
+            type=int,
+            help="Minimum grid-aligned cells (0-12) for opportunity scanner",
+        )
+        # Inspect options
+        parser.add_argument(
+            "--head",
+            type=int,
+            help="Number of rows to show when inspecting parquet",
+        )
+        parser.add_argument(
+            "--metadata-only",
+            action="store_true",
+            help="Only show metadata when inspecting parquet",
+        )
+        parser.add_argument(
+            "--show-risk",
+            action="store_true",
+            help="Show risk management metadata (SL/TP/RR/Size) in output",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
+        args = parser.parse_args()
+        args.command = "scan"
+
     setup_logging(args.verbose)
 
     # Register renderers

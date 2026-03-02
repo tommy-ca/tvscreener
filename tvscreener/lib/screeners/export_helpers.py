@@ -155,6 +155,31 @@ def export_to_xml(
         _write_metadata_file(path, metadata, logger, label)
 
 
+def export_to_iceberg(
+    df_getter: Callable[[], pd.DataFrame],
+    path: str,
+    *,
+    logger: logging.Logger,
+    label: str,
+    metadata: dict[str, Any] | None = None,
+    **kwargs: Any,
+) -> None:
+    from pathlib import Path
+
+    from tvscreener.lib.lakehouse.storage import write_iceberg
+
+    df = df_getter()
+    if df.empty:
+        logger.info(f"No {label} to export to Iceberg.")
+        return
+
+    # Use the stem of the path as the table name
+    table_name = Path(path).stem
+
+    write_iceberg(df, table_name)
+    logger.info(f"Saved {len(df)} {label} to Iceberg table '{table_name}'")
+
+
 def _dict_to_xml(parent: ET.Element, data: dict[str, Any]) -> None:
     """Recursively convert dictionary to XML elements."""
     for key, value in data.items():
@@ -178,6 +203,7 @@ EXPORT_FUNCTIONS: dict[str, Callable[..., None]] = {
     "json": export_to_json,
     "parquet": export_to_parquet,
     "xml": export_to_xml,
+    "iceberg": export_to_iceberg,
 }
 
 
@@ -185,7 +211,7 @@ def get_export_function(format_name: str) -> Callable[..., None]:
     exporter = EXPORT_FUNCTIONS.get(format_name.lower())
     if exporter is None:
         raise ValueError(
-            f"Unknown export format '{format_name}'. Supported formats: csv, json, parquet, xml."
+            f"Unknown export format '{format_name}'. Supported formats: csv, json, parquet, xml, iceberg."
         )
     return exporter
 
