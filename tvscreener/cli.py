@@ -80,7 +80,12 @@ def main() -> int:
             "--filter", action="append", help="MTF filter expression (e.g. '1H:TREND > 0')"
         )
         parser.add_argument("--sql", help="Raw SQL query to filter the results")
-        parser.add_argument("--min-volume", type=float, help="Minimum average volume")
+        parser.add_argument(
+            "--sql-params",
+            type=str,
+            help="JSON string of parameters for the SQL query",
+        )
+        parser.add_argument("--min_volume", type=float, help="Minimum average volume")
         parser.add_argument("--max-atr", type=float, help="Maximum ATR (volatility proxy)")
         parser.add_argument("--min-ma-score", type=float, help="Minimum MA score (-2 to 2)")
         parser.add_argument(
@@ -249,6 +254,18 @@ def main() -> int:
     from tvscreener.lib.screeners.renderers.rich_console import register_renderers
 
     register_renderers()
+
+    # Parse sql_params if provided
+    if getattr(args, "sql_params", None):
+        import json
+
+        try:
+            args.sql_params = json.loads(args.sql_params)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Error parsing --sql-params: {e}[/red]")
+            return 1
+    else:
+        args.sql_params = {}
 
     # Initialize orchestrator and run
     controller = ScreenerController(console=console)

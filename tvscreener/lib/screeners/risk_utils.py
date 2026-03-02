@@ -2,6 +2,7 @@
 
 import logging
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -31,16 +32,27 @@ class RiskEngine:
     def __init__(self, config: RiskConfig | None = None):
         self.config = config or RiskConfig()
 
-    def apply(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate stop loss, take profit and position sizing using vectorized operations."""
+    def apply(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
+        """Calculate stop loss, take profit and position sizing using vectorized operations.
+
+        Args:
+            df: DataFrame to apply risk management to
+            copy: If True, copy DataFrame to avoid mutation
+
+        Returns:
+            DataFrame with added risk management columns
+        """
         if df.empty:
             return df
 
-        df = df.copy()
+        if copy:
+            df = df.copy()
 
         # Drop existing risk columns to avoid duplicates
         risk_cols = ["STOP_LOSS", "TAKE_PROFIT", "RR_RATIO", "POSITION_SIZE"]
-        df = df.drop(columns=[c for c in risk_cols if c in df.columns], errors="ignore")
+        cols_to_drop = [c for c in risk_cols if c in df.columns]
+        if cols_to_drop:
+            df.drop(columns=cols_to_drop, inplace=True)
 
         # Try to find a representative ATR for the pair
         # We'll use the first available ATR column
@@ -68,20 +80,42 @@ class RiskEngine:
 
         # Vectorized calculations
         df["STOP_LOSS"] = calculate_stop_loss(
-            entry, direction, atr, multiplier=self.config.atr_multiplier
+            cast(pd.Series, entry),
+            direction,
+            cast(pd.Series, atr),
+            multiplier=self.config.atr_multiplier,
         )
         df["TAKE_PROFIT"] = calculate_take_profit(
-            entry, df["STOP_LOSS"], direction, min_rr=self.config.min_risk_reward_ratio
+            cast(pd.Series, entry),
+            cast(pd.Series, df["STOP_LOSS"]),
+            direction,
+            min_rr=self.config.min_risk_reward_ratio,
         )
-        df["RR_RATIO"] = calculate_risk_reward_ratio(entry, df["STOP_LOSS"], df["TAKE_PROFIT"])
+        df["RR_RATIO"] = calculate_risk_reward_ratio(
+            cast(pd.Series, entry),
+            cast(pd.Series, df["STOP_LOSS"]),
+            cast(pd.Series, df["TAKE_PROFIT"]),
+        )
 
         # Position sizing
         stop_dist = (entry - df["STOP_LOSS"]).abs()
+
+        # Determine pip size for each row
+        # Support various column names for the symbol
+        symbol_cols = ["TICKER", "SYMBOL", "PAIR", "Symbol", "Pair"]
+        symbol_col = next((c for c in symbol_cols if c in df.columns), None)
+
+        pip_size = df[symbol_col].apply(get_pip_size) if symbol_col else 0.0001
+
+        # Use PIP_VALUE column if available, otherwise use config
+        pip_value = df["PIP_VALUE"] if "PIP_VALUE" in df.columns else self.config.pip_value
+
         df["POSITION_SIZE"] = calculate_position_size(
             self.config.account_balance,
             self.config.risk_per_trade_pct / 100.0,  # Convert percentage to decimal
             stop_dist,
-            pip_value=self.config.pip_value,
+            pip_value=pip_value,
+            pip_size=pip_size,
         )
 
         return df
@@ -181,11 +215,31 @@ def calculate_take_profit(
     return entry - reward
 
 
+def get_pip_size(symbol: str) -> float:
+    """Get the size of one pip for a given symbol.
+
+    Args:
+        symbol: Currency pair symbol (e.g., 'EURUSD', 'USDJPY')
+
+    Returns:
+        Pip size (0.01 for JPY pairs, 0.0001 for others)
+    """
+    if not isinstance(symbol, str) or not symbol:
+        return 0.0001
+
+    symbol_upper = symbol.upper()
+    # Check if JPY is the quote currency (usually ends with JPY or has JPY after a separator)
+    if symbol_upper.endswith("JPY") or "JPY" in symbol_upper:
+        return 0.01
+    return 0.0001
+
+
 def calculate_position_size(
     account_balance: float,
     risk_per_trade: float,
     stop_distance: float | pd.Series,
     pip_value: float = 10.0,
+    pip_size: float | pd.Series = 0.0001,
 ) -> float | pd.Series:
     """Calculate position size in lots (supports vectorized Pandas operations).
 
@@ -194,21 +248,37 @@ def calculate_position_size(
         risk_per_trade: Risk per trade as decimal (e.g., 0.01 for 1%)
         stop_distance: Stop loss distance in price terms
         pip_value: Value per pip/lot (default 10 for standard lots)
+        pip_size: The size of one pip in price terms (0.0001 or 0.01)
 
     Returns:
         Position size in lots
     """
     risk_amount = account_balance * risk_per_trade
 
-    if isinstance(stop_distance, pd.Series):
+    # Adjust the effective pip value based on pip size.
+    # The original logic assumed 0.0001 for a pip.
+    # If pip_size is 0.01 (JPY), we need to scale the divisor down by 100x
+    # because stop_distance is 100x larger for the same number of pips.
+    effective_pip_value = pip_value * (0.0001 / pip_size)
+
+    if isinstance(stop_distance, pd.Series) or isinstance(effective_pip_value, pd.Series):
+        # Align series
+        sd = pd.Series(stop_distance) if not isinstance(stop_distance, pd.Series) else stop_distance
+        epv = (
+            pd.Series(effective_pip_value)
+            if not isinstance(effective_pip_value, pd.Series)
+            else effective_pip_value
+        )
+
         # Use np.where to handle division by zero or negative stop distance
-        pos_size = np.where(stop_distance > 0, risk_amount / (stop_distance * pip_value), 0.0)
-        return pd.Series(pos_size, index=stop_distance.index)
+        divisor = sd * epv
+        pos_size = np.where(sd > 0, risk_amount / divisor, 0.0)
+        return pd.Series(pos_size, index=sd.index)
 
     # Scalar fallback
     if stop_distance <= 0:
         return 0.0
-    return risk_amount / (stop_distance * pip_value)
+    return risk_amount / (stop_distance * effective_pip_value)
 
 
 def calculate_risk_reward_ratio(

@@ -34,11 +34,11 @@ def inspect_parquet(
         if embedded_json:
             # Security: Size limit for JSON metadata to prevent DoS (e.g. 10MB)
             if len(embedded_json) > 10 * 1024 * 1024:
-                logger.warning(f"Metadata too large ({len(embedded_json)} bytes), skipping")
+                logger.warning("Metadata too large (%d bytes), skipping", len(embedded_json))
             else:
                 metadata = json.loads(embedded_json)
     except Exception as e:
-        logger.debug(f"Could not read embedded metadata: {e}")
+        logger.debug("Could not read embedded metadata: %s", e)
 
     # 2. Display Header
     console.print(Panel(f"[bold cyan]Inspection: {p.name}[/bold cyan]", expand=False))

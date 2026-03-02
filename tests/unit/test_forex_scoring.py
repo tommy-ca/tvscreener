@@ -44,7 +44,7 @@ class TestEnsembleScoring:
             }
         )
 
-        result = screener._rank_opportunities(mock_df)
+        result = screener._engine.rank_opportunities(mock_df)
 
         assert "TREND_SCORE" in result.columns
         assert "MA_SCORE" in result.columns
@@ -70,7 +70,7 @@ class TestEnsembleScoring:
             }
         )
 
-        result = screener._rank_opportunities(mock_df)
+        result = screener._engine.rank_opportunities(mock_df)
 
         expected_ensemble = (1.0 * 0.4) + (1.0 * 0.3) + (1.0 * 0.2) + (1.0 * 0.1)
         assert abs(result.iloc[0]["ENSEMBLE_SCORE"] - expected_ensemble) < 0.1
@@ -89,7 +89,7 @@ class TestEnsembleScoring:
             }
         )
 
-        result = screener._rank_opportunities(mock_df)
+        result = screener._engine.rank_opportunities(mock_df)
 
         from tvscreener.core.enums import Direction
 
@@ -109,7 +109,7 @@ class TestEnsembleScoring:
             }
         )
 
-        result = screener._rank_opportunities(mock_df)
+        result = screener._engine.rank_opportunities(mock_df)
 
         from tvscreener.core.enums import Direction
 
@@ -129,7 +129,7 @@ class TestEnsembleScoring:
             }
         )
 
-        result = screener._rank_opportunities(mock_df)
+        result = screener._engine.rank_opportunities(mock_df)
 
         assert result.iloc[0]["Name"] == "GBPUSD"
         assert result.iloc[1]["Name"] == "EURUSD"

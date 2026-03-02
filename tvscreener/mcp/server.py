@@ -142,6 +142,8 @@ def scanner_opportunities(
             limit=limit,
             show_risk=show_risk,
             output=output,
+            sql=sql,
+            filters=filters,
         )
 
         if isinstance(results, str):
@@ -708,6 +710,44 @@ def query_historical_scan(sql: str, file_path: str) -> str:
     The table name in your query should be 'df' (e.g., 'SELECT PAIR, TREND FROM df WHERE GRADE = 'A+'').
     """
     return tools.query_historical_scan(sql, file_path)
+
+
+# =============================================================================
+# LAKEHOUSE TOOLS
+# =============================================================================
+
+
+@mcp.tool()
+def lakehouse_list_tables() -> str:
+    """
+    List all tables in the Iceberg lakehouse catalog.
+    Use this to discover available datasets (bronze, silver, gold, etc).
+    """
+    return tools.lakehouse_list_tables()
+
+
+@mcp.tool()
+def lakehouse_get_schema(table_name: str) -> str:
+    """
+    Get the schema (fields and types) of a specific lakehouse table.
+
+    Args:
+        table_name: Full identifier of the table (e.g., 'tvscreener.bronze', 'tvscreener.silver')
+    """
+    return tools.lakehouse_get_schema(table_name)
+
+
+@mcp.tool()
+def lakehouse_maintenance(table_name: str, operation: str, older_than_days: int = 7) -> str:
+    """
+    Perform maintenance on a lakehouse table (snapshot expiration, orphan file removal).
+
+    Args:
+        table_name: Full identifier of the table
+        operation: 'expire_snapshots' (reclaim space) or 'remove_orphan_files' (cleanup)
+        older_than_days: For expire_snapshots, how many days of history to keep (default 7)
+    """
+    return tools.lakehouse_maintenance(table_name, operation, older_than_days=older_than_days)
 
 
 def run():

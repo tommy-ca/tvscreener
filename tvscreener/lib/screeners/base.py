@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 
@@ -115,24 +116,6 @@ class ExportMixin(ABC):
             logger=logging.getLogger(self.__class__.__module__),
             label=label,
         )
-
-    def _direction_emoji(self, value: float) -> str:
-        """Direction indicator that always shows 🟢 or 🔴 (never ⚪)."""
-        if value >= 0.5:
-            return "🟢🟢"
-        if value > 0:
-            return "🟢"
-        if value <= -0.5:
-            return "🔴🔴"
-        return "🔴"
-
-    def _matrix_sign(self, value: float) -> str:
-        """Single emoji for matrix cells (no doubles — prevents column truncation)."""
-        if value > 0:
-            return "🟢"
-        if value < 0:
-            return "🔴"
-        return "⚪"
 
     def print_summary(self, results_df: pd.DataFrame | None = None, **kwargs) -> None:
         """Print a summary of the results to the console using the default renderer.
@@ -252,46 +235,70 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         )
         return df
 
-    def _ingest(self) -> pd.DataFrame:
-        """Stage 1: API Ingestion (Bronze)."""
+    def _resume_or_run(
+        self,
+        stage: str,
+        runner_func: Callable[[], pd.DataFrame],
+        persist: bool = True,
+        mode: str | None = None,
+    ) -> pd.DataFrame:
+        """Helper to either resume a stage from Iceberg or run its logic."""
         replay = self.config.extra_options.get("replay")
+        table_name = f"tvscreener.{stage}"
+
+        if mode is None:
+            # Default to overwrite for Gold and Silver to ensure idempotency
+            # Bronze might still use append if we want to keep raw history,
+            # but usually even Bronze is better with overwrite-by-partition.
+            mode = "overwrite" if stage in ["gold", "silver"] else "append"
+
         if replay:
             try:
                 catalog = get_catalog()
-                table = catalog.load_table("tvscreener.bronze")
-                logger.info("Resuming from Bronze Iceberg table")
+                table = catalog.load_table(table_name)
+                logger.info("Resuming from %s Iceberg table", stage.capitalize())
                 return table.to_pandas()
             except NoSuchTableError:
                 pass
             except Exception as e:
-                logger.debug("Failed to load from Bronze: %s", e)
+                logger.debug("Failed to load from %s: %s", stage.capitalize(), e)
 
-        return self._fetch_all_data()
+        df = runner_func()
+
+        if persist:
+            try:
+                partition_by = None
+                # Add metadata columns and set partitioning based on medallion layer
+                if stage == "bronze":
+                    if "ingest_date" not in df.columns:
+                        df["ingest_date"] = pd.Timestamp.now().strftime("%Y-%m-%d")
+                    partition_by = ["ingest_date"]
+                elif stage == "silver":
+                    # asset_type should ideally come from the screener
+                    if "asset_type" not in df.columns:
+                        # Try to infer from class name or use a default
+                        df["asset_type"] = self.__class__.__name__.replace("Screener", "").lower()
+                    partition_by = ["asset_type"]
+                elif stage == "gold":
+                    if "signal_date" not in df.columns:
+                        df["signal_date"] = pd.Timestamp.now().strftime("%Y-%m-%d")
+                    partition_by = ["signal_date"]
+
+                write_iceberg(df, table_name, mode=mode, partition_by=partition_by)
+            except Exception as e:
+                logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
+
+        return df
+
+    def _ingest(self) -> pd.DataFrame:
+        """Stage 1: API Ingestion (Bronze)."""
+        return cast(pd.DataFrame, self._resume_or_run("bronze", self._fetch_all_data))
 
     def _standardize(self, df: pd.DataFrame) -> pd.DataFrame:
         """Stage 2: Standardization (Silver)."""
-        replay = self.config.extra_options.get("replay")
-        if replay:
-            try:
-                catalog = get_catalog()
-                table = catalog.load_table("tvscreener.silver")
-                logger.info("Resuming from Silver Iceberg table")
-                return table.to_pandas()
-            except NoSuchTableError:
-                pass
-            except Exception as e:
-                logger.debug("Failed to load from Silver: %s", e)
-
-        # Standardize using narwhals
-        df = self._apply_standardization(df)
-
-        # Persist to Silver
-        try:
-            write_iceberg(df, "tvscreener.silver")
-        except Exception as e:
-            logger.debug("Iceberg Silver persistence failed: %s", e)
-
-        return df
+        return cast(
+            pd.DataFrame, self._resume_or_run("silver", lambda: self._apply_standardization(df))
+        )
 
     def _apply_standardization(self, df: pd.DataFrame) -> pd.DataFrame:
         """Apply filters and normalization logic using narwhals where possible."""
@@ -299,41 +306,24 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         df = self._apply_asset_filters(df)
         df = self._merge_duplicates(df)
 
-        # Standard technical normalization using narwhals
-        df_nw = nw.from_native(df)
         from tvscreener.lib.screeners.transformer import DataTransformer
 
-        df_nw = DataTransformer.rename_technical_columns(df_nw, self.timeframes)
-        df_nw = DataTransformer.standardize_stat_columns(df_nw)
-        return cast(pd.DataFrame, df_nw.to_native())
+        # Let the @narwhalify decorators handle the conversion
+        df = cast(pd.DataFrame, DataTransformer.rename_technical_columns(df, self.timeframes))
+        df = cast(pd.DataFrame, DataTransformer.standardize_stat_columns(df))
+        return df
 
     def _score(self, df: pd.DataFrame) -> pd.DataFrame:
         """Stage 3: Scoring (Gold)."""
-        replay = self.config.extra_options.get("replay")
-        if replay:
-            try:
-                catalog = get_catalog()
-                table = catalog.load_table("tvscreener.gold")
-                logger.info("Resuming from Gold Iceberg table")
-                return table.to_pandas()
-            except NoSuchTableError:
-                pass
-            except Exception as e:
-                logger.debug("Failed to load from Gold: %s", e)
 
-        # Scoring logic using ScoringEngine
-        df = self._engine.rank_opportunities(df)
+        def run_score():
+            # Scoring logic using ScoringEngine
+            scored_df = self._engine.rank_opportunities(df, copy=False)
+            if self.config.show_risk:
+                scored_df = self._risk_engine.apply(scored_df, copy=False)
+            return scored_df
 
-        if self.config.show_risk:
-            df = self._risk_engine.apply(df)
-
-        # Persist to Gold
-        try:
-            write_iceberg(df, "tvscreener.gold")
-        except Exception as e:
-            logger.debug("Iceberg Gold persistence failed: %s", e)
-
-        return df
+        return cast(pd.DataFrame, self._resume_or_run("gold", run_score))
 
     def _get_tickers(self) -> list[str]:
         """Return the list of tickers to fetch. Subclasses can override for prefixing/formatting."""
@@ -390,11 +380,6 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         # Enforce PyArrow backend at the Silver boundary for zero-copy efficiency
         if not combined_df.empty:
             combined_df = cast(pd.DataFrame, combined_df.convert_dtypes(dtype_backend="pyarrow"))
-            try:
-                # Optionally persist to tvscreener.bronze if an Iceberg catalog is available.
-                write_iceberg(combined_df, "tvscreener.bronze")
-            except Exception as e:
-                logger.debug("Iceberg Bronze persistence skipped: %s", e)
         return combined_df
 
     def _get_base_fields(self, field_class: Any) -> list[Any]:
@@ -449,7 +434,17 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         if df.empty:
             return df
         # Default implementation: just keep first by name using narwhals
+        from tvscreener.lib.screeners.transformer import DataTransformer
+
+        # If DataTransformer has a specific method, use it, else fallback to unique
+        if (
+            hasattr(DataTransformer, "normalize_forex_pairs")
+            and self.__class__.__name__ == "ForexOpportunityScreener"
+        ):
+            # This is handled by subclass overrides usually, but for base:
+            pass
+
         df_nw = nw.from_native(df)
         if "Name" in df_nw.columns:
             df_nw = df_nw.unique(subset=["Name"])
-        return cast(pd.DataFrame, df_nw.to_native())
+        return cast(pd.DataFrame, nw.to_native(df_nw))

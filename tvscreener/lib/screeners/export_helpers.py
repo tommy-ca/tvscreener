@@ -28,7 +28,7 @@ def export_to_csv(
                 safe_value = str(value).replace("\n", " ").replace("\r", " ")
                 fh.write(f"# {key}: {safe_value}\n")
         df.to_csv(fh, index=include_index)
-    logger.info(f"Saved {len(df)} {label} to {path}")
+    logger.info("Saved %d %s to %s", len(df), label, path)
     if metadata:
         _write_metadata_file(path, metadata, logger, label)
 
@@ -49,7 +49,7 @@ def export_to_json(
     with open(path, "w") as fh:
         # Use MetadataEncoder to handle numpy/datetime objects (Issue 046)
         json.dump(payload, fh, indent=2, cls=MetadataEncoder)
-    logger.info(f"Saved {len(df)} {label} to {path}")
+    logger.info("Saved %d %s to %s", len(df), label, path)
 
 
 def print_summary(
@@ -112,15 +112,15 @@ def export_to_parquet(
             # Write with embedded metadata
             pq.write_table(table, path)
             embedding_success = True
-            logger.info(f"Saved {len(df)} {label} with embedded metadata to {path}")
+            logger.info("Saved %d %s with embedded metadata to %s", len(df), label, path)
         except ImportError:
             logger.warning("pyarrow not installed. Falling back to sidecar metadata file.")
         except Exception as e:
-            logger.error(f"Failed to embed metadata in Parquet: {e}. Falling back to sidecar.")
+            logger.error("Failed to embed metadata in Parquet: %s. Falling back to sidecar.", e)
 
     if not embedding_success:
         df.to_parquet(path, index=include_index)
-        logger.info(f"Saved {len(df)} {label} to {path}")
+        logger.info("Saved %d %s to %s", len(df), label, path)
         if metadata:
             _write_metadata_file(path, metadata, logger, label)
 
@@ -150,7 +150,7 @@ def export_to_xml(
     tree = ET.ElementTree(root)
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
-    logger.info(f"Saved {len(df)} {label} to {path}")
+    logger.info("Saved %d %s to %s", len(df), label, path)
     if metadata:
         _write_metadata_file(path, metadata, logger, label)
 
@@ -170,14 +170,14 @@ def export_to_iceberg(
 
     df = df_getter()
     if df.empty:
-        logger.info(f"No {label} to export to Iceberg.")
+        logger.info("No %s to export to Iceberg.", label)
         return
 
     # Use the stem of the path as the table name
     table_name = Path(path).stem
 
     write_iceberg(df, table_name)
-    logger.info(f"Saved {len(df)} {label} to Iceberg table '{table_name}'")
+    logger.info("Saved %d %s to Iceberg table '%s'", len(df), label, table_name)
 
 
 def _dict_to_xml(parent: ET.Element, data: dict[str, Any]) -> None:
@@ -223,4 +223,4 @@ def _write_metadata_file(
     with open(meta_path, "w") as fh:
         # Use MetadataEncoder to handle numpy/datetime objects (Issue 046)
         json.dump({"metadata": metadata}, fh, indent=2, cls=MetadataEncoder)
-    logger.info(f"Saved metadata for {label} to {meta_path}")
+    logger.info("Saved metadata for %s to %s", label, meta_path)

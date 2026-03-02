@@ -46,10 +46,10 @@ def test_cli_filter_args_take_precedence(monkeypatch):
     captured = {}
 
     def fake_run_scan(self, request):
-        captured["min_confluence"] = request.min_confluence
-        captured["trend_threshold"] = request.trend_threshold
-        captured["mr_threshold"] = request.mr_threshold
-        captured["min_roc"] = request.min_roc
+        captured["min_confluence"] = request.scoring.min_confluence
+        captured["trend_threshold"] = request.scoring.trend_threshold
+        captured["mr_threshold"] = request.scoring.mr_threshold
+        captured["min_roc"] = request.assets.min_roc
         return 0
 
     monkeypatch.setattr(orchestrator.ScreenerController, "run_scan", fake_run_scan)

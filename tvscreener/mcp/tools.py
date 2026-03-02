@@ -21,7 +21,15 @@ from tvscreener import (
     FuturesField,
     StockField,
 )
-from tvscreener.lib.orchestrator import ScanRequest, ScreenerController
+from tvscreener.lib.lakehouse import get_catalog
+from tvscreener.lib.orchestrator import (
+    AssetSelection,
+    OutputConfig,
+    RiskConfig,
+    ScanRequest,
+    ScoringConfig,
+    ScreenerController,
+)
 from tvscreener.util import validate_path
 
 if TYPE_CHECKING:
@@ -387,39 +395,47 @@ def scan_opportunities(
     controller = ScreenerController(console=console)
 
     request = ScanRequest(
-        scanner="opportunity",
-        asset_type=asset_type,
-        universe=universe,
-        pairs=pairs,
-        timeframes=timeframes,
-        min_volume=min_volume,
-        max_atr=max_atr,
-        min_ma_score=min_ma_score,
-        min_roc=min_roc,
-        contract_type=contract_type,
-        include_atr=include_atr,
-        include_rsi=include_rsi,
-        opportunity_trend_weight=trend_weight,
-        opportunity_ma_weight=ma_weight,
-        opportunity_osc_weight=osc_weight,
-        opportunity_roc_weight=roc_weight,
-        opportunity_timeframe_weights=timeframe_weights,
-        confluence_grade=confluence_grade,
-        min_opportunity_confluence=min_confluence,
-        min_rvol=min_rvol,
-        require_volume_spike=require_volume_spike,
-        risk_per_trade_pct=risk_per_trade,
-        atr_multiplier=atr_multiplier,
-        min_risk_reward_ratio=min_risk_reward,
-        account_balance=account_balance,
-        pip_value=pip_value,
-        detailed=detailed,
-        matrix=matrix,
-        limit=limit,
-        show_risk=show_risk,
-        output=output,
-        sql=sql,
-        filters=filters or [],
+        assets=AssetSelection(
+            scanner="opportunity",
+            asset_type=asset_type,
+            universe=universe,
+            pairs=pairs,
+            timeframes=timeframes,
+            min_volume=min_volume,
+            max_atr=max_atr,
+            min_ma_score=min_ma_score,
+            min_roc=min_roc,
+            contract_type=contract_type,
+            include_atr=include_atr,
+            include_rsi=include_rsi,
+            min_rvol=min_rvol,
+            require_volume_spike=require_volume_spike,
+        ),
+        scoring=ScoringConfig(
+            opportunity_trend_weight=trend_weight,
+            opportunity_ma_weight=ma_weight,
+            opportunity_osc_weight=osc_weight,
+            opportunity_roc_weight=roc_weight,
+            opportunity_timeframe_weights=timeframe_weights,
+        ),
+        risk=RiskConfig(
+            risk_per_trade_pct=risk_per_trade,
+            atr_multiplier=atr_multiplier,
+            min_risk_reward_ratio=min_risk_reward,
+            account_balance=account_balance,
+            pip_value=pip_value,
+        ),
+        output=OutputConfig(
+            detailed=detailed,
+            matrix=matrix,
+            limit=limit,
+            show_risk=show_risk,
+            output=output,
+            sql=sql,
+            filters=filters or [],
+            confluence_grade=confluence_grade,
+            min_opportunity_confluence=min_confluence,
+        ),
     )
     results, screener = controller.get_opportunity_results(request)
 
@@ -497,47 +513,55 @@ def scan_strategies(
     controller = ScreenerController(console=console)
 
     request = ScanRequest(
-        scanner="strategy",
-        asset_type=asset_type,
-        universe=universe,
-        pairs=pairs,
-        timeframes=timeframes,
-        strategy=strategy,
-        filter_direction=direction,
-        min_confluence=min_confluence,
-        trend_threshold=trend_threshold,
-        mr_threshold=mr_threshold,
-        rsi_lower=rsi_lower,
-        rsi_upper=rsi_upper,
-        min_roc=min_roc,
-        min_volume=min_volume,
-        max_atr=max_atr,
-        min_ma_score=min_ma_score,
-        mr_signal=mr_signals or [],
-        contract_type=contract_type,
-        include_atr=include_atr,
-        include_rsi=include_rsi,
-        min_tf_alignment=min_tf_alignment,
-        require_momentum=require_momentum,
-        min_rvol=min_rvol,
-        require_volume_spike=require_volume_spike,
-        risk_per_trade_pct=risk_per_trade,
-        atr_multiplier=atr_multiplier,
-        min_risk_reward_ratio=min_risk_reward,
-        account_balance=account_balance,
-        pip_value=pip_value,
-        opportunity_trend_weight=trend_weight,
-        opportunity_ma_weight=ma_weight,
-        opportunity_osc_weight=osc_weight,
-        opportunity_roc_weight=roc_weight,
-        opportunity_timeframe_weights=timeframe_weights,
-        detailed=detailed,
-        matrix=matrix,
-        limit=limit,
-        show_risk=show_risk,
-        output=output,
-        sql=sql,
-        filters=filters or [],
+        assets=AssetSelection(
+            scanner="strategy",
+            asset_type=asset_type,
+            universe=universe,
+            pairs=pairs,
+            timeframes=timeframes,
+            strategy=strategy,
+            contract_type=contract_type,
+            min_volume=min_volume,
+            max_atr=max_atr,
+            min_ma_score=min_ma_score,
+            min_roc=min_roc,
+            include_atr=include_atr,
+            include_rsi=include_rsi,
+            min_rvol=min_rvol,
+            require_volume_spike=require_volume_spike,
+        ),
+        scoring=ScoringConfig(
+            filter_direction=direction,
+            min_confluence=min_confluence,
+            trend_threshold=trend_threshold,
+            mr_threshold=mr_threshold,
+            rsi_lower=rsi_lower,
+            rsi_upper=rsi_upper,
+            mr_signal=mr_signals or [],
+            min_tf_alignment=min_tf_alignment,
+            require_momentum=require_momentum,
+            opportunity_trend_weight=trend_weight,
+            opportunity_ma_weight=ma_weight,
+            opportunity_osc_weight=osc_weight,
+            opportunity_roc_weight=roc_weight,
+            opportunity_timeframe_weights=timeframe_weights,
+        ),
+        risk=RiskConfig(
+            risk_per_trade_pct=risk_per_trade,
+            atr_multiplier=atr_multiplier,
+            min_risk_reward_ratio=min_risk_reward,
+            account_balance=account_balance,
+            pip_value=pip_value,
+        ),
+        output=OutputConfig(
+            detailed=detailed,
+            matrix=matrix,
+            limit=limit,
+            show_risk=show_risk,
+            output=output,
+            sql=sql,
+            filters=filters or [],
+        ),
     )
     results, scanner = controller.get_strategy_results(request)
 
@@ -634,3 +658,95 @@ def query_historical_scan(sql: str, file_path: str) -> str:
         return f"Query successful ({len(df)} rows):\n\n" + df.to_markdown(index=False)
     except Exception as e:
         return f"Query failed: {e}"
+
+
+def lakehouse_list_tables() -> str:
+    """
+    List all tables in the Iceberg catalog.
+    """
+    try:
+        catalog = get_catalog()
+
+        # Try to list namespaces first to find all tables
+        all_tables = []
+        try:
+            namespaces = catalog.list_namespaces()
+            for ns in namespaces:
+                # ns is a tuple like ('tvscreener',)
+                all_tables.extend(catalog.list_tables(ns))
+        except Exception:
+            # Fallback to default tvscreener namespace if list_namespaces fails
+            all_tables = catalog.list_tables("tvscreener")
+
+        if not all_tables:
+            return "No tables found in the lakehouse catalog."
+
+        result = "Available lakehouse tables:\n"
+        for identifier in all_tables:
+            # identifier is a tuple like ('tvscreener', 'bronze')
+            table_name = ".".join(identifier)
+            result += f"- {table_name}\n"
+        return result
+    except Exception as e:
+        return f"Error listing tables: {e}"
+
+
+def lakehouse_get_schema(table_name: str) -> str:
+    """
+    Get the schema of a specific lakehouse table.
+
+    Args:
+        table_name: Full identifier of the table (e.g., 'tvscreener.bronze')
+    """
+    from pyiceberg.exceptions import NoSuchTableError
+
+    try:
+        catalog = get_catalog()
+        table = catalog.load_table(table_name)
+        schema = table.schema()
+
+        result = f"Schema for {table_name}:\n\n"
+        result += "| Field | Type | Required |\n"
+        result += "|-------|------|----------|\n"
+        for field in schema.fields:
+            result += f"| {field.name} | {field.field_type} | {field.required} |\n"
+        return result
+    except NoSuchTableError:
+        return f"Error: Table '{table_name}' not found."
+    except Exception as e:
+        return f"Error getting schema for {table_name}: {e}"
+
+
+def lakehouse_maintenance(table_name: str, operation: str, **kwargs) -> str:
+    """
+    Perform maintenance operations on a lakehouse table.
+
+    Args:
+        table_name: Full identifier of the table
+        operation: 'expire_snapshots' or 'remove_orphan_files'
+        **kwargs: Additional arguments for the operation
+    """
+    from pyiceberg.table.maintenance import MaintenanceTable
+
+    try:
+        catalog = get_catalog()
+        table = catalog.load_table(table_name)
+        maintenance = MaintenanceTable(table)
+
+        if operation == "expire_snapshots":
+            older_than_days = kwargs.get("older_than_days", 7)
+            from datetime import datetime, timedelta, timezone
+
+            expire_timestamp = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+            maintenance.expire_snapshots().older_than(expire_timestamp).commit()
+            return f"Successfully executed expire_snapshots on {table_name} (older than {older_than_days} days)."
+
+        elif operation == "remove_orphan_files":
+            maintenance.remove_orphan_files().commit()
+            return f"Successfully executed remove_orphan_files on {table_name}."
+
+        else:
+            return f"Error: Unsupported maintenance operation '{operation}'."
+
+    except Exception as e:
+        return f"Error performing maintenance on {table_name}: {e}"

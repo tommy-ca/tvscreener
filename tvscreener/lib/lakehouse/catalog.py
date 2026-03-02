@@ -1,5 +1,4 @@
 import logging
-import time
 from pathlib import Path
 
 from pyiceberg.catalog import Catalog, load_catalog
@@ -38,11 +37,23 @@ class IcebergCatalogManager:
 
     def expire_snapshots(self, table_name: str, older_than_days: int) -> None:
         """Expire snapshots older than a specific date to reclaim disk space."""
+        from datetime import datetime, timedelta, timezone
+
+        from pyiceberg.table.maintenance import MaintenanceTable
+
         catalog = self.get_catalog()
         table = catalog.load_table(table_name)
 
-        older_than_ms = int((time.time() - (older_than_days * 86400)) * 1000)
-        table.expire_snapshots(older_than_ms=older_than_ms)
+        expire_timestamp = datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        MaintenanceTable(table).expire_snapshots().older_than(expire_timestamp).commit()
+
+    def remove_orphan_files(self, table_name: str) -> None:
+        """Remove files that are no longer referenced by any snapshot."""
+        from pyiceberg.table.maintenance import MaintenanceTable
+
+        catalog = self.get_catalog()
+        table = catalog.load_table(table_name)
+        MaintenanceTable(table).remove_orphan_files().commit()
 
     def compact_files(self, table_name: str) -> None:
         """
@@ -54,4 +65,4 @@ class IcebergCatalogManager:
         # In a real Spark environment, this would be:
         # spark.sql(f"CALL local.system.rewrite_data_files(table => '{table_name}')")
         # For now, we just log the intent as PyIceberg 0.6.x doesn't expose a direct compact() API yet.
-        logger.info(f"Maintenance: Compaction requested for {table_name} (Hook)")
+        logger.info("Maintenance: Compaction requested for %s (Hook)", table_name)

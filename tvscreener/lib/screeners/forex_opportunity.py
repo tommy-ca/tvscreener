@@ -7,6 +7,7 @@ from typing import Any, Literal
 import narwhals as nw
 import pandas as pd
 
+from tvscreener.beauty import VisualStyler
 from tvscreener.constants.forex import (
     DEFAULT_FOREX_PAIRS,
     DEFAULT_TIMEFRAMES,
@@ -142,7 +143,7 @@ class ForexOpportunityScreener(BaseOpportunityScreener[ForexScreener]):
         if self.config.min_rvol is not None:
             rvol_col = "relative_volume_10d_calc"
             if rvol_col in df.columns:
-                df = df[df[rvol_col] >= self.config.min_rvol].copy()
+                df = df[df[rvol_col] >= self.config.min_rvol]
 
         return df
 
@@ -202,16 +203,8 @@ class ForexOpportunityScreener(BaseOpportunityScreener[ForexScreener]):
 
         # Add visual strength signs as a column for downstream use
         if "ENSEMBLE_SCORE" in df.columns:
-            # Vectorized generation using Narwhals
-            scores = nw.col("ENSEMBLE_SCORE").cast(nw.Float64).fill_null(0)
             df = df.with_columns(
-                STRENGTH_SIGN=nw.when(scores >= 0.5)
-                .then(nw.lit("🟢🟢"))
-                .otherwise(
-                    nw.when(scores > 0)
-                    .then(nw.lit("🟢"))
-                    .otherwise(nw.when(scores <= -0.5).then(nw.lit("🔴🔴")).otherwise(nw.lit("🔴")))
-                )
+                STRENGTH_SIGN=VisualStyler.get_strength_expression("ENSEMBLE_SCORE")
             )
         else:
             df = df.with_columns(STRENGTH_SIGN=nw.lit(""))

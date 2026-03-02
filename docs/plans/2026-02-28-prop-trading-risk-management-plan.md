@@ -138,24 +138,24 @@ class RiskConfig:
     min_risk_reward_ratio: float = 1.5
     
 def calculate_position_size(
-    entry_price: float,
-    stop_loss: float,
     account_balance: float,
-    risk_pct: float,
-    pip_value: float = 10.0  # Standard lot for forex
-) -> float:
+    risk_per_trade: float,
+    stop_distance: float | pd.Series,
+    pip_value: float | pd.Series = 10.0,
+    pip_size: float | pd.Series = 0.0001
+) -> float | pd.Series:
     """
     ATR-based position sizing formula.
     
-    Position Size = (Account Risk Amount) ÷ (ATR × ATR Multiple × Pip Value)
+    Position Size = (Account Risk Amount) ÷ (Stop Distance × Effective Pip Value)
+    Effective Pip Value = Pip Value × (0.0001 / Pip Size)
     
-    Key insight: Different pairs have different volatility.
-    Trading same lot size across pairs = wearing shorts in Miami and Alaska.
+    Key insight: Different pairs have different pip sizes (e.g. 0.01 for JPY vs 0.0001 for EURUSD).
+    The formula now dynamically adjusts for these differences.
     """
-    risk_amount = account_balance * risk_pct
-    pips_at_risk = abs(entry_price - stop_loss)
-    position_size = risk_amount / (pips_at_risk * pip_value)
-    return position_size
+    risk_amount = account_balance * risk_per_trade
+    effective_pip_value = pip_value * (0.0001 / pip_size)
+    return risk_amount / (stop_distance * effective_pip_value)
 ```
 
 ### ATR-Based Position Sizing Details
@@ -578,17 +578,19 @@ def calculate_take_profit(
 def calculate_position_size(
     account_balance: float,
     risk_per_trade: float,
-    stop_distance: float,
-    pip_value: float = 10.0
-) -> float:
+    stop_distance: float | pd.Series,
+    pip_value: float | pd.Series = 10.0,
+    pip_size: float | pd.Series = 0.0001
+) -> float | pd.Series:
     """Calculate position size in lots.
     
-    Formula: Position Size = Risk Amount / (Stop Distance × Pip Value)
+    Formula: Position Size = Risk Amount / (Stop Distance × Effective Pip Value)
     
-    Key insight: Dynamic sizing adapts to pair volatility.
+    Key insight: Dynamic sizing adapts to pair volatility and pip sizes.
     """
     risk_amount = account_balance * risk_per_trade
-    return risk_amount / (stop_distance * pip_value)
+    effective_pip_value = pip_value * (0.0001 / pip_size)
+    return risk_amount / (stop_distance * effective_pip_value)
 
 
 def calculate_risk_reward_ratio(

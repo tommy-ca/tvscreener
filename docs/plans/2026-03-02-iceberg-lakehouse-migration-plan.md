@@ -17,31 +17,18 @@ We will use `pyiceberg` to manage a local SQLite-backed catalog. Data processing
 
 ## 2. Phase 1: Storage Layer & Catalog (Infrastructure)
 *   **Action**: Integrate `pyiceberg` and setup the `SqliteCatalog`.
+*   **Command**: `uv add "pyiceberg[sql-sqlite,pyarrow]"`
 *   **Location**: `~/.tvscreener/lakehouse/` (Catalog DB + Warehouse directory).
 *   **Key Interface**: `IcebergCatalogManager` class to encapsulate catalog loading and table creation.
-
-## 3. Phase 2: Pipeline Refactoring (Compute)
-*   **Action**: Refactor `BaseOpportunityScreener.get_opportunities()` into a staged pipeline.
-*   **Checkpoints**: Every stage (`Bronze`, `Silver`, `Gold`) must result in an Iceberg transaction commit.
-*   **Logic**:
-    *   `_fetch_all_data` -> Append to `bronze` table.
-    *   `_standardize` -> Read `bronze`, apply `narwhals` cleaning, write to `silver`.
-    *   `_score` -> Read `silver`, apply scoring math, write to `gold`.
 
 ## 4. Phase 3: Analytics Integration (Serving)
 *   **Action**: Update `EdgeQueryClient` to resolve Iceberg table names using the catalog.
 *   **DuckDB Bridge**: Use `table.to_arrow()` to register Iceberg snapshots as DuckDB virtual views for zero-copy querying.
-*   **CLI UX**: Users query tables (`--table gold`) instead of raw files.
-
-## 5. Implementation Roadmap
-1.  **Task 145**: Initialize `pyiceberg` and local catalog.
-2.  **Task 146**: Implement Iceberg storage backend for `ExportMixin`.
-3.  **Task 147**: Refactor `base.py` to support Medallion staged execution.
-4.  **Task 148**: Update `orchestrator.py` and `EdgeQueryClient` for catalog-aware querying.
-5.  **Task 149**: Implement Snapshot Time-Travel in the CLI.
+*   **CLI UX**: Users query tables (`uv run tvscreener-scan query --table gold`) instead of raw files.
 
 ---
 ## Verification Strategy
-- **Unit Tests**: Test `IcebergCatalogManager` table creation/deletion.
+- **Unit Tests**: Test `IcebergCatalogManager` table creation/deletion via `uv run pytest`.
 - **Integration Tests**: Verify a full scan results in data being queryable in DuckDB via the Iceberg extension.
 - **Parity Test**: Ensure `Gold` Iceberg data matches the previously exported Parquet files perfectly.
+

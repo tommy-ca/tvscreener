@@ -8,6 +8,7 @@ import narwhals as nw
 import numpy as np
 import pandas as pd
 
+from tvscreener.beauty import VisualStyler
 from tvscreener.constants.forex import (
     DEFAULT_FOREX_PAIRS,
 )
@@ -66,6 +67,7 @@ class ForexStrategyScanner(ExportMixin):
     config: StrategyConfig = field(default_factory=StrategyConfig)
     asset_type: str = "forex"
     post_filters: list[DataFrameFilter] = field(default_factory=list)
+    metadata: Any = field(init=False)
     _screener: Any = field(init=False)
     _cached_results: pd.DataFrame | None = field(init=False, default=None)
 
@@ -105,10 +107,7 @@ class ForexStrategyScanner(ExportMixin):
                 pip_value=self.config.pip_value,
             ),
         )
-
-    @property
-    def metadata(self):
-        return self._screener.metadata
+        self.metadata = self._screener.metadata
 
     def _get_htf_stf_ltf(self) -> tuple[str, str, str]:
         """Determine HTF, STF, and LTF from available timeframes."""
@@ -327,8 +326,8 @@ class ForexStrategyScanner(ExportMixin):
         aligned_count = 2 + int(has_ltf)
         result = df.loc[long_mask | short_mask].assign(
             STRATEGY="trend_following",
-            HTF_TREND=htf_trend[long_mask | short_mask].values,
-            STF_TREND=stf_trend[long_mask | short_mask].values,
+            HTF_TREND=htf_trend[long_mask | short_mask],
+            STF_TREND=stf_trend[long_mask | short_mask],
             CONFLUENCE_SCORE=aligned_count,
         )
 
@@ -368,7 +367,7 @@ class ForexStrategyScanner(ExportMixin):
 
         result = df.loc[mask].assign(
             STRATEGY="mean_reversion",
-            LTF_MOMENTUM=osc_value[mask].values,
+            LTF_MOMENTUM=osc_value[mask],
             CONFLUENCE_SCORE=1,
         )
         result["MR_STRENGTH"] = result["LTF_MOMENTUM"].abs()
@@ -411,8 +410,8 @@ class ForexStrategyScanner(ExportMixin):
 
         result = df.loc[mask].assign(
             STRATEGY="hybrid",
-            HTF_TREND=htf_trend[mask].values,
-            LTF_MOMENTUM=ltf_osc[mask].values,
+            HTF_TREND=htf_trend[mask],
+            LTF_MOMENTUM=ltf_osc[mask],
             CONFLUENCE_SCORE=2,
         )
         result["DIRECTION"] = np.where(
@@ -620,31 +619,9 @@ class ForexStrategyScanner(ExportMixin):
 
         # Add visual strength signs
         if "DIRECTION" in df.columns:
-            # Vectorized generation of STRENGTH_SIGN using Narwhals
-            # Handle potential absence of CONFLUENCE_SCORE gracefully
-            if "CONFLUENCE_SCORE" in df.columns:
-                scores = nw.col("CONFLUENCE_SCORE").cast(nw.Float64).fill_null(0)
-            else:
-                scores = nw.lit(0)
-
-            directions = nw.col("DIRECTION").cast(nw.String).str.to_lowercase()
-            is_long = directions == Direction.LONG.value
-
             df = df.with_columns(
-                STRENGTH_SIGN=nw.when((scores >= 3) & is_long)
-                .then(nw.lit("🟢🟢"))
-                .otherwise(
-                    nw.when((scores >= 3) & (~is_long))
-                    .then(nw.lit("🔴🔴"))
-                    .otherwise(
-                        nw.when((scores >= 1) & is_long)
-                        .then(nw.lit("🟢"))
-                        .otherwise(
-                            nw.when((scores >= 1) & (~is_long))
-                            .then(nw.lit("🔴"))
-                            .otherwise(nw.lit("⚪"))
-                        )
-                    )
+                STRENGTH_SIGN=VisualStyler.get_strategy_strength_expression(
+                    "CONFLUENCE_SCORE", "DIRECTION"
                 )
             )
         else:

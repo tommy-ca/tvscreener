@@ -266,7 +266,7 @@ class RichConsoleRenderer(BaseRenderer):
                 console.print(footer + "\n")
 
         shown = len(df.head(display_limit))
-        console.print("[dim]Legend: 🟢=Bullish  🔴=Bearish  ⚪=Neutral[/dim]")
+        console.print(f"[dim]{VisualStyler.legend()}[/dim]")
         console.print(f"[dim]Showing {shown} of {len(df)} opportunities[/dim]")
 
     def _render_confluence_matrix(
@@ -296,7 +296,9 @@ class RichConsoleRenderer(BaseRenderer):
             grid_aligned = int(row.get("GRID_ALIGNED", 0) or 0)
             grid_total = int(row.get("GRID_TOTAL", 12) or 12)
 
-            direction_emoji = "🟢" if direction == Direction.LONG.value else "🔴"
+            direction_emoji = (
+                VisualStyler.BULL if direction == Direction.LONG.value else VisualStyler.BEAR
+            )
 
             trend_dirs = []
             ma_dirs = []
@@ -344,7 +346,7 @@ class RichConsoleRenderer(BaseRenderer):
         )
 
         shown = len(display_df)
-        console.print("\n[dim]Legend: 🟢=Bullish  🔴=Bearish  ⚪=Neutral[/dim]")
+        console.print(f"\n[dim]{VisualStyler.legend()}[/dim]")
         console.print(f"[dim]Showing {shown} of {len(df)} opportunities[/dim]")
 
     def _render_strategy(
@@ -554,7 +556,7 @@ class RichConsoleRenderer(BaseRenderer):
             shown = len(strategy_df.head(display_limit))
             console.print(f"[dim]Showing {shown} of {total_strategy_count} signals[/dim]")
 
-        console.print("\n[dim]Legend: 🟢=Bullish  🔴=Bearish  ⚪=Neutral[/dim]")
+        console.print(f"\n[dim]{VisualStyler.legend()}[/dim]")
 
     def _render_strategy_matrix(
         self,
@@ -577,7 +579,7 @@ class RichConsoleRenderer(BaseRenderer):
             shown = len(display_df)
             console.print(f"[dim]Showing {shown} of {len(strategy_df)} signals[/dim]")
 
-        console.print("\n[dim]Legend: 🟢=Bullish  🔴=Bearish  ⚪=Neutral[/dim]")
+        console.print(f"\n[dim]{VisualStyler.legend()}[/dim]")
 
 
 def register_renderers() -> None:

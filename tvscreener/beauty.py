@@ -11,9 +11,11 @@ Key visual elements:
 - Missing values displayed as "--"
 """
 
+import narwhals as nw
 import pandas as pd
 
 import tvscreener.ta as ta
+from tvscreener.core.enums import Direction
 from tvscreener.field import Field, Rating
 from tvscreener.util import _is_nan, millify
 
@@ -91,25 +93,31 @@ def _rating_letter(rating: Rating):
 class VisualStyler:
     """Centralized logic for visual indicators (emojis, signs) in terminal output."""
 
+    BULL_STRONG = "🟢🟢"
+    BULL = "🟢"
+    NEUTRAL = "⚪"
+    BEAR = "🔴"
+    BEAR_STRONG = "🔴🔴"
+
     @staticmethod
     def direction_emoji(value: float) -> str:
         """Direction indicator that always shows 🟢 or 🔴 (never ⚪)."""
         if value >= 0.5:
-            return "🟢🟢"
+            return VisualStyler.BULL_STRONG
         if value > 0:
-            return "🟢"
+            return VisualStyler.BULL
         if value <= -0.5:
-            return "🔴🔴"
-        return "🔴"
+            return VisualStyler.BEAR_STRONG
+        return VisualStyler.BEAR
 
     @staticmethod
     def matrix_sign(value: float) -> str:
         """Single emoji for matrix cells (no doubles — prevents column truncation)."""
         if value > 0:
-            return "🟢"
+            return VisualStyler.BULL
         if value < 0:
-            return "🔴"
-        return "⚪"
+            return VisualStyler.BEAR
+        return VisualStyler.NEUTRAL
 
     @staticmethod
     def opportunity_strength_sign(value: float, is_roc: bool = False) -> str:
@@ -118,24 +126,77 @@ class VisualStyler:
         normal_threshold = 0.1
 
         if value >= strong_threshold:
-            return "🟢🟢"
+            return VisualStyler.BULL_STRONG
         if value >= normal_threshold:
-            return "🟢"
+            return VisualStyler.BULL
         if value <= -strong_threshold:
-            return "🔴🔴"
+            return VisualStyler.BEAR_STRONG
         if value <= -normal_threshold:
-            return "🔴"
-        return "⚪"
+            return VisualStyler.BEAR
+        return VisualStyler.NEUTRAL
 
     @staticmethod
     def strategy_strength_sign(score: float, direction: str) -> str:
         """Get emoji strength sign for strategy signals based on CONFLUENCE_SCORE (1-3)."""
         if score == 0:
-            return "⚪"
-        from tvscreener.core.enums import Direction
+            return VisualStyler.NEUTRAL
 
         is_long = str(direction).lower() == Direction.LONG.value
         return VisualStyler.direction_emoji(score if is_long else -score)
+
+    @staticmethod
+    def legend() -> str:
+        """Return the standard legend for terminal output."""
+        return f"Legend: {VisualStyler.BULL}=Bullish  {VisualStyler.BEAR}=Bearish  {VisualStyler.NEUTRAL}=Neutral"
+
+    @staticmethod
+    def get_strength_expression(scores_col: str) -> nw.Expr:
+        """Get Narwhals expression for generating STRENGTH_SIGN column from scores.
+
+        Matches logic in direction_emoji but vectorized for performance.
+        """
+        scores = nw.col(scores_col).cast(nw.Float64).fill_null(0)
+        return (
+            nw.when(scores >= 0.5)
+            .then(nw.lit(VisualStyler.BULL_STRONG))
+            .otherwise(
+                nw.when(scores > 0)
+                .then(nw.lit(VisualStyler.BULL))
+                .otherwise(
+                    nw.when(scores <= -0.5)
+                    .then(nw.lit(VisualStyler.BEAR_STRONG))
+                    .otherwise(nw.lit(VisualStyler.BEAR))
+                )
+            )
+        )
+
+    @staticmethod
+    def get_strategy_strength_expression(scores_col: str, direction_col: str) -> nw.Expr:
+        """Get Narwhals expression for strategy strength signs.
+
+        Vectorized version of strategy_strength_sign.
+        """
+        scores = nw.col(scores_col).cast(nw.Float64).fill_null(0)
+        directions = nw.col(direction_col).cast(nw.String).str.to_lowercase()
+        is_long = directions == Direction.LONG.value
+
+        return (
+            nw.when((scores >= 3) & is_long)
+            .then(nw.lit(VisualStyler.BULL_STRONG))
+            .otherwise(
+                nw.when((scores >= 3) & (~is_long))
+                .then(nw.lit(VisualStyler.BEAR_STRONG))
+                .otherwise(
+                    nw.when((scores >= 1) & is_long)
+                    .then(nw.lit(VisualStyler.BULL))
+                    .otherwise(
+                        nw.when((scores >= 1) & (~is_long))
+                        .then(nw.lit(VisualStyler.BEAR))
+                        .otherwise(nw.lit(VisualStyler.NEUTRAL))
+                    )
+                )
+            )
+        )
 
 
 class Beautify:

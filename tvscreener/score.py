@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -47,29 +48,33 @@ class ScoringEngine:
         col_pattern: str,
         copy: bool = True,
     ) -> pd.DataFrame:
-        """Calculate weighted factor scores across timeframes.
-
-        Args:
-            df: DataFrame with timeframe columns matching col_pattern
-            factor_name: Name for the output score column (e.g., "TREND")
-            col_pattern: Column pattern to match (e.g., "Recommend All|")
-            copy: If True, copy DataFrame to avoid mutation (default True)
-
-        Returns:
-            DataFrame with added factor score column
-        """
+        """Calculate weighted factor scores across timeframes."""
         if copy:
             df = df.copy()
 
-        cols = [c for c in df.columns if col_pattern in c]
+        # Map canonical names to their raw counterparts for weight lookup
+        # e.g. TREND_240 -> 240
+        prefix_map = {"TREND": "TREND_", "MA": "MA_", "OSC": "OSC_"}
+        canonical_prefix = prefix_map.get(factor_name, "UNKNOWN_")
+
+        # Find columns using both raw pattern and canonical prefix
+        cols = [c for c in df.columns if col_pattern in c or c.startswith(canonical_prefix)]
         if cols:
-            weights = np.array([self.tf_weights.get(c.split("|")[-1], 0.33) for c in cols])
+            # Extract timeframe from column name (handle both 'Recommend All|240' and 'TREND_240')
+            def extract_tf(c):
+                if "|" in c:
+                    return c.split("|")[-1]
+                return c.split("_")[-1]
+
+            weights = np.array([self.tf_weights.get(extract_tf(c), 0.33) for c in cols])
             weight_sum = weights.sum()
+
             if weight_sum == 0:
                 df[f"{factor_name}_SCORE"] = 0.0
             else:
-                values = df[cols].fillna(0).values
-                df[f"{factor_name}_SCORE"] = (values * weights).sum(axis=1) / weight_sum
+                # Performance: Use native pandas dot product to stay in Arrow/Vectorized domain
+                # instead of dropping to .values (NumPy)
+                df[f"{factor_name}_SCORE"] = (df[cols].fillna(0) @ weights) / weight_sum
         else:
             df[f"{factor_name}_SCORE"] = 0.0
 
@@ -124,91 +129,71 @@ class ScoringEngine:
         return df
 
     def calculate_confluence(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
-        """Calculate confluence using a TF × Factor grid.
-
-        Each cell in the grid (e.g. TREND_240, MA_60, OSC_15) gets one vote.
-        A cell is "aligned" if its value agrees with the overall DIRECTION:
-          - LONG direction: value > 0 = aligned
-          - SHORT direction: value < 0 = aligned
-
-        With 3 TFs × 4 factors = 12 cells, confluence is expressed as
-        aligned/total (e.g. 10/12 = 83%).
-
-        Supplementary TF_CONFLUENCE and FACTOR_CONFLUENCE columns are also
-        produced for per-axis visibility.
-        """
+        """Calculate confluence using a TF × Factor grid."""
         if copy:
             df = df.copy()
 
-        # --- Ensure DIRECTION exists ---
+        # Ensure DIRECTION exists
         if "DIRECTION" not in df.columns:
-            if "ENSEMBLE_SCORE" in df.columns:
-                ensemble = df["ENSEMBLE_SCORE"].fillna(0)
-                df["DIRECTION"] = np.where(
-                    ensemble > 0, Direction.LONG.value, Direction.SHORT.value
-                )
-            else:
-                # Fallback: infer from raw data
-                tf_cols = [
-                    f"Recommend All|{tf}"
-                    for tf in self.timeframes
-                    if f"Recommend All|{tf}" in df.columns
+            # Infer direction from first available trend column if ensemble score is missing
+            ensemble_val = df.get("ENSEMBLE_SCORE")
+            ensemble: Any = ensemble_val
+
+            if ensemble is None:
+                trend_cols = [
+                    c for c in df.columns if "Recommend All|" in c or c.startswith("TREND_")
                 ]
-                if tf_cols:
-                    net = df[tf_cols].fillna(0).sum(axis=1)
-                    df["DIRECTION"] = np.where(net > 0, Direction.LONG.value, Direction.SHORT.value)
-                else:
-                    df["DIRECTION"] = Direction.LONG.value
+                ensemble = df[trend_cols[0]] if trend_cols else pd.Series(0.0, index=df.index)
+
+            df["DIRECTION"] = np.where(ensemble > 0, Direction.LONG.value, Direction.SHORT.value)
 
         is_long = df["DIRECTION"] == Direction.LONG.value
 
-        # --- Grid confluence: TF × Factor cell voting (Vectorized) ---
-        factor_col_map = {
-            "TREND": "Recommend All|",
-            "MA": "Recommend Ma|",
-            "OSC": "Recommend Other|",
-            "ROC": "Roc|",
-        }
-
         # Identify all relevant grid columns that exist in DF
+        # Support both raw and canonical names
         relevant_cols = []
         for tf in self.timeframes:
-            # Per-TF direction labels (supplementary)
-            tf_dir_col = f"Recommend All|{tf}"
-            if tf_dir_col in df.columns:
-                df[f"TF_{tf}_DIR"] = self.calculate_direction(df[tf_dir_col])
+            for factor in ["TREND", "MA", "OSC", "ROC"]:
+                raw_col = {
+                    "TREND": "Recommend All|",
+                    "MA": "Recommend Ma|",
+                    "OSC": "Recommend Other|",
+                    "ROC": "Roc|",
+                }[factor] + tf
+                canonical_col = f"{factor}_{tf}"
 
-            for col_prefix in factor_col_map.values():
-                col = f"{col_prefix}{tf}"
-                if col in df.columns:
-                    relevant_cols.append(col)
-
-        # Factor direction labels (supplementary)
-        for factor in ["TREND", "MA", "OSC", "ROC"]:
-            col = f"{factor}_SCORE"
-            if col in df.columns:
-                df[f"{factor}_DIR"] = self.calculate_direction(df[col])
+                if canonical_col in df.columns:
+                    relevant_cols.append(canonical_col)
+                elif raw_col in df.columns:
+                    relevant_cols.append(raw_col)
 
         if relevant_cols:
-            # Fast vectorized calculation across all grid cells at once
-            vals = df[relevant_cols].fillna(0).values
-            # Broadcast direction across columns
-            is_long_v = is_long.values[:, np.newaxis]
-            # Alignment: (LONG & val > 0) | (SHORT & val < 0)
-            cell_aligned = np.where(is_long_v, vals > 0, vals < 0)
+            # Performance: Stay in vectorized domain
+            # We want: (LONG & val > 0) | (SHORT & val < 0)
+            # Use boolean logic on the whole dataframe slice
+            grid_slice = df[relevant_cols].fillna(0)
 
-            grid_aligned = cell_aligned.sum(axis=1)
+            if is_long.any() or (~is_long).any():
+                # (LONG & val > 0) | (SHORT & val < 0)
+                # Performance: Stay in vectorized domain without dropping to .values
+                long_aligned = grid_slice.gt(0).where(is_long, False)
+                short_aligned = grid_slice.lt(0).where(~is_long, False)
+
+                grid_aligned = (long_aligned | short_aligned).sum(axis=1)
+            else:
+                grid_aligned = np.zeros(len(df), dtype=int)
+
             grid_total = len(relevant_cols)
         else:
-            grid_aligned = np.zeros(len(df), dtype=int)
+            grid_aligned = pd.Series(0, index=df.index)
             grid_total = 0
 
-        df["GRID_ALIGNED"] = grid_aligned
+        df["GRID_ALIGNED"] = grid_aligned.astype(int)
         df["GRID_TOTAL"] = grid_total
         df["GRID_PCT"] = (
             (grid_aligned / grid_total * 100).round(0).astype(int) if grid_total > 0 else 0
         )
-        df["TOTAL_CONFLUENCE"] = grid_aligned
+        df["TOTAL_CONFLUENCE"] = grid_aligned.astype(int)
 
         df["CONFLUENCE_LEVEL"] = np.select(
             [
@@ -222,10 +207,12 @@ class ScoringEngine:
 
         # --- Supplementary TF confluence (Recommend All only, per-TF) ---
         tf_cols = [
-            f"Recommend All|{tf}" for tf in self.timeframes if f"Recommend All|{tf}" in df.columns
+            f"TREND_{tf}" if f"TREND_{tf}" in df.columns else f"Recommend All|{tf}"
+            for tf in self.timeframes
+            if f"TREND_{tf}" in df.columns or f"Recommend All|{tf}" in df.columns
         ]
         if tf_cols:
-            tf_values = df[tf_cols].fillna(0).values
+            tf_values = df[tf_cols].fillna(0)
             df["TF_CONFLUENCE_LONG"] = (tf_values > 0).sum(axis=1)
             df["TF_CONFLUENCE_SHORT"] = (tf_values < 0).sum(axis=1)
         else:
@@ -233,18 +220,19 @@ class ScoringEngine:
             df["TF_CONFLUENCE_SHORT"] = 0
 
         # --- Supplementary Factor confluence (aggregated scores) ---
+        for factor in ["TREND", "MA", "OSC", "ROC"]:
+            col = f"{factor}_SCORE"
+            if col in df.columns:
+                df[f"{factor}_DIR"] = self.calculate_direction(df[col])
+
         factor_dir_cols = [
-            f"{factor}_DIR"
-            for factor in ["TREND", "MA", "OSC", "ROC"]
-            if f"{factor}_DIR" in df.columns
+            f"{f}_DIR" for f in ["TREND", "MA", "OSC", "ROC"] if f"{f}_DIR" in df.columns
         ]
         if factor_dir_cols:
-            # Use .values for faster summation
             bullish_val = Direction.BULLISH.value
             bearish_val = Direction.BEARISH.value
-            f_vals = df[factor_dir_cols].values
-            df["FACTOR_BULLISH_COUNT"] = (f_vals == bullish_val).sum(axis=1)
-            df["FACTOR_BEARISH_COUNT"] = (f_vals == bearish_val).sum(axis=1)
+            df["FACTOR_BULLISH_COUNT"] = (df[factor_dir_cols] == bullish_val).sum(axis=1)
+            df["FACTOR_BEARISH_COUNT"] = (df[factor_dir_cols] == bearish_val).sum(axis=1)
         else:
             df["FACTOR_BULLISH_COUNT"] = 0
             df["FACTOR_BEARISH_COUNT"] = 0
@@ -273,11 +261,12 @@ class ScoringEngine:
             index=series.index,
         )
 
-    def rank_opportunities(self, df: pd.DataFrame) -> pd.DataFrame:
+    def rank_opportunities(self, df: pd.DataFrame, copy: bool = True) -> pd.DataFrame:
         """Full ranking pipeline: scores, ensemble, confluence, sorting.
 
         Args:
             df: DataFrame with raw opportunity data
+            copy: If True, copy DataFrame to avoid mutation
 
         Returns:
             DataFrame with all scoring columns, sorted by ensemble score
@@ -285,7 +274,8 @@ class ScoringEngine:
         if df.empty:
             return df
 
-        df = df.copy()
+        if copy:
+            df = df.copy()
 
         df = self.calculate_factor_scores(df, "TREND", "Recommend All|", copy=False)
         df = self.calculate_factor_scores(df, "MA", "Recommend Ma|", copy=False)
@@ -300,7 +290,7 @@ class ScoringEngine:
         df["RATING_SCORE"] = df.get("ENSEMBLE_SCORE", 0.0)
         df["ROC_AVG"] = df.get("ROC_SCORE", 0.0)
 
-        df = df.sort_values(by=["ENSEMBLE_SCORE"], ascending=[False])
+        df.sort_values(by=["ENSEMBLE_SCORE"], ascending=[False], inplace=True)
 
         df = calculate_grades(df, copy=False)
 

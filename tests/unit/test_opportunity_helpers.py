@@ -5,7 +5,9 @@ import yaml
 
 from tvscreener.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
 from tvscreener.lib.orchestrator import (
+    AssetSelection,
     ScanRequest,
+    ScoringConfig,
     ScreenerController,
 )
 from tvscreener.lib.screeners.export_helpers import export_to_csv, export_to_json
@@ -26,31 +28,35 @@ def test_parse_timeframe_weights_defaults_empty():
 
 def test_scan_request_defaults():
     request = ScanRequest()
-    assert request.scanner == "strategy"
-    assert request.asset_type == "forex"
-    assert request.min_volume is None
+    assert request.assets.scanner == "strategy"
+    assert request.assets.asset_type == "forex"
+    assert request.assets.min_volume is None
 
 
 def test_scan_request_payload_mapping():
     request = ScanRequest(
-        min_volume=100,
-        max_atr=0.01,
-        min_ma_score=0.5,
-        include_atr=True,
-        include_rsi=False,
-        opportunity_trend_weight=0.4,
-        contract_type="cfd",
-        timeframes="240,60,15",
+        assets=AssetSelection(
+            min_volume=100,
+            max_atr=0.01,
+            min_ma_score=0.5,
+            include_atr=True,
+            include_rsi=False,
+            contract_type="cfd",
+            timeframes="240,60,15",
+        ),
+        scoring=ScoringConfig(
+            opportunity_trend_weight=0.4,
+        ),
     )
-    assert request.min_volume == 100
-    assert request.opportunity_trend_weight == 0.4
-    assert request.contract_type == "cfd"
+    assert request.assets.min_volume == 100
+    assert request.scoring.opportunity_trend_weight == 0.4
+    assert request.assets.contract_type == "cfd"
 
 
 def test_maybe_save_opportunity_config(tmp_path):
     controller = ScreenerController()
     path = tmp_path / "cfg" / "config.yaml"
-    request = ScanRequest(min_volume=100, scanner="opportunity")
+    request = ScanRequest(assets=AssetSelection(min_volume=100, scanner="opportunity"))
     controller._maybe_save_opportunity_config(str(path), request)
     data = yaml.safe_load(path.read_text())
     assert data["min_volume"] == 100
