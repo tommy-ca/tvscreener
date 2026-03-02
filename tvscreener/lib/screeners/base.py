@@ -219,6 +219,12 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         df = self._merge_duplicates(df)
         df = self._rank_opportunities(df)
 
+        # Normalize column names early (Silver/Gold boundary) so exports use canonical names
+        from tvscreener.lib.screeners.transformer import DataTransformer
+
+        df = DataTransformer.rename_technical_columns(df, self.timeframes)
+        df = DataTransformer.standardize_stat_columns(df)
+
         # Apply post_filters so all consumers (CLI, MCP, API) get filtered data
         if self.post_filters:
             for pf in self.post_filters:

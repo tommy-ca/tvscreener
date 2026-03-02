@@ -1,7 +1,7 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
+# Data exports
+exports/
+*.parquet
+*.meta.json
 .tmp/
 .claude/
 nul
@@ -18,6 +18,12 @@ eggs/
 .eggs/
 lib/
 lib64/
+!/tvscreener/lib/
+!/tvscreener/lib/**
+# Ensure bytecode is never tracked, even in whitelisted directories
+**/__pycache__/
+**/*.py[cod]
+*$py.class
 parts/
 sdist/
 var/
@@ -145,6 +151,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# ruff
+.ruff_cache/
+
 # Pyre type checker
 .pyre/
 
@@ -161,3 +170,11 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 /ignore
+
+# Debug scripts
+debug*.py
+
+# Ad-hoc root-level scratch test files (real tests live in tests/)
+/test_*.py
+/test_*.xml*
+/test_*.json

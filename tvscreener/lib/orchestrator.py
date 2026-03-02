@@ -307,33 +307,28 @@ class ScreenerController:
             from tvscreener.lib.query import EdgeQueryClient
 
             try:
-                edge_client = EdgeQueryClient()
-                results = edge_client.query_sql(output_path, request.sql)
+                with EdgeQueryClient() as edge_client:
+                    results = edge_client.query_sql(output_path, request.sql)
 
                 if self.console:
                     if results.empty:
                         self.console.print("[yellow]Edge query returned 0 rows.[/yellow]")
                     else:
-                        from rich.table import Table
-
-                        table = Table(
-                            title="Edge Query Results",
-                            show_header=True,
-                            header_style="bold magenta",
+                        # Restore specialized view parity: pass SQL results back to renderer
+                        screener.print_summary(
+                            results_df=results,
+                            detailed=request.detailed,
+                            matrix=request.matrix,
+                            limit=request.limit,
+                            show_risk=request.show_risk,
                         )
-                        for col in results.columns:
-                            table.add_column(str(col))
-                        for _, row in results.iterrows():
-                            table.add_row(*[str(x) for x in row])
-                        self.console.print(table)
-                        self.console.print(f"\n[dim]Total: {len(results)} results[/dim]")
                 return len(results)
             except Exception as e:
                 if self.console:
                     self.console.print(
                         "[red]Edge Query execution failed. Check logs for details.[/red]"
                     )
-                logger.error(f"Edge Query execution failed: {e}")
+                logger.error("Edge Query execution failed: %s", e)
                 return 0
 
         if self.console:
@@ -366,10 +361,9 @@ class ScreenerController:
         )
 
         if request.sql:
-            logger.warning("SQL filtering is temporarily disabled pending Narwhals migration.")
+            # We record SQL and filters in metadata even if they are handled at the edge
             screener.metadata.config["sql"] = request.sql
         for f in request.filters:
-            logger.warning("Filter '%s' is temporarily disabled pending Narwhals migration.", f)
             screener.metadata.config.setdefault("cli_filters", []).append(f)
 
         results = self._fetch_data_with_progress(screener.get_opportunities)
@@ -454,10 +448,8 @@ class ScreenerController:
         scanner = ForexStrategyScanner(pairs=pairs, timeframes=timeframes, config=config)
 
         if request.sql:
-            logger.warning("SQL filtering is temporarily disabled pending Narwhals migration.")
             scanner._screener.metadata.config["sql"] = request.sql
         for f in request.filters:
-            logger.warning("Filter '%s' is temporarily disabled pending Narwhals migration.", f)
             scanner._screener.metadata.config.setdefault("cli_filters", []).append(f)
 
         results = self._fetch_data_with_progress(scanner.scan)

@@ -57,6 +57,9 @@ claude mcp add tvscreener -- tvscreener-mcp
 - `custom_query` - Flexible queries with any fields and filters
 - `search_stocks` / `search_crypto` / `search_forex` - Simplified screeners
 - `get_top_movers` - Get top gainers/losers
+- `scanner_opportunities` - High-confluence opportunity scanner across multiple timeframes
+- `scanner_strategies` - Strategy-specific scanner (Trend, Mean Reversion, etc.)
+- `config_save` / `config_load` - Save and load scanner configurations
 
 ---
 

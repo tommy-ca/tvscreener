@@ -1,0 +1,40 @@
+# tvscreener.yaml - Default configuration
+# Copy to .env for environment-specific overrides
+
+# Global defaults
+default_universe: "majors"
+default_timeframes: "240,60,15"
+contract_type: "cfd"
+
+# Strategy settings
+min_confluence: 1
+trend_threshold: 0.2
+mr_threshold: 0.2
+min_volume: null
+max_atr: null
+min_ma_score: null
+min_roc: null
+
+# Opportunity settings
+opportunity:
+  min_volume: null
+  max_atr: null
+  min_ma_score: null
+  trend_weight: 0.4
+  ma_weight: 0.3
+  osc_weight: 0.2
+  roc_weight: 0.1
+  timeframe_weights: "240:0.2,60:0.3,15:0.5"
+
+# Risk Management settings
+risk:
+  min_tf_alignment: 2
+  require_momentum: false
+  min_rvol: 1.0
+  require_volume_spike: false
+  volume_spike_threshold: 1.5
+  risk_per_trade_pct: 1.0
+  min_risk_reward_ratio: 1.5
+  atr_multiplier: 2.0
+  account_balance: 10000.0
+  pip_value: 10.0

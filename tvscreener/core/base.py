@@ -1,17 +1,17 @@
 import json
 import time
-from typing import Iterator, Callable, Optional, Union, List
+from collections.abc import Callable, Iterator
+from enum import Enum
 
 import pandas as pd
 import requests
-from enum import Enum
 
 from tvscreener.exceptions import MalformedRequestException
-from tvscreener.field import Field, Market, IndexSymbol
+from tvscreener.field import Field, IndexSymbol, Market
 from tvscreener.field.crypto import CryptoField
 from tvscreener.field.forex import ForexField
 from tvscreener.field.stock import StockField
-from tvscreener.filter import FilterOperator, Filter, ExtraFilter
+from tvscreener.filter import ExtraFilter, Filter, FilterOperator
 from tvscreener.util import get_columns_to_request, is_status_code_ok
 
 # Configuration constants
@@ -26,10 +26,10 @@ MIN_STREAM_INTERVAL = 1.0  # minimum interval for streaming to avoid rate limiti
 
 # HTTP headers for TradingView API requests
 REQUEST_HEADERS = {
-    'Content-Type': 'application/json',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Origin': 'https://www.tradingview.com',
-    'Referer': 'https://www.tradingview.com/',
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Origin": "https://www.tradingview.com",
+    "Referer": "https://www.tradingview.com/",
 }
 
 # Backward compatibility aliases
@@ -45,20 +45,20 @@ class ScreenerDataFrame(pd.DataFrame):
     def __init__(self, data, columns: dict, *args, **kwargs):
         # Add the extra received columns
         columns = {"symbol": "Symbol", **columns}
-        super().__init__(data, columns=list(columns.values()), *args, **kwargs)
+        super().__init__(data, *args, columns=list(columns.values()), **kwargs)
 
         # Reorder columns - only include first_columns that exist in the request
-        first_columns = ['symbol', 'name', 'description']
+        first_columns = ["symbol", "name", "description"]
         ordered_columns = {k: columns.get(k) for k in first_columns if k in columns}
         ordered_columns.update({k: v for k, v in columns.items() if k not in first_columns})
-        self.attrs['original_columns'] = ordered_columns
+        self.attrs["original_columns"] = ordered_columns
         self._update_inplace(self[ordered_columns.values()])
 
     def set_technical_columns(self, only: bool = False):
         if only:
-            self.columns = pd.Index(self.attrs['original_columns'].keys())
+            self.columns = pd.Index(self.attrs["original_columns"].keys())
         else:
-            self.columns = pd.MultiIndex.from_tuples(self.attrs['original_columns'].items())
+            self.columns = pd.MultiIndex.from_tuples(self.attrs["original_columns"].items())
 
 
 class Screener:
@@ -117,7 +117,7 @@ class Screener:
 
     def _validate_field_type(self, field: Field | ExtraFilter):
         """Validate that the field type matches the screener's expected field type."""
-        from tvscreener.field import FieldWithInterval, FieldWithHistory
+        from tvscreener.field import FieldWithHistory, FieldWithInterval
 
         # Skip validation for ExtraFilter (search, etc.)
         if isinstance(field, ExtraFilter):
@@ -143,7 +143,9 @@ class Screener:
                 f"Use {self._field_type.__name__} fields with {type(self).__name__}."
             )
 
-    def add_filter(self, filter_type: Field | ExtraFilter, operation: FilterOperator, values: Enum or str):
+    def add_filter(
+        self, filter_type: Field | ExtraFilter, operation: FilterOperator, values: Enum | str
+    ):
         self._validate_field_type(filter_type)
         filter_ = Filter(filter_type, operation, values)
         # Case where the filter already exists, and we want to add more values
@@ -153,7 +155,7 @@ class Screener:
         else:
             self._add_new_filter(filter_)
 
-    def where(self, condition_or_field, operation: FilterOperator = None, value=None) -> 'Screener':
+    def where(self, condition_or_field, operation: FilterOperator = None, value=None) -> "Screener":
         """
         Add a filter condition (fluent method).
 
@@ -183,13 +185,15 @@ class Screener:
 
         if isinstance(condition_or_field, FieldCondition):
             # New Pythonic syntax: ss.where(StockField.PRICE > 100)
-            self.add_filter(condition_or_field.field, condition_or_field.operation, condition_or_field.value)
+            self.add_filter(
+                condition_or_field.field, condition_or_field.operation, condition_or_field.value
+            )
         else:
             # Legacy syntax: ss.where(field, operator, value)
             self.add_filter(condition_or_field, operation, value)
         return self
 
-    def select(self, *fields: Field) -> 'Screener':
+    def select(self, *fields: Field) -> "Screener":
         """
         Set fields to retrieve (fluent method).
 
@@ -203,7 +207,7 @@ class Screener:
         self.specific_fields = list(fields)
         return self
 
-    def select_all(self) -> 'Screener':
+    def select_all(self) -> "Screener":
         """
         Select all available fields for this screener type.
 
@@ -225,14 +229,16 @@ class Screener:
     def add_misc(self, key, value):
         self.misc[key] = value
 
-    def set_range(self, from_range: int = default_min_range, to_range: int = default_max_range) -> 'Screener':
+    def set_range(
+        self, from_range: int = default_min_range, to_range: int = default_max_range
+    ) -> "Screener":
         self.range = [from_range, to_range]
         return self
 
     def sort_by(self, sort_by: Field, ascending=True):
         self.sort = {"sortBy": sort_by.field_name, "sortOrder": "asc" if ascending else "desc"}
 
-    def set_index(self, *indices: IndexSymbol) -> 'Screener':
+    def set_index(self, *indices: IndexSymbol) -> "Screener":
         """
         Filter screener results to only include constituents of the specified index(es).
 
@@ -260,17 +266,129 @@ class Screener:
 
         return self
 
+    def set_tickers(self, *tickers: str) -> "Screener":
+        """
+        Filter screener results to only include specified ticker(s).
+        Tickers should be in the format 'EXCHANGE:SYMBOL'.
+
+        :param tickers: One or more ticker symbols
+        :return: self for method chaining
+
+        Example:
+            >>> ss = StockScreener()
+            >>> ss.set_tickers("NASDAQ:AAPL", "NASDAQ:MSFT")
+            >>> df = ss.get()
+        """
+        if not tickers:
+            return self
+
+        if self.symbols is None:
+            self.symbols = {"tickers": list(tickers)}
+        else:
+            self.symbols["tickers"] = list(tickers)
+
+        return self
+
     def _build_payload(self, requested_columns_):
+        # Resolve symbols: merge self.symbols (from set_tickers/set_index) with
+        # any misc["symbols"] (e.g. query types set by subclass constructors).
+        # This prevents **self.misc from silently overwriting set_tickers().
+        misc_symbols = self.misc.pop("symbols", None)
+
+        if self.symbols is not None:
+            # User explicitly set tickers/index — use that as the base
+            symbols = dict(self.symbols)
+            # Merge query/types from misc so subclass type filters still apply
+            if misc_symbols and "query" in misc_symbols and "query" not in symbols:
+                symbols["query"] = misc_symbols["query"]
+        elif misc_symbols:
+            # No user-set symbols — use whatever the subclass put in misc
+            symbols = misc_symbols
+        else:
+            symbols = {"query": {"types": []}, "tickers": []}
+
         payload = {
             "filter": [f.to_dict() for f in self.filters],
             "options": self.options,
-            "symbols": self.symbols if self.symbols else {"query": {"types": []}, "tickers": []},
+            "symbols": symbols,
             "sort": self.sort,
             "range": self.range,
             "columns": requested_columns_,
-            **self.misc
+            **self.misc,
         }
+
+        # Restore misc so repeated calls work correctly
+        if misc_symbols is not None:
+            self.misc["symbols"] = misc_symbols
+
         return payload
+
+    def _validate_api_response(self, resp_json: dict, payload_json: str, status_code: int):
+        """
+        Validate the structure of the TradingView API response.
+
+        :param resp_json: The response JSON to validate
+        :param payload_json: The original request payload (for error reporting)
+        :param status_code: The HTTP status code
+        :raises MalformedRequestException: If the response is malformed
+        """
+        if not isinstance(resp_json, dict):
+            raise MalformedRequestException(
+                status_code,
+                f"Invalid JSON response: expected dict, got {type(resp_json).__name__}",
+                self.url,
+                payload_json,
+            )
+
+        if "data" not in resp_json:
+            raise MalformedRequestException(
+                status_code,
+                "Invalid API response: missing 'data' key",
+                self.url,
+                payload_json,
+            )
+
+        if not isinstance(resp_json["data"], list):
+            raise MalformedRequestException(
+                status_code,
+                f"Invalid API response: 'data' should be a list, got {type(resp_json['data']).__name__}",
+                self.url,
+                payload_json,
+            )
+
+        # Validate each item in data
+        for i, item in enumerate(resp_json["data"]):
+            if not isinstance(item, dict):
+                raise MalformedRequestException(
+                    status_code,
+                    f"Invalid data item at index {i}: expected dict, got {type(item).__name__}",
+                    self.url,
+                    payload_json,
+                )
+
+            if "s" not in item:
+                raise MalformedRequestException(
+                    status_code,
+                    f"Invalid data item at index {i}: missing symbol 's' key",
+                    self.url,
+                    payload_json,
+                )
+
+            if "d" not in item:
+                raise MalformedRequestException(
+                    status_code,
+                    f"Invalid data item at index {i}: missing data 'd' key",
+                    self.url,
+                    payload_json,
+                )
+
+            if not isinstance(item["d"], list):
+                raise MalformedRequestException(
+                    status_code,
+                    f"Invalid data item at index {i}: 'd' should be a list, got {type(item['d']).__name__}",
+                    self.url,
+                    payload_json,
+                )
 
     def get(self, print_request=False):
         """
@@ -295,44 +413,84 @@ class Screener:
         try:
             # Fixed: Add timeout to prevent hanging indefinitely
             response = requests.post(
-                self.url,
-                data=payload_json,
-                timeout=REQUEST_TIMEOUT,
-                headers=REQUEST_HEADERS
+                self.url, data=payload_json, timeout=REQUEST_TIMEOUT, headers=REQUEST_HEADERS
             )
 
             if is_status_code_ok(response):
-                data = [[d["s"]] + d["d"] for d in response.json()['data']]
-                return ScreenerDataFrame(data, columns)
+                try:
+                    resp_json = response.json()
+                    self._validate_api_response(resp_json, payload_json, response.status_code)
+
+                    # Extract data from validated response
+                    data = []
+                    expected_len = len(columns)
+                    for i, item in enumerate(resp_json["data"]):
+                        symbol = item["s"]
+                        values = item["d"]
+
+                        # Ensure the number of columns matches the number of data points
+                        if len(values) != expected_len:
+                            raise MalformedRequestException(
+                                response.status_code,
+                                f"Data length mismatch at index {i}: expected {expected_len} values, got {len(values)}",
+                                self.url,
+                                payload_json,
+                            )
+                        data.append([symbol] + values)
+
+                except (ValueError, KeyError, TypeError) as e:
+                    # Catch-all for any other parsing errors that escaped validation
+                    raise MalformedRequestException(
+                        response.status_code,
+                        f"Failed to parse API response: {str(e)}",
+                        self.url,
+                        payload_json,
+                    ) from e
+
+                df = ScreenerDataFrame(data, columns)
+                # Store sanitized API context for audit trails/exports
+                # Filter headers to prevent sensitive data leakage (Issue 059)
+                safe_headers = {
+                    "Content-Type",
+                    "Date",
+                    "Server",
+                    "User-Agent",
+                    "X-Request-Id",
+                }
+                sanitized_headers = {k: v for k, v in response.headers.items() if k in safe_headers}
+                df.attrs["api_context"] = {
+                    "url": self.url,
+                    "status_code": response.status_code,
+                    "headers": sanitized_headers,
+                    "method": "POST",
+                }
+                return df
             else:
                 raise MalformedRequestException(
-                    response.status_code,
-                    response.text,
-                    self.url,
-                    payload_json
+                    response.status_code, response.text, self.url, payload_json
                 )
 
-        except requests.Timeout:
+        except requests.Timeout as e:
             raise MalformedRequestException(
                 408,  # Request Timeout
                 f"Request timed out after {REQUEST_TIMEOUT} seconds",
                 self.url,
-                payload_json
-            )
+                payload_json,
+            ) from e
         except requests.RequestException as e:
             raise MalformedRequestException(
                 0,  # Unknown status code
                 str(e),
                 self.url,
-                payload_json
-            )
+                payload_json,
+            ) from e
 
     def stream(
         self,
         interval: float = 5.0,
-        max_iterations: Optional[int] = None,
-        on_update: Optional[Callable[['ScreenerDataFrame'], None]] = None
-    ) -> Iterator['ScreenerDataFrame']:
+        max_iterations: int | None = None,
+        on_update: Callable[["ScreenerDataFrame"], None] | None = None,
+    ) -> Iterator["ScreenerDataFrame"]:
         """
         Stream screener data at regular intervals.
 

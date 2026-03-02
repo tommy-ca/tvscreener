@@ -208,6 +208,12 @@ class ForexStrategyScanner(ExportMixin):
             rsi_upper=self.config.rsi_upper,
         )
 
+        # Normalize column names early (Silver/Gold boundary) so exports use canonical names
+        from tvscreener.lib.screeners.transformer import DataTransformer
+
+        combined = DataTransformer.rename_technical_columns(combined, self.timeframes)
+        combined = DataTransformer.standardize_stat_columns(combined)
+
         # Apply post_filters so all consumers get identically filtered data
         if self.post_filters:
             for pf in self.post_filters:
@@ -290,12 +296,17 @@ class ForexStrategyScanner(ExportMixin):
         if not htf_val:
             return pd.DataFrame()
 
-        htf_col = f"Recommend All|{htf_val}"
-        stf_col = f"Recommend All|{stf_val}"
-        ltf_col = f"Recommend All|{ltf_val}"
+        htf_col = f"TREND_{htf_val}"
+        stf_col = f"TREND_{stf_val}"
+        ltf_col = f"TREND_{ltf_val}"
 
         if htf_col not in df.columns or stf_col not in df.columns:
-            return pd.DataFrame()
+            # Fallback to raw names just in case normalization didn't run
+            htf_col = f"Recommend All|{htf_val}"
+            stf_col = f"Recommend All|{stf_val}"
+            ltf_col = f"Recommend All|{ltf_val}"
+            if htf_col not in df.columns or stf_col not in df.columns:
+                return pd.DataFrame()
 
         htf_trend = df[htf_col].fillna(0)
         stf_trend = df[stf_col].fillna(0)
@@ -331,11 +342,15 @@ class ForexStrategyScanner(ExportMixin):
         if not htf_val:
             return pd.DataFrame()
 
-        htf_col = f"Recommend All|{htf_val}"
-        ltf_col = f"Recommend Other|{ltf_val}"
+        htf_col = f"TREND_{htf_val}"
+        ltf_col = f"OSC_{ltf_val}"
 
         if htf_col not in df.columns or ltf_col not in df.columns:
-            return pd.DataFrame()
+            # Fallback
+            htf_col = f"Recommend All|{htf_val}"
+            ltf_col = f"Recommend Other|{ltf_val}"
+            if htf_col not in df.columns or ltf_col not in df.columns:
+                return pd.DataFrame()
 
         htf_trend = df[htf_col].fillna(0)
         osc_value = df[ltf_col].fillna(0)
@@ -370,11 +385,15 @@ class ForexStrategyScanner(ExportMixin):
         if not htf_val:
             return pd.DataFrame()
 
-        htf_col = f"Recommend All|{htf_val}"
-        ltf_col = f"Recommend Other|{ltf_val}"
+        htf_col = f"TREND_{htf_val}"
+        ltf_col = f"OSC_{ltf_val}"
 
         if htf_col not in df.columns or ltf_col not in df.columns:
-            return pd.DataFrame()
+            # Fallback
+            htf_col = f"Recommend All|{htf_val}"
+            ltf_col = f"Recommend Other|{ltf_val}"
+            if htf_col not in df.columns or ltf_col not in df.columns:
+                return pd.DataFrame()
 
         htf_trend = df[htf_col].fillna(0)
         ltf_osc = df[ltf_col].fillna(0)
@@ -404,11 +423,15 @@ class ForexStrategyScanner(ExportMixin):
 
     def _detect_breakout(self, df: pd.DataFrame) -> pd.DataFrame:
         """Detect breakout: Multi-TF momentum alignment."""
-        roc_cols = [f"Roc|{tf}" for tf in self.timeframes]
+        roc_cols = [f"ROC_{tf}" for tf in self.timeframes]
 
         available_roc_cols = [c for c in roc_cols if c in df.columns]
         if not available_roc_cols:
-            return pd.DataFrame()
+            # Fallback
+            roc_cols = [f"Roc|{tf}" for tf in self.timeframes]
+            available_roc_cols = [c for c in roc_cols if c in df.columns]
+            if not available_roc_cols:
+                return pd.DataFrame()
 
         roc_values = df[available_roc_cols].fillna(0)
 
@@ -455,12 +478,21 @@ class ForexStrategyScanner(ExportMixin):
                 return df[name].fillna(0)
             return pd.Series(0, index=df.index)
 
-        htf = _col(f"Recommend All|{htf_val}")
-        stf = _col(f"Recommend All|{stf_val}")
-        ltf = _col(f"Recommend All|{ltf_val}")
-        osc_htf = _col(f"Recommend Other|{htf_val}")
-        osc_stf = _col(f"Recommend Other|{stf_val}")
-        osc_ltf = _col(f"Recommend Other|{ltf_val}")
+        htf = _col(f"TREND_{htf_val}")
+        stf = _col(f"TREND_{stf_val}")
+        ltf = _col(f"TREND_{ltf_val}")
+        osc_htf = _col(f"OSC_{htf_val}")
+        osc_stf = _col(f"OSC_{stf_val}")
+        osc_ltf = _col(f"OSC_{ltf_val}")
+
+        if (htf == 0).all() and (stf == 0).all():
+            # Fallback
+            htf = _col(f"Recommend All|{htf_val}")
+            stf = _col(f"Recommend All|{stf_val}")
+            ltf = _col(f"Recommend All|{ltf_val}")
+            osc_htf = _col(f"Recommend Other|{htf_val}")
+            osc_stf = _col(f"Recommend Other|{stf_val}")
+            osc_ltf = _col(f"Recommend Other|{ltf_val}")
 
         htf_long = htf > trend_thr
         htf_short = htf < -trend_thr

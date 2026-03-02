@@ -46,7 +46,18 @@ class RichConsoleRenderer(BaseRenderer):
             if results_df is not None:
                 # Still run through enrichment to ensure STRENGTH_SIGN etc. are present
                 return screener._prepare_enriched_data(results_df)
-            return screener._prepare_enriched_data()
+
+            # Get the data from the screener instance
+            # Use getattr for robustness since internal attribute names differ
+            raw_data = getattr(screener, "_cached_data", None)
+            if raw_data is None:
+                raw_data = getattr(screener, "_cached_results", None)
+
+            if raw_data is None:
+                # Fallback to internal _get_data if not cached
+                raw_data = screener._get_data()
+
+            return screener._prepare_enriched_data(raw_data)
 
         if config:
             # Check for alternative renderer class
