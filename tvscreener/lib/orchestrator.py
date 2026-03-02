@@ -295,10 +295,7 @@ class ScreenerController:
 
         output_path = request.output
         if request.sql and not output_path:
-            import os
-            import tempfile
-
-            output_path = os.path.join(tempfile.gettempdir(), "tvscreener_edge_cache.parquet")
+            output_path = "exports/.cache/tvscreener_edge_cache.parquet"
 
         if output_path:
             self._export_results(screener, output_path, metadata)
@@ -385,10 +382,7 @@ class ScreenerController:
 
         output_path = request.output
         if request.sql and not output_path:
-            import os
-            import tempfile
-
-            output_path = os.path.join(tempfile.gettempdir(), "tvscreener_edge_cache.parquet")
+            output_path = "exports/.cache/tvscreener_edge_cache.parquet"
 
         if output_path:
             self._export_results(scanner, output_path, metadata)
@@ -500,10 +494,17 @@ class ScreenerController:
         else:
             return fetch_func()
 
+    def _ensure_parent_exists(self, path: Path) -> None:
+        """Ensure the parent directory of a path exists."""
+        parent = path.parent
+        if parent and not parent.exists():
+            parent.mkdir(parents=True, exist_ok=True)
+
     def _export_results(self, scanner: Any, output: str, metadata: dict[str, Any]) -> None:
         """Helper to handle exporting results to various formats."""
         try:
             output_path = self._validate_path(output)
+            self._ensure_parent_exists(output_path)
         except ValueError as e:
             if self.console:
                 self.console.print(f"[red]Error: {e}[/red]")
