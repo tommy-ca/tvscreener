@@ -6,13 +6,23 @@ These functions provide a clean interface between MCP tools and the tvscreener l
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import pandas as pd
+import yaml
+
 import tvscreener as tvs
 from tvscreener import (
-    StockField, CryptoField, ForexField, BondField, FuturesField, CoinField,
-    FilterOperator
+    BondField,
+    CoinField,
+    CryptoField,
+    FilterOperator,
+    ForexField,
+    FuturesField,
+    StockField,
 )
-import pandas as pd
-from typing import TYPE_CHECKING
+from tvscreener.lib.orchestrator import ScanRequest, ScreenerController
+from tvscreener.util import validate_path
 
 if TYPE_CHECKING:
     from typing import Any
@@ -72,11 +82,7 @@ def get_field_enum(field_name: str, asset_type: str = "stock"):
     return None
 
 
-def search_fields(
-    query: str,
-    asset_type: str = "stock",
-    limit: int = 20
-) -> list[dict[str, Any]]:
+def search_fields(query: str, asset_type: str = "stock", limit: int = 20) -> list[dict[str, Any]]:
     """
     Search for available fields by keyword.
 
@@ -97,11 +103,13 @@ def search_fields(
     for f in results:
         # Field value tuple: (display_name, api_field, format, is_technical, is_recommendation)
         value = f.value
-        fields.append({
-            "name": f.name,
-            "display_name": value[0] if len(value) > 0 else f.name,
-            "is_technical": value[3] if len(value) > 3 else False,
-        })
+        fields.append(
+            {
+                "name": f.name,
+                "display_name": value[0] if len(value) > 0 else f.name,
+                "is_technical": value[3] if len(value) > 3 else False,
+            }
+        )
 
     return fields
 
@@ -120,9 +128,17 @@ def get_field_categories(asset_type: str = "stock") -> dict[str, list[str]]:
     field_class = config["field_class"]
 
     category_keywords = [
-        "price", "volume", "moving_average", "rsi", "macd",
-        "bollinger", "earnings", "dividend", "market_cap",
-        "sector", "recommend"
+        "price",
+        "volume",
+        "moving_average",
+        "rsi",
+        "macd",
+        "bollinger",
+        "earnings",
+        "dividend",
+        "market_cap",
+        "sector",
+        "recommend",
     ]
 
     categories = {}
@@ -140,7 +156,7 @@ def custom_screen(
     filters: list[dict[str, Any]] | None = None,
     sort_by: str | None = None,
     ascending: bool = False,
-    limit: int = 25
+    limit: int = 25,
 ) -> pd.DataFrame:
     """
     Flexible screener with custom fields and filters.
@@ -204,7 +220,7 @@ def screen_stocks(
     sectors: list[str] | None = None,
     sort_by: str = "market_cap",
     ascending: bool = False,
-    limit: int = 25
+    limit: int = 25,
 ) -> pd.DataFrame:
     """
     Screen stocks with common filters.
@@ -231,7 +247,7 @@ def screen_stocks(
         StockField.VOLUME,
         StockField.MARKET_CAPITALIZATION,
         StockField.PRICE_TO_EARNINGS_RATIO_TTM,
-        StockField.SECTOR
+        StockField.SECTOR,
     )
 
     if min_price is not None:
@@ -263,7 +279,7 @@ def screen_crypto(
     min_market_cap: float | None = None,
     sort_by: str = "market_cap",
     ascending: bool = False,
-    limit: int = 25
+    limit: int = 25,
 ) -> pd.DataFrame:
     """
     Screen cryptocurrencies with common filters.
@@ -285,7 +301,7 @@ def screen_crypto(
         CryptoField.PRICE,
         CryptoField.CHANGE_PERCENT,
         CryptoField.VOLUME_24H_IN_USD,
-        CryptoField.MARKET_CAPITALIZATION
+        CryptoField.MARKET_CAPITALIZATION,
     )
 
     if min_volume_24h is not None:
@@ -304,10 +320,7 @@ def screen_crypto(
     return cs.get().head(limit)
 
 
-def screen_forex(
-    min_volume: float | None = None,
-    limit: int = 25
-) -> pd.DataFrame:
+def screen_forex(min_volume: float | None = None, limit: int = 25) -> pd.DataFrame:
     """
     Screen forex currency pairs.
 
@@ -320,14 +333,304 @@ def screen_forex(
     """
     fs = tvs.ForexScreener()
 
-    fs.select(
-        ForexField.NAME,
-        ForexField.PRICE,
-        ForexField.CHANGE_PERCENT,
-        ForexField.VOLUME
-    )
+    fs.select(ForexField.NAME, ForexField.PRICE, ForexField.CHANGE_PERCENT, ForexField.VOLUME)
 
     if min_volume is not None:
         fs.where(ForexField.VOLUME, FilterOperator.ABOVE_OR_EQUAL, min_volume)
 
     return fs.get().head(limit)
+
+
+def scan_opportunities(
+    asset_type: str = "forex",
+    universe: str | None = None,
+    pairs: list[str] | None = None,
+    timeframes: str | None = None,
+    min_volume: float | None = None,
+    max_atr: float | None = None,
+    min_ma_score: float | None = None,
+    min_roc: float | None = None,
+    contract_type: str | None = None,
+    include_atr: bool = False,
+    include_rsi: bool = False,
+    trend_weight: float | None = None,
+    ma_weight: float | None = None,
+    osc_weight: float | None = None,
+    roc_weight: float | None = None,
+    timeframe_weights: str | None = None,
+    confluence_grade: str | None = None,
+    min_confluence: int | None = None,
+    min_rvol: float | None = None,
+    require_volume_spike: bool = False,
+    risk_per_trade: float | None = None,
+    atr_multiplier: float | None = None,
+    min_risk_reward: float | None = None,
+    account_balance: float | None = None,
+    pip_value: float | None = None,
+    detailed: bool = False,
+    matrix: bool = False,
+    limit: int | None = None,
+    show_risk: bool = False,
+    output: str | None = None,
+    sql: str | None = None,
+    filters: list[str] | None = None,
+) -> pd.DataFrame | str:
+    """
+    Run the opportunity scanner for high-confluence setups across multiple timeframes.
+    """
+    from io import StringIO
+
+    from rich.console import Console
+
+    output_stream = StringIO()
+    console = Console(file=output_stream, force_terminal=False, width=100)
+    controller = ScreenerController(console=console)
+
+    request = ScanRequest(
+        scanner="opportunity",
+        asset_type=asset_type,
+        universe=universe,
+        pairs=pairs,
+        timeframes=timeframes,
+        min_volume=min_volume,
+        max_atr=max_atr,
+        min_ma_score=min_ma_score,
+        min_roc=min_roc,
+        contract_type=contract_type,
+        include_atr=include_atr,
+        include_rsi=include_rsi,
+        opportunity_trend_weight=trend_weight,
+        opportunity_ma_weight=ma_weight,
+        opportunity_osc_weight=osc_weight,
+        opportunity_roc_weight=roc_weight,
+        opportunity_timeframe_weights=timeframe_weights,
+        confluence_grade=confluence_grade,
+        min_opportunity_confluence=min_confluence,
+        min_rvol=min_rvol,
+        require_volume_spike=require_volume_spike,
+        risk_per_trade_pct=risk_per_trade,
+        atr_multiplier=atr_multiplier,
+        min_risk_reward_ratio=min_risk_reward,
+        account_balance=account_balance,
+        pip_value=pip_value,
+        detailed=detailed,
+        matrix=matrix,
+        limit=limit,
+        show_risk=show_risk,
+        output=output,
+        sql=sql,
+        filters=filters or [],
+    )
+    results, screener = controller.get_opportunity_results(request)
+
+    if output:
+        metadata = controller._build_opportunity_metadata(request)
+        controller._export_results(screener, output, metadata)
+
+    if detailed or matrix:
+        screener.print_summary(
+            detailed=detailed,
+            matrix=matrix,
+            limit=limit,
+            show_risk=show_risk,
+        )
+        return output_stream.getvalue()
+
+    if output:
+        display_df = results.head(limit) if limit is not None else results
+        return output_stream.getvalue() + "\n\n" + display_df.to_markdown(index=False)
+
+    return results.head(limit) if limit is not None else results
+
+
+def scan_strategies(
+    asset_type: str = "forex",
+    universe: str | None = None,
+    pairs: list[str] | None = None,
+    timeframes: str | None = None,
+    strategy: str = "all",
+    direction: str = "all",
+    min_confluence: int | None = None,
+    trend_threshold: float | None = None,
+    mr_threshold: float | None = None,
+    min_roc: float | None = None,
+    min_volume: float | None = None,
+    max_atr: float | None = None,
+    min_ma_score: float | None = None,
+    mr_signals: list[str] | None = None,
+    contract_type: str | None = None,
+    include_atr: bool = False,
+    include_rsi: bool = False,
+    min_tf_alignment: int | None = None,
+    require_momentum: bool = False,
+    min_rvol: float | None = None,
+    require_volume_spike: bool = False,
+    risk_per_trade: float | None = None,
+    atr_multiplier: float | None = None,
+    min_risk_reward: float | None = None,
+    account_balance: float | None = None,
+    pip_value: float | None = None,
+    trend_weight: float | None = None,
+    ma_weight: float | None = None,
+    osc_weight: float | None = None,
+    roc_weight: float | None = None,
+    timeframe_weights: str | None = None,
+    rsi_lower: float | None = None,
+    rsi_upper: float | None = None,
+    detailed: bool = False,
+    matrix: bool = False,
+    limit: int | None = None,
+    show_risk: bool = False,
+    output: str | None = None,
+    sql: str | None = None,
+    filters: list[str] | None = None,
+) -> pd.DataFrame | str:
+    """
+    Run the strategy scanner to find specific trade setups (Trend, Mean Reversion, etc).
+    """
+    from io import StringIO
+
+    from rich.console import Console
+
+    output_stream = StringIO()
+    console = Console(file=output_stream, force_terminal=False, width=100)
+    controller = ScreenerController(console=console)
+
+    request = ScanRequest(
+        scanner="strategy",
+        asset_type=asset_type,
+        universe=universe,
+        pairs=pairs,
+        timeframes=timeframes,
+        strategy=strategy,
+        filter_direction=direction,
+        min_confluence=min_confluence,
+        trend_threshold=trend_threshold,
+        mr_threshold=mr_threshold,
+        rsi_lower=rsi_lower,
+        rsi_upper=rsi_upper,
+        min_roc=min_roc,
+        min_volume=min_volume,
+        max_atr=max_atr,
+        min_ma_score=min_ma_score,
+        mr_signal=mr_signals or [],
+        contract_type=contract_type,
+        include_atr=include_atr,
+        include_rsi=include_rsi,
+        min_tf_alignment=min_tf_alignment,
+        require_momentum=require_momentum,
+        min_rvol=min_rvol,
+        require_volume_spike=require_volume_spike,
+        risk_per_trade_pct=risk_per_trade,
+        atr_multiplier=atr_multiplier,
+        min_risk_reward_ratio=min_risk_reward,
+        account_balance=account_balance,
+        pip_value=pip_value,
+        opportunity_trend_weight=trend_weight,
+        opportunity_ma_weight=ma_weight,
+        opportunity_osc_weight=osc_weight,
+        opportunity_roc_weight=roc_weight,
+        opportunity_timeframe_weights=timeframe_weights,
+        detailed=detailed,
+        matrix=matrix,
+        limit=limit,
+        show_risk=show_risk,
+        output=output,
+        sql=sql,
+        filters=filters or [],
+    )
+    results, scanner = controller.get_strategy_results(request)
+
+    if output:
+        metadata = controller._build_strategy_metadata(request)
+        controller._export_results(scanner, output, metadata)
+
+    if detailed or matrix:
+        scanner.print_summary(
+            detailed=detailed,
+            matrix=matrix,
+            limit=limit,
+            show_risk=show_risk,
+        )
+        return output_stream.getvalue()
+
+    if output:
+        display_df = results.head(limit) if limit is not None else results
+        return output_stream.getvalue() + "\n\n" + display_df.to_markdown(index=False)
+
+    return results.head(limit) if limit is not None else results
+
+
+def save_mcp_config(path: str, config_data: dict[str, Any]) -> str:
+    """Save configuration to a YAML file."""
+    try:
+        validated_path = validate_path(path, allow_tmp=True)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    if not validated_path.parent.exists():
+        validated_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(validated_path, "w") as f:
+        yaml.safe_dump(config_data, f)
+    return f"Configuration saved to {path}"
+
+
+def load_mcp_config(path: str) -> dict[str, Any]:
+    """Load configuration from a YAML file."""
+    try:
+        validated_path = validate_path(path, allow_tmp=True)
+    except ValueError:
+        return {}
+
+    if not validated_path.exists():
+        return {}
+
+    with open(validated_path) as f:
+        return yaml.safe_load(f) or {}
+
+
+def inspect_file(path: str, head: int = 10, metadata_only: bool = False) -> str:
+    """
+    Inspect a Parquet file with embedded metadata.
+    """
+    from io import StringIO
+
+    from rich.console import Console
+
+    from tvscreener.lib.inspect_utils import inspect_parquet
+
+    try:
+        validated_path = validate_path(path, allow_tmp=True)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    output = StringIO()
+    console = Console(file=output, force_terminal=False, width=100)
+
+    inspect_parquet(str(validated_path), head=head, metadata_only=metadata_only, console=console)
+
+    return output.getvalue()
+
+
+def query_historical_scan(sql: str, file_path: str) -> str:
+    """
+    Execute a DuckDB SQL query against a previously exported Parquet file.
+    Use this instead of running a new scan when you already have the data.
+
+    Args:
+        sql: The DuckDB SQL query to execute. The table name is 'df' (e.g. 'SELECT * FROM df').
+        file_path: The path to the parquet file (e.g. 'exports/gold/my_scan.parquet').
+    """
+    from tvscreener.lib.query import EdgeQueryClient
+
+    try:
+        # Query the file
+        with EdgeQueryClient() as client:
+            df = client.query_sql(file_path, sql)
+
+        if df.empty:
+            return "Query returned no results."
+
+        return f"Query successful ({len(df)} rows):\n\n" + df.to_markdown(index=False)
+    except Exception as e:
+        return f"Query failed: {e}"

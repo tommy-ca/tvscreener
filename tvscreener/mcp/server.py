@@ -7,37 +7,385 @@ Exposes market screener functionality via the Model Context Protocol.
 from __future__ import annotations
 
 import json
+
 from mcp.server.fastmcp import FastMCP
 
+from . import tools
 from .tools import (
-    search_fields,
-    get_field_categories,
     custom_screen,
-    screen_stocks,
+    get_field_categories,
+    inspect_file,
+    load_mcp_config,
+    save_mcp_config,
+    scan_opportunities,
+    scan_strategies,
     screen_crypto,
     screen_forex,
+    screen_stocks,
+    search_fields,
 )
-
 
 mcp = FastMCP(
     "tvscreener",
     instructions=(
         "Query market screener for stocks, crypto, and forex via tvscreener library. "
         "Use discover_fields to find available fields, then use custom_query for flexible filtering."
-    )
+    ),
 )
+
+
+# =============================================================================
+# SCANNER TOOLS
+# =============================================================================
+
+
+@mcp.tool()
+def scanner_opportunities(
+    asset_type: str = "forex",
+    universe: str | None = None,
+    pairs: str | None = None,
+    timeframes: str | None = None,
+    min_volume: float | None = None,
+    max_atr: float | None = None,
+    min_ma_score: float | None = None,
+    min_roc: float | None = None,
+    contract_type: str | None = None,
+    include_atr: bool = False,
+    include_rsi: bool = False,
+    trend_weight: float | None = None,
+    ma_weight: float | None = None,
+    osc_weight: float | None = None,
+    roc_weight: float | None = None,
+    timeframe_weights: str | None = None,
+    confluence_grade: str | None = None,
+    min_confluence: int | None = None,
+    min_rvol: float | None = None,
+    risk_per_trade: float | None = None,
+    atr_multiplier: float | None = None,
+    min_risk_reward: float | None = None,
+    account_balance: float | None = None,
+    pip_value: float | None = None,
+    detailed: bool = False,
+    matrix: bool = False,
+    limit: int | None = None,
+    show_risk: bool = False,
+    output: str | None = None,
+    sql: str | None = None,
+    filters: list[str] | None = None,
+) -> str:
+    """
+    Run high-confluence opportunity scanner across multiple timeframes.
+
+    Args:
+        asset_type: "forex", "stocks", "crypto", "commodity"
+        universe: "majors", "minors", "all" (for forex)
+        pairs: Comma-separated list of symbols (e.g., "EURUSD,GBPUSD")
+        timeframes: Comma-separated list of timeframes (e.g., "15,60,240")
+        min_volume: Minimum average volume
+        max_atr: Maximum ATR (volatility filter)
+        min_ma_score: Minimum Moving Average score (-2.0 to 2.0)
+        min_roc: Minimum Rate of Change
+        contract_type: "spot", "cfd", "spreadbet", "all"
+        include_atr: Include ATR values in results
+        include_rsi: Include RSI values in results
+        trend_weight: Scoring weight for trend (0.0 to 1.0)
+        ma_weight: Scoring weight for MAs (0.0 to 1.0)
+        osc_weight: Scoring weight for oscillators (0.0 to 1.0)
+        roc_weight: Scoring weight for ROC (0.0 to 1.0)
+        timeframe_weights: Per-TF scoring weights (e.g., "240:0.5,60:0.3,15:0.2")
+        confluence_grade: Filter by grade ("A+", "A", "B", "C", "D", "F")
+        min_confluence: Minimum total confluence score
+        min_rvol: Minimum relative volume (1.0 = normal)
+        risk_per_trade: Risk % per trade (e.g., 1.0)
+        atr_multiplier: ATR multiplier for stop loss (e.g., 2.0)
+        min_risk_reward: Minimum risk:reward ratio (e.g., 1.5)
+        account_balance: Balance for position sizing (e.g., 10000.0)
+        pip_value: Pip value for position sizing (default 10.0)
+        detailed: Show detailed per-pair breakdown with TF analysis
+        matrix: Show confluence matrix view for all pairs
+        limit: Number of results to return
+        show_risk: Include risk management fields (SL/TP/RR/Size)
+        output: File path to save results (csv, json, parquet, xml)
+        sql: DuckDB SQL string to filter results
+        filters: List of DuckDB/Python expression filters
+    """
+    pair_list = [p.strip() for p in pairs.split(",")] if pairs else None
+
+    try:
+        results = scan_opportunities(
+            asset_type=asset_type,
+            universe=universe,
+            pairs=pair_list,
+            timeframes=timeframes,
+            min_volume=min_volume,
+            max_atr=max_atr,
+            min_ma_score=min_ma_score,
+            min_roc=min_roc,
+            contract_type=contract_type,
+            include_atr=include_atr,
+            include_rsi=include_rsi,
+            trend_weight=trend_weight,
+            ma_weight=ma_weight,
+            osc_weight=osc_weight,
+            roc_weight=roc_weight,
+            timeframe_weights=timeframe_weights,
+            confluence_grade=confluence_grade,
+            min_confluence=min_confluence,
+            min_rvol=min_rvol,
+            risk_per_trade=risk_per_trade,
+            atr_multiplier=atr_multiplier,
+            min_risk_reward=min_risk_reward,
+            account_balance=account_balance,
+            pip_value=pip_value,
+            detailed=detailed,
+            matrix=matrix,
+            limit=limit,
+            show_risk=show_risk,
+            output=output,
+        )
+
+        if isinstance(results, str):
+            return results
+
+        df = results
+        if df.empty:
+            return "No opportunities found."
+
+        return df.to_markdown(index=False)
+    except Exception as e:
+        return f"Error running opportunity scanner: {e}"
+
+
+@mcp.tool()
+def scanner_strategies(
+    asset_type: str = "forex",
+    universe: str | None = None,
+    pairs: str | None = None,
+    timeframes: str | None = None,
+    strategy: str = "all",
+    direction: str = "all",
+    min_confluence: int | None = None,
+    trend_threshold: float | None = None,
+    mr_threshold: float | None = None,
+    min_roc: float | None = None,
+    min_volume: float | None = None,
+    max_atr: float | None = None,
+    min_ma_score: float | None = None,
+    mr_signals: str | None = None,
+    contract_type: str | None = None,
+    include_atr: bool = False,
+    include_rsi: bool = False,
+    min_tf_alignment: int | None = None,
+    require_momentum: bool = False,
+    min_rvol: float | None = None,
+    require_volume_spike: bool = False,
+    risk_per_trade: float | None = None,
+    atr_multiplier: float | None = None,
+    min_risk_reward: float | None = None,
+    account_balance: float | None = None,
+    pip_value: float | None = None,
+    trend_weight: float | None = None,
+    ma_weight: float | None = None,
+    osc_weight: float | None = None,
+    roc_weight: float | None = None,
+    timeframe_weights: str | None = None,
+    rsi_lower: float | None = None,
+    rsi_upper: float | None = None,
+    detailed: bool = False,
+    matrix: bool = False,
+    limit: int | None = None,
+    show_risk: bool = False,
+    output: str | None = None,
+    sql: str | None = None,
+    filters: list[str] | None = None,
+) -> str:
+    """
+    Run strategy-specific scanner (Trend, Mean Reversion, etc).
+
+    Args:
+        asset_type: "forex", "stocks", "crypto", "commodity"
+        universe: "majors", "minors", "all"
+        pairs: Comma-separated symbols
+        timeframes: Comma-separated timeframes (e.g., "15,60,240")
+        strategy: "all", "trend", "mean_reversion", "hybrid", "breakout", "confluence"
+        direction: "long", "short", "all"
+        min_confluence: Minimum confluence score
+        trend_threshold: Trend score threshold
+        mr_threshold: Mean reversion score threshold
+        min_roc: Minimum Rate of Change
+        min_volume: Minimum average volume
+        max_atr: Maximum ATR
+        min_ma_score: Minimum MA score
+        mr_signals: Comma-separated signals (e.g., "rsi_oversold,rsi_overbought")
+        contract_type: "spot", "cfd", "spreadbet", "all"
+        include_atr: Include ATR fields
+        include_rsi: Include RSI fields
+        min_tf_alignment: Required alignment across timeframes (1, 2, or 3)
+        require_momentum: Require ROC to align with direction
+        min_rvol: Minimum relative volume (1.0 = normal)
+        require_volume_spike: Require volume > 1.5x average
+        risk_per_trade: Risk % per trade
+        atr_multiplier: ATR multiplier for stop loss
+        min_risk_reward: Minimum risk:reward ratio
+        account_balance: Balance for position sizing
+        pip_value: Pip value for position sizing (default 10.0)
+        trend_weight: Scoring weight for trend (0.0 to 1.0)
+        ma_weight: Scoring weight for MAs (0.0 to 1.0)
+        osc_weight: Scoring weight for oscillators (0.0 to 1.0)
+        roc_weight: Scoring weight for ROC (0.0 to 1.0)
+        timeframe_weights: Per-TF scoring weights (e.g., "240:0.5,60:0.3,15:0.2")
+        rsi_lower: Lower RSI threshold for oversold signals
+        rsi_upper: Upper RSI threshold for overbought signals
+        detailed: Show detailed per-pair breakdown with TF analysis
+        matrix: Show confluence matrix view for all pairs
+        limit: Number of results to return
+        show_risk: Include risk management fields (SL/TP/RR/Size)
+        output: File path to save results
+        sql: DuckDB SQL string to filter results
+        filters: List of DuckDB/Python expression filters
+    """
+    pair_list = [p.strip() for p in pairs.split(",")] if pairs else None
+    signal_list = [s.strip() for s in mr_signals.split(",")] if mr_signals else None
+
+    try:
+        results = scan_strategies(
+            asset_type=asset_type,
+            universe=universe,
+            pairs=pair_list,
+            timeframes=timeframes,
+            strategy=strategy,
+            direction=direction,
+            min_confluence=min_confluence,
+            trend_threshold=trend_threshold,
+            mr_threshold=mr_threshold,
+            min_roc=min_roc,
+            min_volume=min_volume,
+            max_atr=max_atr,
+            min_ma_score=min_ma_score,
+            mr_signals=signal_list,
+            contract_type=contract_type,
+            include_atr=include_atr,
+            include_rsi=include_rsi,
+            min_tf_alignment=min_tf_alignment,
+            require_momentum=require_momentum,
+            min_rvol=min_rvol,
+            require_volume_spike=require_volume_spike,
+            risk_per_trade=risk_per_trade,
+            atr_multiplier=atr_multiplier,
+            min_risk_reward=min_risk_reward,
+            account_balance=account_balance,
+            pip_value=pip_value,
+            trend_weight=trend_weight,
+            ma_weight=ma_weight,
+            osc_weight=osc_weight,
+            roc_weight=roc_weight,
+            timeframe_weights=timeframe_weights,
+            rsi_lower=rsi_lower,
+            rsi_upper=rsi_upper,
+            detailed=detailed,
+            matrix=matrix,
+            limit=limit,
+            show_risk=show_risk,
+            output=output,
+            sql=sql,
+            filters=filters,
+        )
+
+        if isinstance(results, str):
+            return results
+
+        df = results
+        if df.empty:
+            return "No signals found."
+
+        return df.to_markdown(index=False)
+    except Exception as e:
+        return f"Error running strategy scanner: {e}"
+
+
+@mcp.tool()
+def scanner_inspect(path: str, head: int = 10, metadata_only: bool = False) -> str:
+    """
+    Inspect a Parquet file with embedded metadata.
+
+    Args:
+        path: Path to the parquet file to inspect
+        head: Number of rows to show (default 10)
+        metadata_only: Only show metadata, skip data table
+    """
+    try:
+        return inspect_file(path, head=head, metadata_only=metadata_only)
+    except Exception as e:
+        return f"Error inspecting file: {e}"
+
+
+@mcp.tool()
+def config_save(path: str, data_json: str) -> str:
+    """
+    Save scanner configuration to a YAML file.
+
+    Args:
+        path: Path to save (e.g., "my_config.yaml")
+        data_json: JSON string of configuration parameters
+    """
+    try:
+        data = json.loads(data_json)
+        return save_mcp_config(path, data)
+    except Exception as e:
+        return f"Error saving config: {e}"
+
+
+@mcp.tool()
+def config_load(path: str) -> str:
+    """
+    Load scanner configuration from a YAML file.
+
+    Args:
+        path: Path to load from
+    """
+    try:
+        data = load_mcp_config(path)
+        return json.dumps(data, indent=2)
+    except Exception as e:
+        return f"Error loading config: {e}"
+
+
+@mcp.tool()
+def list_scanner_options() -> str:
+    """
+    List valid values for scanner parameters (asset types, strategies, etc).
+    Use this to discover valid inputs for scanner_opportunities and scanner_strategies.
+    """
+    options = {
+        "asset_types": ["forex", "stocks", "crypto", "commodity", "bond", "futures", "coin"],
+        "universes": {
+            "forex": ["majors", "minors", "all"],
+            "crypto": ["all"],
+            "stocks": ["all"],
+        },
+        "strategies": [
+            "all",
+            "trend_following",
+            "mean_reversion",
+            "hybrid",
+            "breakout",
+            "confluence",
+        ],
+        "contract_types": ["spot", "cfd", "spreadbet", "all"],
+        "directions": ["long", "short", "all"],
+        "confluence_grades": ["A+", "A", "B", "C", "D", "F"],
+        "timeframes": ["1", "5", "15", "60", "240", "1D", "1W", "1M"],
+    }
+    return json.dumps(options, indent=2)
 
 
 # =============================================================================
 # FIELD DISCOVERY TOOLS
 # =============================================================================
 
+
 @mcp.tool()
-def discover_fields(
-    search_term: str,
-    asset_type: str = "stock",
-    limit: int = 20
-) -> str:
+def discover_fields(search_term: str, asset_type: str = "stock", limit: int = 20) -> str:
     """
     Search for available fields/indicators by keyword.
 
@@ -99,6 +447,7 @@ def list_field_types(asset_type: str = "stock") -> str:
 # FLEXIBLE QUERY TOOL
 # =============================================================================
 
+
 @mcp.tool()
 def custom_query(
     asset_type: str = "stock",
@@ -106,7 +455,7 @@ def custom_query(
     filters: str | None = None,
     sort_by: str | None = None,
     ascending: bool = False,
-    limit: int = 25
+    limit: int = 25,
 ) -> str:
     """
     Flexible query with any fields and filters.
@@ -162,7 +511,7 @@ def custom_query(
             filters=filter_list,
             sort_by=sort_by,
             ascending=ascending,
-            limit=limit
+            limit=limit,
         )
 
         if df.empty:
@@ -177,6 +526,7 @@ def custom_query(
 # PRESET QUERY TOOLS
 # =============================================================================
 
+
 @mcp.tool()
 def search_stocks(
     min_price: float | None = None,
@@ -185,7 +535,7 @@ def search_stocks(
     max_market_cap_billions: float | None = None,
     sectors: str | None = None,
     sort_by: str = "market_cap",
-    limit: int = 25
+    limit: int = 25,
 ) -> str:
     """
     Screen stocks with common filters (simplified interface).
@@ -213,7 +563,7 @@ def search_stocks(
         max_market_cap=max_cap,
         sectors=sector_list,
         sort_by=sort_by,
-        limit=limit
+        limit=limit,
     )
 
     if df.empty:
@@ -226,7 +576,7 @@ def search_stocks(
 def search_crypto(
     min_volume_millions: float | None = None,
     min_market_cap_billions: float | None = None,
-    limit: int = 25
+    limit: int = 25,
 ) -> str:
     """
     Screen cryptocurrencies (simplified interface).
@@ -242,11 +592,7 @@ def search_crypto(
     min_cap = min_market_cap_billions * 1e9 if min_market_cap_billions else None
     limit = min(limit, 100)
 
-    df = screen_crypto(
-        min_volume_24h=min_vol,
-        min_market_cap=min_cap,
-        limit=limit
-    )
+    df = screen_crypto(min_volume_24h=min_vol, min_market_cap=min_cap, limit=limit)
 
     if df.empty:
         return "No cryptocurrencies found matching the criteria."
@@ -255,10 +601,7 @@ def search_crypto(
 
 
 @mcp.tool()
-def search_forex(
-    min_volume_millions: float | None = None,
-    limit: int = 25
-) -> str:
+def search_forex(min_volume_millions: float | None = None, limit: int = 25) -> str:
     """
     Screen forex currency pairs.
 
@@ -278,11 +621,7 @@ def search_forex(
 
 
 @mcp.tool()
-def get_top_movers(
-    asset_type: str = "stock",
-    direction: str = "gainers",
-    limit: int = 10
-) -> str:
+def get_top_movers(asset_type: str = "stock", direction: str = "gainers", limit: int = 10) -> str:
     """
     Get top gaining or losing assets.
 
@@ -311,10 +650,20 @@ def get_top_movers(
 def list_sectors() -> str:
     """List available stock sectors for filtering."""
     sectors = [
-        "Technology", "Healthcare", "Financial", "Consumer Cyclical",
-        "Communication Services", "Industrials", "Consumer Defensive",
-        "Energy", "Basic Materials", "Real Estate", "Utilities",
-        "Electronic Technology", "Technology Services", "Producer Manufacturing"
+        "Technology",
+        "Healthcare",
+        "Financial",
+        "Consumer Cyclical",
+        "Communication Services",
+        "Industrials",
+        "Consumer Defensive",
+        "Energy",
+        "Basic Materials",
+        "Real Estate",
+        "Utilities",
+        "Electronic Technology",
+        "Technology Services",
+        "Producer Manufacturing",
     ]
     return "Available sectors:\n" + "\n".join(f"  - {s}" for s in sectors)
 
@@ -342,13 +691,23 @@ def list_filter_operators() -> str:
         result += f"- **{op}**: {desc}\n"
 
     result += "\nExample filters JSON:\n"
-    result += '```json\n[\n'
+    result += "```json\n[\n"
     result += '  {"field": "PRICE", "op": ">=", "value": 100},\n'
     result += '  {"field": "RSI", "op": "in_range", "value": [30, 70]},\n'
     result += '  {"field": "SECTOR", "op": "match", "value": "Technology"}\n'
-    result += ']\n```'
+    result += "]\n```"
 
     return result
+
+
+@mcp.tool()
+def query_historical_scan(sql: str, file_path: str) -> str:
+    """
+    Execute a DuckDB SQL query against a previously exported Parquet file.
+    Use this to analyze data you have already exported without re-running the TradingView API.
+    The table name in your query should be 'df' (e.g., 'SELECT PAIR, TREND FROM df WHERE GRADE = 'A+'').
+    """
+    return tools.query_historical_scan(sql, file_path)
 
 
 def run():
