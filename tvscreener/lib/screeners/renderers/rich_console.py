@@ -118,6 +118,29 @@ class RichConsoleRenderer(BaseRenderer):
         shown = len(df.head(limit))
         console.print(f"\n[dim]Showing {shown} of {len(df)} results[/dim]")
 
+    def _collect_confluence_stats(self, row: Any) -> dict[str, int]:
+        grid_total = int(to_scalar(row.get("GRID_TOTAL", 12) or 12))
+        grid_aligned = int(to_scalar(row.get("GRID_ALIGNED", row.get("TOTAL_CONFLUENCE", 0)) or 0))
+        total_confluence = int(to_scalar(row.get("TOTAL_CONFLUENCE", grid_aligned) or grid_aligned))
+        tf_long = int(to_scalar(row.get("TF_CONFLUENCE_LONG", 0) or 0))
+        tf_short = int(to_scalar(row.get("TF_CONFLUENCE_SHORT", 0) or 0))
+
+        return {
+            "grid_aligned": grid_aligned,
+            "grid_total": grid_total,
+            "total_confluence": total_confluence,
+            "tf_long": tf_long,
+            "tf_short": tf_short,
+        }
+
+    def _format_confluence_summary(self, stats: dict[str, int]) -> str:
+        return (
+            f"TOTAL_CONFLUENCE={stats['total_confluence']} "
+            f"GRID_TOTAL={stats['grid_total']} "
+            f"TF_LONG={stats['tf_long']} "
+            f"TF_SHORT={stats['tf_short']}"
+        )
+
     def _render_opportunity(
         self, screener: Any, df: pd.DataFrame, console: Console, Table: type[Table], **kwargs: Any
     ) -> None:
@@ -144,6 +167,7 @@ class RichConsoleRenderer(BaseRenderer):
         table.add_column("TF", style="dim yellow", justify="center")
         table.add_column("Fac", style="dim yellow", justify="center")
         table.add_column("Gr", style="magenta", justify="center")
+        table.add_column("Confluence", justify="left", style="dim")
 
         if getattr(screener.config, "show_risk", False):
             table.add_column("SL", justify="right", style="red")
@@ -159,6 +183,8 @@ class RichConsoleRenderer(BaseRenderer):
             tf_conf = row.get("TF_CONFLUENCE", "0/3")
             factor_conf = row.get("FACTOR_CONFLUENCE", "0/4")
             grade = row.get("GRADE", "F")
+            stats = self._collect_confluence_stats(row)
+            confluence_summary = self._format_confluence_summary(stats)
 
             # Direction column should never show ⚪ (Todo 064)
             direction_sign = row.get("DIRECTION_SIGN") or VisualStyler.direction_emoji(ensemble)
@@ -172,6 +198,7 @@ class RichConsoleRenderer(BaseRenderer):
                 str(tf_conf),
                 str(factor_conf),
                 f"[bold]{grade}[/bold]",
+                confluence_summary,
             ]
 
             if getattr(screener.config, "show_risk", False):
@@ -206,11 +233,13 @@ class RichConsoleRenderer(BaseRenderer):
             name = get_enriched_col(row, "PAIR", "Name")
             ensemble = row.get("ENSEMBLE_SCORE", 0) or 0
             grade = row.get("GRADE", "F")
-            grid_aligned = row.get("GRID_ALIGNED", 0) or 0
-            grid_total = row.get("GRID_TOTAL", 12) or 12
+            stats = self._collect_confluence_stats(row)
+            grid_aligned = stats["grid_aligned"]
+            grid_total = stats["grid_total"]
+            total_confluence = stats["total_confluence"]
             grid_pct = row.get("GRID_PCT", 0) or 0
-            tf_conf = row.get("TF_CONFLUENCE", "0/3")
             factor_conf = row.get("FACTOR_CONFLUENCE", "0/4")
+            confluence_summary = self._format_confluence_summary(stats)
 
             # Direction should never show ⚪ (Todo 064)
             direction_sign = row.get("DIRECTION_SIGN") or VisualStyler.direction_emoji(ensemble)
@@ -248,7 +277,13 @@ class RichConsoleRenderer(BaseRenderer):
                 )
 
             console.print(table)
-            footer = f"  Ensemble: {ensemble:+.3f} | Grid: {grid_aligned}/{grid_total} ({grid_pct}%) | TF: {tf_conf} | Factor: {factor_conf}"
+            footer = (
+                f"  Ensemble: {ensemble:+.3f} | "
+                f"Total: {total_confluence} | "
+                f"Grid: {grid_aligned}/{grid_total} ({grid_pct}%) | "
+                f"TF+: {stats['tf_long']} TF-: {stats['tf_short']} | "
+                f"Factor: {factor_conf}"
+            )
 
             if getattr(screener.config, "show_risk", False):
                 sl = row.get("STOP_LOSS", 0) or 0
@@ -277,9 +312,12 @@ class RichConsoleRenderer(BaseRenderer):
                 )
                 console.print(f"  [dim]Stats: ATR {atr:.5f} | RVOL {rvol:.2f}x[/dim]\n")
             else:
-                console.print(footer + "\n")
+                console.print(footer)
+
+            console.print(f"[dim]{confluence_summary}[/dim]\n")
 
         shown = len(df.head(display_limit))
+
         console.print(f"[dim]{VisualStyler.legend()}[/dim]")
         console.print(f"[dim]Showing {shown} of {len(df)} opportunities[/dim]")
 
@@ -302,13 +340,16 @@ class RichConsoleRenderer(BaseRenderer):
         table.add_column("ROC", justify="center")
         table.add_column("Grid", style="yellow", justify="center")
         table.add_column("Grade", style="magenta", justify="center")
+        # Keep the matrix view compact and decision-oriented.
+        # More numeric detail (ENSEMBLE_SCORE / TF_CONFLUENCE_*) is available in summary/detailed views.
 
         for _, row in df.iterrows():
             name = str(get_enriched_col(row, "PAIR", "Name"))
             direction = str(row.get("DIRECTION", Direction.LONG.value))
             grade = str(row.get("GRADE", "F"))
-            grid_aligned = row.get("GRID_ALIGNED", 0) or 0
-            grid_total = row.get("GRID_TOTAL", 12) or 12
+            stats = self._collect_confluence_stats(row)
+            grid_aligned = stats["grid_aligned"]
+            grid_total = stats["grid_total"]
 
             direction_emoji = (
                 VisualStyler.BULL if direction == Direction.LONG.value else VisualStyler.BEAR
@@ -413,6 +454,7 @@ class RichConsoleRenderer(BaseRenderer):
 
             table.add_column("Grid", justify="center")
             table.add_column("Gr", justify="center", style="bold magenta")
+            table.add_column("Confluence", justify="left", style="dim")
 
             if getattr(screener.config, "show_risk", False):
                 table.add_column("SL", justify="right", style="red")
@@ -422,6 +464,8 @@ class RichConsoleRenderer(BaseRenderer):
 
             for i, row_tuple in enumerate(strategy_df.itertuples(index=False), 1):
                 row = row_tuple._asdict()
+                stats = self._collect_confluence_stats(row)
+                confluence_summary = self._format_confluence_summary(stats)
                 pair = str(get_enriched_col(row, "PAIR", "Name"))
                 direction = str(row.get("DIRECTION", Direction.LONG.value))
 
@@ -433,8 +477,8 @@ class RichConsoleRenderer(BaseRenderer):
                         confluence_score, direction=direction
                     )
 
-                grid_aligned = row.get("GRID_ALIGNED", 0) or 0
-                grid_total = row.get("GRID_TOTAL", 12) or 12
+                grid_aligned = stats["grid_aligned"]
+                grid_total = stats["grid_total"]
                 grid_display = f"{grid_aligned}/{grid_total}"
                 grade = str(row.get("GRADE", "F"))
 
@@ -456,7 +500,7 @@ class RichConsoleRenderer(BaseRenderer):
                 else:
                     row_data.append(str(row.get("CONFLUENCE_SCORE", "N/A")))
 
-                row_data.extend([grid_display, grade])
+                row_data.extend([grid_display, grade, confluence_summary])
 
                 if getattr(screener.config, "show_risk", False):
                     sl = row.get("STOP_LOSS", 0) or 0
@@ -509,6 +553,9 @@ class RichConsoleRenderer(BaseRenderer):
 
             panels = []
             for _, row in strategy_df.iterrows():
+                stats = self._collect_confluence_stats(row)
+                confluence_summary = self._format_confluence_summary(stats)
+                ensemble = row.get("ENSEMBLE_SCORE", 0) or 0
                 pair = get_enriched_col(row, "PAIR", "Name")
                 score = row.get("CONFLUENCE_SCORE", "N/A")
                 pattern = row.get("CONFLUENCE_PATTERN", "")
@@ -537,10 +584,12 @@ class RichConsoleRenderer(BaseRenderer):
 
                 strat_display = strategy.replace("_", " ").title()
                 title = (
-                    f"[bold cyan]{pair}[/bold cyan] [dim]({strat_display} - Score: {score})[/dim]"
+                    f"[bold cyan]{pair}[/bold cyan] "
+                    f"[dim]({strat_display} - Score: {score} | Ensemble: {ensemble:+.2f})[/dim]"
                 )
                 if pattern:
                     title += f" [magenta]({pattern})[/magenta]"
+                title += f" [dim]{confluence_summary}[/dim]"
 
                 if getattr(screener.config, "show_risk", False):
                     sl = to_scalar(row.get("STOP_LOSS", 0))
