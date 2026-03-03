@@ -340,6 +340,10 @@ for df in ss.stream(interval=30, max_iterations=10):
 - `max_iterations`: Maximum number of refreshes (None = infinite)
 - `on_update`: Optional callback function called with each DataFrame
 
+## Lakehouse Audit Flow
+
+The lakehouse audit plan ensures `tvscreener.gold` is treated as the canonical signal table and that `exports/` only holds reference snapshots written intentionally with `--write-exports` insurance. Follow `docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md` alongside `docs/audit/lakehouse-audit-flow.md` for the cleanup, scan replay, and SQL audit steps needed to prove the matrix view matches the lakehouse data.
+
 ## Documentation
 
 📖 **[Full Documentation](https://deepentropy.github.io/tvscreener/docs/)** - Complete guides, API reference, and examples.
