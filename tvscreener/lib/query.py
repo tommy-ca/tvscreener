@@ -233,10 +233,11 @@ class EdgeQueryClient:
             if is_iceberg:
                 table = self.catalog.load_table(path_str)
                 # Use Arrow fallback for Iceberg since extensions are disabled by configuration hardening
+                # Use table.scan().to_arrow() - table.to_arrow() doesn't exist
                 arrow_table = (
                     table.scan(snapshot_id=snapshot_id).to_arrow()
                     if snapshot_id
-                    else table.to_arrow()
+                    else table.scan().to_arrow()
                 )
                 return self.con.from_arrow(arrow_table)
             else:
