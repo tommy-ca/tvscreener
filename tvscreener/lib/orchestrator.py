@@ -251,8 +251,7 @@ class ScreenerController:
         # Risk management defaults
         if request.scoring.min_tf_alignment is None:
             request.scoring.min_tf_alignment = settings.risk.min_tf_alignment
-        if request.assets.min_rvol is None:
-            request.assets.min_rvol = settings.risk.min_rvol
+        # Filtering (min_rvol) happens in EdgeQueryClient after ingestion so pipelines stay raw
         if request.risk.risk_per_trade_pct is None:
             request.risk.risk_per_trade_pct = settings.risk.risk_per_trade_pct
         if request.risk.atr_multiplier is None:
@@ -367,6 +366,11 @@ class ScreenerController:
         if command == "query":
             return self.run_query(args)
 
+        matrix_mode = args.matrix
+        detailed_mode = args.detailed
+        if not (matrix_mode or detailed_mode):
+            matrix_mode = True
+
         request = ScanRequest(
             assets=AssetSelection(
                 scanner=args.scanner,
@@ -409,8 +413,8 @@ class ScreenerController:
             ),
             output=OutputConfig(
                 output=args.output,
-                detailed=args.detailed,
-                matrix=args.matrix,
+                detailed=detailed_mode,
+                matrix=matrix_mode,
                 limit=args.limit,
                 head=args.head,
                 metadata_only=args.metadata_only,
@@ -425,6 +429,7 @@ class ScreenerController:
                 min_opportunity_confluence=args.min_opportunity_confluence,
             ),
         )
+
         return self.run_scan(request)
 
     def run_opportunity_scan(self, request: ScanRequest) -> int:
