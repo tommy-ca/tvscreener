@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p1
 issue_id: "064"
 tags: [display, emoji, ux, bug]
