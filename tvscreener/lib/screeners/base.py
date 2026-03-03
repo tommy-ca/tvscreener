@@ -4,11 +4,14 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 import narwhals as nw
 import pandas as pd
+from pyiceberg.exceptions import NoSuchTableError
 
+from tvscreener.lib.lakehouse import get_catalog, write_iceberg
 from tvscreener.lib.screeners.metadata_utils import MetadataCollector
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
 from tvscreener.score import DEFAULT_SCORING_CONFIG, ScoringConfig, ScoringEngine
@@ -238,23 +241,15 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
     def _ingest(self) -> pd.DataFrame:
         """Stage 1: API Ingestion (Bronze)."""
-        from tvscreener.lib.screeners.pipeline import Ingestor
-
-        return cast(pd.DataFrame, self._resume_or_run("bronze", lambda: Ingestor().run(self)))
+        return self._resume_or_run("bronze", self._fetch_all_data)
 
     def _standardize(self, df: pd.DataFrame) -> pd.DataFrame:
         """Stage 2: Standardization (Silver)."""
-        from tvscreener.lib.screeners.pipeline import Standardizer
-
-        return cast(
-            pd.DataFrame, self._resume_or_run("silver", lambda: Standardizer().run(self, df))
-        )
+        return self._resume_or_run("silver", lambda: self._apply_standardization(df))
 
     def _score(self, df: pd.DataFrame) -> pd.DataFrame:
         """Stage 3: Scoring (Gold)."""
-        from tvscreener.lib.screeners.pipeline import Scorer
-
-        return cast(pd.DataFrame, self._resume_or_run("gold", lambda: Scorer().run(self, df)))
+        return self._resume_or_run("gold", lambda: self._apply_scoring(df))
 
     def _resume_or_run(
         self,
@@ -264,9 +259,78 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         mode: str | None = None,
     ) -> pd.DataFrame:
         """Centralized helper for Medallion stage execution and Iceberg persistence (Todo 167)."""
-        from tvscreener.lib.screeners.pipeline import resume_or_run
+        replay = self.config.extra_options.get("replay")
+        table_name = f"tvscreener.{stage}"
 
-        return resume_or_run(self, stage, runner_func, persist=persist, mode=mode)
+        if mode is None:
+            # Default to overwrite for Gold and Silver to ensure idempotency
+            mode = "overwrite" if stage in ["gold", "silver"] else "append"
+
+        if replay:
+            try:
+                catalog = get_catalog()
+                table = catalog.load_table(table_name)
+                logger.info("Resuming from %s Iceberg table", stage.capitalize())
+                return table.to_pandas()
+            except NoSuchTableError:
+                pass
+            except Exception as e:
+                logger.debug("Failed to load from %s: %s", stage.capitalize(), e)
+
+        df = runner_func()
+
+        # Write-Audit-Publish (WAP) pattern (Todo 174)
+        # Block Iceberg commits if data health check fails
+        if persist and not self._validate_health(df, stage):
+            logger.error("Health check failed for stage '%s'. Blocking Iceberg commit.", stage)
+            return df
+
+        if persist:
+            try:
+                partition_by = None
+                now_utc = datetime.now(timezone.utc)
+                if stage == "bronze":
+                    if "ingest_date" not in df.columns:
+                        df["ingest_date"] = now_utc.strftime("%Y-%m-%d")
+                    partition_by = ["ingest_date"]
+                elif stage == "silver":
+                    # asset_type should ideally come from the screener
+                    if "asset_type" not in df.columns:
+                        df["asset_type"] = self.__class__.__name__.replace("Screener", "").lower()
+
+                    # Use both asset_type and any available date column to prevent historical loss (Todo 183)
+                    if "signal_date" in df.columns:
+                        partition_by = ["asset_type", "signal_date"]
+                    elif "ingest_date" in df.columns:
+                        partition_by = ["asset_type", "ingest_date"]
+                    else:
+                        partition_by = ["asset_type"]
+                elif stage == "gold":
+                    if "signal_date" not in df.columns:
+                        df["signal_date"] = now_utc.strftime("%Y-%m-%d")
+
+                    # Partition by both signal_date and asset_type if available
+                    if "asset_type" in df.columns:
+                        partition_by = ["asset_type", "signal_date"]
+                    else:
+                        partition_by = ["signal_date"]
+
+                write_iceberg(df, table_name, mode=mode, partition_by=partition_by)
+            except Exception as e:
+                logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
+
+        return df
+
+    def _apply_scoring(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Centralized scoring logic for the Gold stage."""
+        if df.empty:
+            return df
+
+        # Scoring logic using ScoringEngine
+        scored_df = self._engine.rank_opportunities(df, copy=False)
+        if self.config.show_risk:
+            scored_df = self._risk_engine.apply(scored_df, copy=False)
+        return scored_df
 
     def _apply_standardization(self, df: pd.DataFrame) -> pd.DataFrame:
         """Centralized standardization logic for the Silver stage."""
@@ -403,7 +467,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         combined_df = pd.concat(all_dfs, ignore_index=True)
         # Enforce PyArrow backend at the Silver boundary for zero-copy efficiency
         if not combined_df.empty:
-            combined_df = cast(pd.DataFrame, combined_df.convert_dtypes(dtype_backend="pyarrow"))
+            combined_df = combined_df.convert_dtypes(dtype_backend="pyarrow")
         return combined_df
 
     def _get_base_fields(self, field_class: Any) -> list[Any]:
@@ -471,4 +535,4 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         df_nw = nw.from_native(df)
         if "Name" in df_nw.columns:
             df_nw = df_nw.unique(subset=["Name"])
-        return cast(pd.DataFrame, nw.to_native(df_nw))
+        return nw.to_native(df_nw)

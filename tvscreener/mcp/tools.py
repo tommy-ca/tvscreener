@@ -196,6 +196,8 @@ def custom_screen(
     if filters:
         for f in filters:
             field_name = f.get("field")
+            if not field_name:
+                continue
             op = f.get("op", ">=")
             value = f.get("value")
 
@@ -623,38 +625,27 @@ def inspect_file(
     path: str, head: int = 10, metadata_only: bool = False, sql: str | None = None
 ) -> str:
     """
-    Inspect a Parquet file with embedded metadata.
+    Inspect a Parquet file or Iceberg table with embedded metadata.
     """
     from io import StringIO
 
     from rich.console import Console
 
-    from tvscreener.lib.inspect_utils import inspect_parquet
     from tvscreener.lib.orchestrator import OutputConfig, ScanRequest, ScreenerController
-
-    try:
-        validated_path = validate_path(path, allow_tmp=True)
-    except ValueError as e:
-        return f"Error: {e}"
 
     output = StringIO()
     console = Console(file=output, force_terminal=False, width=100)
 
-    if sql:
-        controller = ScreenerController(console=console)
-        request = ScanRequest(
-            output=OutputConfig(
-                output=str(validated_path),
-                sql=sql,
-                head=head,
-                metadata_only=metadata_only,
-            )
+    controller = ScreenerController(console=console)
+    request = ScanRequest(
+        output=OutputConfig(
+            output=path,
+            sql=sql,
+            head=head,
+            metadata_only=metadata_only,
         )
-        controller.run_inspect_parquet(request)
-    else:
-        inspect_parquet(
-            str(validated_path), head=head, metadata_only=metadata_only, console=console
-        )
+    )
+    controller.run_inspect_parquet(request)
 
     return output.getvalue()
 

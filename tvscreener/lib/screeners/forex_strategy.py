@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 import narwhals as nw
-import numpy as np
 import pandas as pd
 
 from tvscreener.beauty import VisualStyler
@@ -216,7 +215,7 @@ class ForexStrategyScanner(ExportMixin):
         # Apply post_filters so all consumers get identically filtered data
         if self.post_filters:
             for pf in self.post_filters:
-                combined = pf(combined)  # type: ignore
+                combined = pf(combined)
                 if combined.empty:
                     break
 
@@ -247,7 +246,7 @@ class ForexStrategyScanner(ExportMixin):
     def _get_data_or_fetch(self, raw_data: pd.DataFrame | None) -> pd.DataFrame:
         """Fetch data if not provided, or return empty DataFrame if already empty."""
         if raw_data is None:
-            raw_data = cast(pd.DataFrame, self._screener.get_opportunities())
+            raw_data = self._screener.get_opportunities()
 
         if raw_data.empty:
             return pd.DataFrame()
@@ -371,10 +370,15 @@ class ForexStrategyScanner(ExportMixin):
             CONFLUENCE_SCORE=1,
         )
         result["MR_STRENGTH"] = result["LTF_MOMENTUM"].abs()
-        result["DIRECTION"] = np.where(
-            result["LTF_MOMENTUM"] < -self.config.mr_threshold,
-            Direction.LONG.value,
-            Direction.SHORT.value,
+        result["DIRECTION"] = (
+            nw.from_native(result)
+            .select(
+                nw.when(nw.col("LTF_MOMENTUM") < -self.config.mr_threshold)
+                .then(nw.lit(Direction.LONG.value))
+                .otherwise(nw.lit(Direction.SHORT.value))
+                .alias("DIRECTION")
+            )
+            .to_native()["DIRECTION"]
         )
         return result.sort_values("MR_STRENGTH", ascending=False)
 
@@ -414,8 +418,15 @@ class ForexStrategyScanner(ExportMixin):
             LTF_MOMENTUM=ltf_osc[mask],
             CONFLUENCE_SCORE=2,
         )
-        result["DIRECTION"] = np.where(
-            result["HTF_TREND"] > 0, Direction.LONG.value, Direction.SHORT.value
+        result["DIRECTION"] = (
+            nw.from_native(result)
+            .select(
+                nw.when(nw.col("HTF_TREND") > 0)
+                .then(nw.lit(Direction.LONG.value))
+                .otherwise(nw.lit(Direction.SHORT.value))
+                .alias("DIRECTION")
+            )
+            .to_native()["DIRECTION"]
         )
 
         return result
@@ -450,8 +461,16 @@ class ForexStrategyScanner(ExportMixin):
             CONFLUENCE_SCORE=len(available_roc_cols),
         )
 
-        result["DIRECTION"] = np.where(
-            result[available_roc_cols[0]] > 0, Direction.LONG.value, Direction.SHORT.value
+        first_roc = available_roc_cols[0]
+        result["DIRECTION"] = (
+            nw.from_native(result)
+            .select(
+                nw.when(nw.col(first_roc) > 0)
+                .then(nw.lit(Direction.LONG.value))
+                .otherwise(nw.lit(Direction.SHORT.value))
+                .alias("DIRECTION")
+            )
+            .to_native()["DIRECTION"]
         )
 
         return result
@@ -518,25 +537,60 @@ class ForexStrategyScanner(ExportMixin):
         mr_rev_long = (osc_htf < -mr_thr) & (osc_stf < -mr_thr) & (osc_ltf < -mr_thr)
         mr_rev_short = (osc_htf > mr_thr) & (osc_stf > mr_thr) & (osc_ltf > mr_thr)
 
-        conds = [
-            mr_entry_long | mr_entry_short,
-            trend_cont_long | trend_cont_short,
-            trend_pullback_long | trend_pullback_short,
-            mr_rev_long | mr_rev_short,
-        ]
-        patterns = [
-            "trend_mr_entry",
-            "trend_continuation",
-            "trend_pullback",
-            "mr_reversal",
-        ]
-        base_scores = [5, 4, 3, 3]
-
-        pattern = np.select(conds, patterns, default="")
-        base_score = np.select(conds, base_scores, default=0).astype(int)
-
         is_long = mr_entry_long | trend_cont_long | trend_pullback_long | mr_rev_long
-        direction = np.where(is_long, Direction.LONG.value, Direction.SHORT.value)
+
+        # Narwhals expressions for multi-condition selection (Todo 188)
+        # Combine masks into a single DataFrame for Narwhals
+        masks_df = pd.DataFrame(
+            {
+                "mr_entry": mr_entry_long | mr_entry_short,
+                "trend_cont": trend_cont_long | trend_cont_short,
+                "trend_pullback": trend_pullback_long | trend_pullback_short,
+                "mr_rev": mr_rev_long | mr_rev_short,
+                "is_long": is_long,
+            },
+            index=df.index,
+        )
+
+        res_nw = (
+            nw.from_native(masks_df)
+            .select(
+                pattern=nw.when(nw.col("mr_entry"))
+                .then(nw.lit("trend_mr_entry"))
+                .otherwise(
+                    nw.when(nw.col("trend_cont"))
+                    .then(nw.lit("trend_continuation"))
+                    .otherwise(
+                        nw.when(nw.col("trend_pullback"))
+                        .then(nw.lit("trend_pullback"))
+                        .otherwise(
+                            nw.when(nw.col("mr_rev"))
+                            .then(nw.lit("mr_reversal"))
+                            .otherwise(nw.lit(""))
+                        )
+                    )
+                ),
+                base_score=nw.when(nw.col("mr_entry"))
+                .then(nw.lit(5))
+                .otherwise(
+                    nw.when(nw.col("trend_cont"))
+                    .then(nw.lit(4))
+                    .otherwise(
+                        nw.when(nw.col("trend_pullback"))
+                        .then(nw.lit(3))
+                        .otherwise(nw.when(nw.col("mr_rev")).then(nw.lit(3)).otherwise(nw.lit(0)))
+                    )
+                ),
+                direction=nw.when(nw.col("is_long"))
+                .then(nw.lit(Direction.LONG.value))
+                .otherwise(nw.lit(Direction.SHORT.value)),
+            )
+            .to_native()
+        )
+
+        pattern = res_nw["pattern"]
+        base_score = res_nw["base_score"]
+        direction = res_nw["direction"]
 
         mr_extremity = pd.concat([osc_htf.abs(), osc_stf.abs(), osc_ltf.abs()], axis=1).max(axis=1)
 
@@ -553,7 +607,7 @@ class ForexStrategyScanner(ExportMixin):
                 short_ok = (roc_values < 0).all(axis=1)
             roc_bonus = ((is_long & long_ok) | (~is_long & short_ok)).astype(int)
 
-        score = (base_score + roc_bonus).clip(upper=5).astype(int)
+        score = (base_score + roc_bonus).clip(upper=5)
 
         mask = base_score > 0
         if not mask.any():
@@ -577,8 +631,15 @@ class ForexStrategyScanner(ExportMixin):
             return df
 
         if "HTF_TREND" in df.columns:
-            df["DIRECTION"] = np.where(
-                df["HTF_TREND"] > 0, Direction.LONG.value, Direction.SHORT.value
+            df["DIRECTION"] = (
+                nw.from_native(df)
+                .select(
+                    nw.when(nw.col("HTF_TREND") > 0)
+                    .then(nw.lit(Direction.LONG.value))
+                    .otherwise(nw.lit(Direction.SHORT.value))
+                    .alias("DIRECTION")
+                )
+                .to_native()["DIRECTION"]
             )
 
         return df
@@ -619,10 +680,13 @@ class ForexStrategyScanner(ExportMixin):
             df = df.with_columns(
                 STRENGTH_SIGN=VisualStyler.get_strategy_strength_expression(
                     "CONFLUENCE_SCORE", "DIRECTION"
-                )
+                ),
+                DIRECTION_SIGN=VisualStyler.get_strategy_direction_expression(
+                    "CONFLUENCE_SCORE", "DIRECTION"
+                ),
             )
         else:
-            df = df.with_columns(STRENGTH_SIGN=nw.lit(""))
+            df = df.with_columns(STRENGTH_SIGN=nw.lit(""), DIRECTION_SIGN=nw.lit(""))
 
         return df
 

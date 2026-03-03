@@ -2,7 +2,6 @@
 
 import logging
 from dataclasses import dataclass
-from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -80,21 +79,21 @@ class RiskEngine:
 
         # Vectorized calculations
         df["STOP_LOSS"] = calculate_stop_loss(
-            cast(pd.Series, entry),
+            entry,
             direction,
-            cast(pd.Series, atr),
+            atr,
             multiplier=self.config.atr_multiplier,
         )
         df["TAKE_PROFIT"] = calculate_take_profit(
-            cast(pd.Series, entry),
-            cast(pd.Series, df["STOP_LOSS"]),
+            entry,
+            df["STOP_LOSS"],
             direction,
             min_rr=self.config.min_risk_reward_ratio,
         )
         df["RR_RATIO"] = calculate_risk_reward_ratio(
-            cast(pd.Series, entry),
-            cast(pd.Series, df["STOP_LOSS"]),
-            cast(pd.Series, df["TAKE_PROFIT"]),
+            entry,
+            df["STOP_LOSS"],
+            df["TAKE_PROFIT"],
         )
 
         # Position sizing

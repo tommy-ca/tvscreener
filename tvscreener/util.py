@@ -1,6 +1,5 @@
 import math
 import os
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -35,12 +34,8 @@ def validate_path(
     :raises ValueError: If path is invalid or outside allowed directory
     """
     if allow_tmp is None:
-        # Default to True only in test environments
-        allow_tmp = (
-            os.getenv("TVSCREENER_TEST_MODE") == "1"
-            or "pytest" in sys.modules
-            or "unittest" in sys.modules
-        )
+        # Default to True only in test environments via explicit env var
+        allow_tmp = os.getenv("TVSCREENER_TEST_MODE") == "1"
 
     try:
         requested_path = Path(path_str).absolute()

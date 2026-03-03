@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
+if TYPE_CHECKING:
+    pass
+
+import narwhals as nw
 import numpy as np
 import pandas as pd
 
@@ -75,9 +79,7 @@ class ScoringEngine:
                 df[f"{factor_name}_SCORE"] = 0.0
             else:
                 # Use Narwhals for zero-copy scoring across backends (Todo 153)
-                import narwhals as nw
-
-                nw_df = nw.from_native(df[cols])
+                nw_df = nw.from_native(cast(Any, df[cols]))
                 expr = (
                     sum(nw.col(c).fill_null(0) * w for c, w in zip(cols, weights, strict=False))
                     / weight_sum
@@ -165,8 +167,15 @@ class ScoringEngine:
                 (1.0 - cfg.volatility_weight) + (cfg.volatility_weight * scale_factor)
             )
 
-        df["DIRECTION"] = np.where(
-            df["ENSEMBLE_SCORE"] > 0, Direction.LONG.value, Direction.SHORT.value
+        df["DIRECTION"] = (
+            nw.from_native(df)
+            .select(
+                nw.when(nw.col("ENSEMBLE_SCORE") > 0)
+                .then(nw.lit(Direction.LONG.value))
+                .otherwise(nw.lit(Direction.SHORT.value))
+                .alias("DIRECTION")
+            )
+            .to_native()["DIRECTION"]
         )
 
         return df
@@ -188,7 +197,16 @@ class ScoringEngine:
                 ]
                 ensemble = df[trend_cols[0]] if trend_cols else pd.Series(0.0, index=df.index)
 
-            df["DIRECTION"] = np.where(ensemble > 0, Direction.LONG.value, Direction.SHORT.value)
+            df["DIRECTION"] = (
+                nw.from_native(df.assign(ensemble=ensemble))
+                .select(
+                    nw.when(nw.col("ensemble") > 0)
+                    .then(nw.lit(Direction.LONG.value))
+                    .otherwise(nw.lit(Direction.SHORT.value))
+                    .alias("DIRECTION")
+                )
+                .to_native()["DIRECTION"]
+            )
 
         is_long = df["DIRECTION"] == Direction.LONG.value
 
@@ -222,9 +240,9 @@ class ScoringEngine:
                 long_aligned = grid_slice.gt(0).where(is_long, False)
                 short_aligned = grid_slice.lt(0).where(~is_long, False)
 
-                grid_aligned = (long_aligned | short_aligned).sum(axis=1)
+                grid_aligned = (cast(Any, long_aligned) | cast(Any, short_aligned)).sum(axis=1)
             else:
-                grid_aligned = np.zeros(len(df), dtype=int)
+                grid_aligned = pd.Series(0, index=df.index, dtype=int)
 
             grid_total = len(relevant_cols)
         else:
@@ -238,14 +256,23 @@ class ScoringEngine:
         )
         df["TOTAL_CONFLUENCE"] = grid_aligned.astype(int)
 
-        df["CONFLUENCE_LEVEL"] = np.select(
-            [
-                df["GRID_PCT"] >= 83,
-                df["GRID_PCT"] >= 58,
-                df["GRID_PCT"] >= 25,
-            ],
-            ["strong", "medium", "weak"],
-            default="none",
+        df["CONFLUENCE_LEVEL"] = (
+            nw.from_native(df)
+            .select(
+                nw.when(nw.col("GRID_PCT") >= 83)
+                .then(nw.lit("strong"))
+                .otherwise(
+                    nw.when(nw.col("GRID_PCT") >= 58)
+                    .then(nw.lit("medium"))
+                    .otherwise(
+                        nw.when(nw.col("GRID_PCT") >= 25)
+                        .then(nw.lit("weak"))
+                        .otherwise(nw.lit("none"))
+                    )
+                )
+                .alias("CONFLUENCE_LEVEL")
+            )
+            .to_native()["CONFLUENCE_LEVEL"]
         )
 
         # --- Supplementary TF confluence (Recommend All only, per-TF) ---
@@ -266,7 +293,7 @@ class ScoringEngine:
         for factor in ["TREND", "MA", "OSC", "ROC"]:
             col = f"{factor}_SCORE"
             if col in df.columns:
-                df[f"{factor}_DIR"] = self.calculate_direction(df[col])
+                df[f"{factor}_DIR"] = self.calculate_direction(cast(pd.Series, df[col]))
 
         factor_dir_cols = [
             f"{f}_DIR" for f in ["TREND", "MA", "OSC", "ROC"] if f"{f}_DIR" in df.columns
@@ -292,16 +319,25 @@ class ScoringEngine:
             Series with direction labels
         """
         # Use .value to get plain strings — passing Direction enums directly
-        # to np.where causes truncation on Python 3.11+ because str(Enum)
+        # to nw.when causes truncation on Python 3.11+ because str(Enum)
         # returns "Direction.BULLISH" instead of "bullish", and numpy's
         # fixed-width U7 dtype truncates it to "Directi".
-        return pd.Series(
-            np.where(
-                series > 0,
-                Direction.BULLISH.value,
-                np.where(series < 0, Direction.BEARISH.value, Direction.NEUTRAL.value),
-            ),
-            index=series.index,
+        # Ensure series has a name for Narwhals
+        name = str(series.name) if series.name else "val"
+        return cast(
+            pd.Series,
+            nw.from_native(series.to_frame(name=name))
+            .select(
+                nw.when(nw.col(name) > 0)
+                .then(nw.lit(Direction.BULLISH.value))
+                .otherwise(
+                    nw.when(nw.col(name) < 0)
+                    .then(nw.lit(Direction.BEARISH.value))
+                    .otherwise(nw.lit(Direction.NEUTRAL.value))
+                )
+                .alias(name)
+            )
+            .to_native()[name],
         )
 
     def rank_opportunities(self, df: pd.DataFrame, copy: bool = False) -> pd.DataFrame:
@@ -372,25 +408,40 @@ def calculate_grades(
         df = df.copy()
 
     grid_pct = df["GRID_PCT"] if "GRID_PCT" in df.columns else pd.Series(0, index=df.index)
-    grid_pct = pd.to_numeric(grid_pct, errors="coerce").fillna(0)
+    grid_pct = cast(pd.Series, pd.to_numeric(grid_pct, errors="coerce")).fillna(0)
 
     # Initial Grade assignment
-    df["GRADE"] = np.select(
-        [
-            grid_pct >= 83,
-            grid_pct >= 67,
-            grid_pct >= 58,
-            grid_pct >= 42,
-            grid_pct >= 25,
-        ],
-        ["A+", "A", "B", "C", "D"],
-        default="F",
+    df["GRADE"] = (
+        nw.from_native(df.assign(grid_pct_val=grid_pct))
+        .select(
+            nw.when(nw.col("grid_pct_val") >= 83)
+            .then(nw.lit("A+"))
+            .otherwise(
+                nw.when(nw.col("grid_pct_val") >= 67)
+                .then(nw.lit("A"))
+                .otherwise(
+                    nw.when(nw.col("grid_pct_val") >= 58)
+                    .then(nw.lit("B"))
+                    .otherwise(
+                        nw.when(nw.col("grid_pct_val") >= 42)
+                        .then(nw.lit("C"))
+                        .otherwise(
+                            nw.when(nw.col("grid_pct_val") >= 25)
+                            .then(nw.lit("D"))
+                            .otherwise(nw.lit("F"))
+                        )
+                    )
+                )
+            )
+            .alias("GRADE")
+        )
+        .to_native()["GRADE"]
     )
 
     # Apply Volatility Penalty (Todo 172)
-    if config and config.min_volatility_threshold > 0:
+    if config is not None and (thr := config.min_volatility_threshold) > 0:
         vol_score = df.get("VOLATILITY_SCORE", pd.Series(1.0, index=df.index))
-        low_vol = vol_score < (config.min_volatility_threshold / 2.0)  # RVOL normalized by 2.0
+        low_vol = vol_score < (thr / 2.0)  # RVOL normalized by 2.0
 
         # Grade downgrade map
         downgrades = {
@@ -401,8 +452,8 @@ def calculate_grades(
             "D": "F",
             "F": "F",
         }
-        df["GRADE"] = np.where(
-            low_vol, df["GRADE"].map(downgrades).fillna(df["GRADE"]), df["GRADE"]
+        df["GRADE"] = df["GRADE"].mask(
+            low_vol, cast(Any, df["GRADE"]).map(downgrades).fillna(df["GRADE"])
         )
 
     # Supplementary display columns (direction-aware)
@@ -425,7 +476,7 @@ def calculate_grades(
     )
 
     tf_max = max(len(df.attrs.get("timeframes", ["15", "60", "240"])), 3)
-    tf_aligned = np.where(is_long, tf_long, tf_short)
+    tf_aligned = tf_long.where(is_long, tf_short)
     df["TF_CONFLUENCE"] = pd.Series(tf_aligned, index=df.index).astype(str) + f"/{tf_max}"
 
     factor_bull = (
@@ -438,7 +489,7 @@ def calculate_grades(
         if "FACTOR_BEARISH_COUNT" in df.columns
         else pd.Series(0, index=df.index)
     )
-    factor_aligned = np.where(is_long, factor_bull, factor_bear)
+    factor_aligned = factor_bull.where(is_long, factor_bear)
     df["FACTOR_CONFLUENCE"] = pd.Series(factor_aligned, index=df.index).astype(str) + "/4"
 
     return df

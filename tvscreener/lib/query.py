@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -13,7 +12,7 @@ try:
 
     DUCKDB_AVAILABLE = True
 except ImportError:
-    duckdb = None  # type: ignore
+    duckdb = None
     DUCKDB_AVAILABLE = False
 
 try:
@@ -21,7 +20,7 @@ try:
 
     MINIJINJA_AVAILABLE = True
 except ImportError:
-    minijinja = None  # type: ignore
+    minijinja = None
     MINIJINJA_AVAILABLE = False
 
 try:
@@ -29,7 +28,7 @@ try:
 
     NARWHALS_AVAILABLE = True
 except ImportError:
-    nw = None  # type: ignore
+    nw = None
     NARWHALS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
@@ -56,12 +55,13 @@ class EdgeQueryClient:
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create connection. Persistent by default.
-        # Harden DuckDB: read_only=True for existing DBs, lock_configuration=True
+        # Harden DuckDB: read_only=True for existing DBs, lock_configuration=True, enable_external_access=False
         is_memory = str(db_path) == ":memory:"
-        self.con = duckdb.connect(str(db_path), read_only=not is_memory)
-
-        if not is_memory:
-            self.con.execute("SET lock_configuration=True;")
+        self.con = duckdb.connect(
+            str(db_path),
+            read_only=not is_memory,
+            config={"lock_configuration": "True", "enable_external_access": "False"},
+        )
 
         # Catalog-aware
         from tvscreener.lib.lakehouse import get_catalog
@@ -110,30 +110,14 @@ class EdgeQueryClient:
         return minijinja.render_str(template_str, **kwargs)
 
     def _setup_remote_access(self, path: str) -> None:
-        """Detect remote protocols and configure DuckDB httpfs extension."""
-        if any(path.startswith(proto) for proto in ["s3://", "http://", "https://"]):
-            try:
-                self.con.execute("INSTALL httpfs; LOAD httpfs;")
+        """Detect remote protocols and configure DuckDB httpfs extension.
 
-                if path.startswith("s3://"):
-                    # Configure AWS credentials if they exist in environment using parameters
-                    if "AWS_ACCESS_KEY_ID" in os.environ:
-                        self.con.execute(
-                            "SET s3_access_key_id=?;", [os.environ["AWS_ACCESS_KEY_ID"]]
-                        )
-                    if "AWS_SECRET_ACCESS_KEY" in os.environ:
-                        self.con.execute(
-                            "SET s3_secret_access_key=?;",
-                            [os.environ["AWS_SECRET_ACCESS_KEY"]],
-                        )
-                    if "AWS_REGION" in os.environ:
-                        self.con.execute("SET s3_region=?;", [os.environ["AWS_REGION"]])
-                    if "AWS_SESSION_TOKEN" in os.environ:
-                        self.con.execute(
-                            "SET s3_session_token=?;", [os.environ["AWS_SESSION_TOKEN"]]
-                        )
-            except Exception as e:
-                logger.warning("Failed to configure remote access for %s: %s", path, e)
+        Note: Disabled in hardened mode (lock_configuration=True, enable_external_access=False).
+        Remote access should be handled by Python (e.g. pyarrow) if needed.
+        """
+        if any(path.startswith(proto) for proto in ["s3://", "http://", "https://"]):
+            logger.warning("Remote access disabled via DuckDB configuration hardening for %s", path)
+            raise RuntimeError(f"Remote access disabled via DuckDB configuration hardening: {path}")
 
     def pipeline(self, data: str | Path | Any, snapshot_id: int | None = None) -> AnalyticsPipeline:
         """Create a new AnalyticsPipeline starting with the given data.
@@ -225,6 +209,21 @@ class EdgeQueryClient:
 
         Supports Iceberg time-travel via snapshot_id.
         """
+        # Handle DataFrames directly for zero-copy efficiency (Todo 186)
+        if isinstance(data, pd.DataFrame):
+            return self.con.from_df(data)
+
+        # Handle other common DataFrame-like objects (Polars, Arrow, etc)
+        if NARWHALS_AVAILABLE and isinstance(data, (nw.DataFrame, nw.LazyFrame)):
+            native_data = data.to_native() if hasattr(data, "to_native") else data
+            if isinstance(native_data, pd.DataFrame):
+                return self.con.from_df(native_data)
+            return self.con.from_arrow(native_data)
+
+        # Handle Arrow-compatible objects directly
+        if hasattr(data, "__arrow_c_stream__") or hasattr(data, "__arrow_c_array__"):
+            return self.con.from_arrow(data)
+
         if isinstance(data, (str, Path)):
             path_str = str(data)
             is_iceberg = "." in path_str and not any(
@@ -233,33 +232,32 @@ class EdgeQueryClient:
 
             if is_iceberg:
                 table = self.catalog.load_table(path_str)
-                try:
-                    self.con.execute("INSTALL iceberg; LOAD iceberg;")
-                    if snapshot_id:
-                        return self.con.sql(
-                            "SELECT * FROM iceberg_scan(?, snapshot_id=?)",
-                            params=[table.metadata_location, snapshot_id],
-                        )
-                    return self.con.sql(
-                        "SELECT * FROM iceberg_scan(?)", params=[table.metadata_location]
-                    )
-                except Exception:
-                    # Fallback to Arrow if iceberg extension fails or doesn't support snapshot_id via SQL
-                    arrow_table = (
-                        table.scan(snapshot_id=snapshot_id).to_arrow()
-                        if snapshot_id
-                        else table.to_arrow()
-                    )
-                    return self.con.from_arrow(arrow_table)
+                # Use Arrow fallback for Iceberg since extensions are disabled by configuration hardening
+                arrow_table = (
+                    table.scan(snapshot_id=snapshot_id).to_arrow()
+                    if snapshot_id
+                    else table.to_arrow()
+                )
+                return self.con.from_arrow(arrow_table)
             else:
                 is_remote = any(
                     path_str.startswith(proto) for proto in ["s3://", "http://", "https://"]
                 )
                 if is_remote:
                     self._setup_remote_access(path_str)
-                # Use SQL-based parameterized loading for all file paths
-                return self.con.sql("SELECT * FROM read_parquet(?)", params=[path_str])
-        return self.con.from_df(data) if isinstance(data, pd.DataFrame) else data
+
+                # Security: Validate path before reading
+                from tvscreener.util import validate_path
+
+                valid_path = validate_path(path_str)
+
+                # Use PyArrow for reading local parquet files to bypass DuckDB's enable_external_access=False
+                import pyarrow.parquet as pq
+
+                arrow_table = pq.read_table(valid_path)
+                return self.con.from_arrow(arrow_table)
+
+        return data
 
     def query_expr(self, data: str | Path | Any, transform_func: Callable) -> Any:
         """

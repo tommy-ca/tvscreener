@@ -177,8 +177,19 @@ class VisualStyler:
         return VisualStyler.direction_emoji(score if is_long else -score)
 
     @staticmethod
+    def strategy_direction_sign(score: float, direction: str) -> str:
+        """Get emoji direction sign for strategy signals. Always 🟢 or 🔴.
+
+        Matches logic in get_strategy_direction_expression.
+        """
+        is_long = str(direction).lower() == Direction.LONG.value
+        # If score is 0, we still want to show the direction (use score 1 for neutral/zero)
+        effective_score = max(1.0, float(score))
+        return VisualStyler.direction_emoji(effective_score if is_long else -effective_score)
+
+    @staticmethod
     def legend() -> str:
-        """Return the standard legend for terminal output."""
+        """Return the standard legend for terminal output (Todo 065)."""
         return f"Legend: {VisualStyler.BULL}=Bullish  {VisualStyler.BEAR}=Bearish  {VisualStyler.NEUTRAL}=Neutral"
 
     @staticmethod
@@ -205,9 +216,34 @@ class VisualStyler:
     def get_strength_expression(scores_col: str) -> nw.Expr:
         """Get Narwhals expression for generating STRENGTH_SIGN column from scores.
 
-        Matches logic in direction_emoji but vectorized for performance.
+        Matches logic in opportunity_strength_sign but vectorized for performance.
         """
-        scores = nw.col(scores_col).cast(nw.Float64).fill_null(0)
+        scores = nw.col(scores_col).fill_null(0)
+        return (
+            nw.when(scores >= 0.5)
+            .then(nw.lit(VisualStyler.BULL_STRONG))
+            .otherwise(
+                nw.when(scores >= 0.1)
+                .then(nw.lit(VisualStyler.BULL))
+                .otherwise(
+                    nw.when(scores <= -0.5)
+                    .then(nw.lit(VisualStyler.BEAR_STRONG))
+                    .otherwise(
+                        nw.when(scores <= -0.1)
+                        .then(nw.lit(VisualStyler.BEAR))
+                        .otherwise(nw.lit(VisualStyler.NEUTRAL))
+                    )
+                )
+            )
+        )
+
+    @staticmethod
+    def get_direction_expression(scores_col: str) -> nw.Expr:
+        """Get Narwhals expression for generating DIRECTION_SIGN column from scores.
+
+        Always returns 🟢 or 🔴 (never ⚪).
+        """
+        scores = nw.col(scores_col).fill_null(0)
         return (
             nw.when(scores >= 0.5)
             .then(nw.lit(VisualStyler.BULL_STRONG))
@@ -228,7 +264,7 @@ class VisualStyler:
 
         Vectorized version of strategy_strength_sign.
         """
-        scores = nw.col(scores_col).cast(nw.Float64).fill_null(0)
+        scores = nw.col(scores_col).fill_null(0)
         directions = nw.col(direction_col).cast(nw.String).str.to_lowercase()
         is_long = directions == Direction.LONG.value
 
@@ -246,6 +282,30 @@ class VisualStyler:
                         .then(nw.lit(VisualStyler.BEAR))
                         .otherwise(nw.lit(VisualStyler.NEUTRAL))
                     )
+                )
+            )
+        )
+
+    @staticmethod
+    def get_strategy_direction_expression(scores_col: str, direction_col: str) -> nw.Expr:
+        """Get Narwhals expression for strategy direction signs.
+
+        Always returns 🟢 or 🔴 (never ⚪). Matches logic in strategy_direction_sign.
+        """
+        scores = nw.col(scores_col).fill_null(0).clip(lower_bound=1.0)
+        directions = nw.col(direction_col).cast(nw.String).str.to_lowercase()
+        is_long = directions == Direction.LONG.value
+
+        return (
+            nw.when((scores >= 3) & is_long)
+            .then(nw.lit(VisualStyler.BULL_STRONG))
+            .otherwise(
+                nw.when((scores >= 3) & (~is_long))
+                .then(nw.lit(VisualStyler.BEAR_STRONG))
+                .otherwise(
+                    nw.when(is_long)
+                    .then(nw.lit(VisualStyler.BULL))
+                    .otherwise(nw.lit(VisualStyler.BEAR))
                 )
             )
         )

@@ -310,13 +310,18 @@ def scanner_inspect(
     path: str, head: int = 10, metadata_only: bool = False, sql: str | None = None
 ) -> str:
     """
-    Inspect a Parquet file with embedded metadata.
+    Inspect a Parquet file or Iceberg table with embedded metadata.
 
     Args:
-        path: Path to the parquet file to inspect
+        path: Path to the parquet file (e.g., 'exports/scan.parquet') or Iceberg table identifier (e.g., 'tvscreener.gold')
         head: Number of rows to show (default 10)
         metadata_only: Only show metadata, skip data table
-        sql: DuckDB SQL string to query the file
+        sql: DuckDB SQL string to query the file/table
+
+    Examples:
+        - scanner_inspect(path="exports/my_scan.parquet")
+        - scanner_inspect(path="tvscreener.gold", head=20)
+        - scanner_inspect(path="tvscreener.bronze", sql="SELECT * FROM df WHERE CHANGE > 5")
     """
     try:
         return inspect_file(path, head=head, metadata_only=metadata_only, sql=sql)
@@ -698,9 +703,20 @@ def list_filter_operators() -> str:
 @mcp.tool()
 def query_historical_scan(sql: str, file_path: str) -> str:
     """
-    Execute a DuckDB SQL query against a previously exported Parquet file.
-    Use this to analyze data you have already exported without re-running the TradingView API.
+    Execute a DuckDB SQL query against a previously exported Parquet file or Iceberg table.
+
+    Use this to analyze data you have already exported or stored in the lakehouse
+    without re-running the TradingView API.
+
     The table name in your query should be 'df' (e.g., 'SELECT PAIR, TREND FROM df WHERE GRADE = 'A+'').
+
+    Args:
+        sql: DuckDB SQL query string
+        file_path: Path to parquet file (e.g. 'exports/scan.parquet') or Iceberg identifier (e.g. 'tvscreener.gold')
+
+    Examples:
+        - query_historical_scan(sql="SELECT * FROM df LIMIT 5", file_path="tvscreener.gold")
+        - query_historical_scan(sql="SELECT PAIR, CHANGE FROM df WHERE CHANGE > 2", file_path="exports/scan.parquet")
     """
     return tools.query_historical_scan(sql, file_path)
 

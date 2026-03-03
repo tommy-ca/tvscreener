@@ -1,5 +1,6 @@
 ---
-status: pending
+status: complete
+completed_at: 2026-03-03
 priority: p1
 issue_id: "094"
 tags: [architecture, new-feature, mtf, duckdb]
@@ -42,3 +43,12 @@ The `mtf` and `sql` generic scanner capabilities require DuckDB to handle comple
 **Actions:**
 - Ran `uv add duckdb`.
 - Package successfully resolved and installed (version 1.4.4).
+
+### 2026-03-03 - Final Verification
+
+**By:** Claude Code
+
+**Actions:**
+- Verified `duckdb>=1.4.4` presence in `pyproject.toml`.
+- Confirmed `uv.lock` resolution.
+- Marked task as complete.

@@ -138,7 +138,7 @@ class RichConsoleRenderer(BaseRenderer):
         table = Table(title="Forex Opportunities")
         table.add_column("Rank", style="dim", justify="right", no_wrap=True)
         table.add_column("Pair", style="cyan", no_wrap=True)
-        table.add_column("Dir", style="white", justify="center")
+        table.add_column("Dir", justify="center")
         table.add_column("Ens", style="green", justify="right")
         table.add_column("Grid", style="yellow", justify="center")
         table.add_column("TF", style="dim yellow", justify="center")
@@ -153,14 +153,15 @@ class RichConsoleRenderer(BaseRenderer):
 
         for idx, (_, row) in enumerate(df.head(display_limit).iterrows(), 1):
             name = get_enriched_col(row, "PAIR", "Name")
-            ensemble = float(row.get("ENSEMBLE_SCORE", 0) or 0)
-            grid_aligned = int(row.get("GRID_ALIGNED", 0) or 0)
-            grid_total = int(row.get("GRID_TOTAL", 12) or 12)
+            ensemble = row.get("ENSEMBLE_SCORE", 0) or 0
+            grid_aligned = row.get("GRID_ALIGNED", 0) or 0
+            grid_total = row.get("GRID_TOTAL", 12) or 12
             tf_conf = row.get("TF_CONFLUENCE", "0/3")
             factor_conf = row.get("FACTOR_CONFLUENCE", "0/4")
             grade = row.get("GRADE", "F")
 
-            direction_sign = VisualStyler.direction_emoji(ensemble)
+            # Direction column should never show ⚪ (Todo 064)
+            direction_sign = row.get("DIRECTION_SIGN") or VisualStyler.direction_emoji(ensemble)
 
             row_data = [
                 str(idx),
@@ -174,16 +175,16 @@ class RichConsoleRenderer(BaseRenderer):
             ]
 
             if getattr(screener.config, "show_risk", False):
-                sl = float(row.get("STOP_LOSS", 0) or 0)
-                tp = float(row.get("TAKE_PROFIT", 0) or 0)
-                rr = float(row.get("RR_RATIO", 0) or 0)
-                size = float(row.get("POSITION_SIZE", 0) or 0)
+                sl = row.get("STOP_LOSS", 0) or 0
+                tp = row.get("TAKE_PROFIT", 0) or 0
+                rr = row.get("RR_RATIO", 0) or 0
+                size = row.get("POSITION_SIZE", 0) or 0
                 row_data.extend(
                     [
-                        VisualStyler.format_sl(sl),
-                        VisualStyler.format_tp(tp),
-                        VisualStyler.format_rr(rr),
-                        VisualStyler.format_size(size),
+                        f"{sl:.5f}" if sl else "N/A",
+                        f"{tp:.5f}" if tp else "N/A",
+                        f"{rr:.2f}" if rr else "N/A",
+                        f"{size:.2f}" if size else "N/A",
                     ]
                 )
 
@@ -203,15 +204,16 @@ class RichConsoleRenderer(BaseRenderer):
         display_limit = limit if limit is not None else DEFAULT_LIMIT_DETAILED
         for idx, (_, row) in enumerate(df.head(display_limit).iterrows(), 1):
             name = get_enriched_col(row, "PAIR", "Name")
-            ensemble = float(row.get("ENSEMBLE_SCORE", 0) or 0)
+            ensemble = row.get("ENSEMBLE_SCORE", 0) or 0
             grade = row.get("GRADE", "F")
-            grid_aligned = int(row.get("GRID_ALIGNED", 0) or 0)
-            grid_total = int(row.get("GRID_TOTAL", 12) or 12)
-            grid_pct = int(row.get("GRID_PCT", 0) or 0)
+            grid_aligned = row.get("GRID_ALIGNED", 0) or 0
+            grid_total = row.get("GRID_TOTAL", 12) or 12
+            grid_pct = row.get("GRID_PCT", 0) or 0
             tf_conf = row.get("TF_CONFLUENCE", "0/3")
             factor_conf = row.get("FACTOR_CONFLUENCE", "0/4")
 
-            direction_sign = VisualStyler.direction_emoji(ensemble)
+            # Direction should never show ⚪ (Todo 064)
+            direction_sign = row.get("DIRECTION_SIGN") or VisualStyler.direction_emoji(ensemble)
 
             table = RichTable(title=f"#{idx} {name} - {direction_sign} (Grade: {grade})")
             table.add_column("Timeframe", style="cyan")
@@ -241,6 +243,7 @@ class RichConsoleRenderer(BaseRenderer):
                     f"{trend_val:+.2f} {trend_sign}",
                     f"{ma_val:+.2f} {ma_sign}",
                     f"{osc_val:+.2f} {osc_sign}",
+                    # Zero ROC values show +0.00 ⚪ instead of dash (Todo 066)
                     f"{roc_val:+.2f} {roc_sign}",
                 )
 
@@ -248,14 +251,14 @@ class RichConsoleRenderer(BaseRenderer):
             footer = f"  Ensemble: {ensemble:+.3f} | Grid: {grid_aligned}/{grid_total} ({grid_pct}%) | TF: {tf_conf} | Factor: {factor_conf}"
 
             if getattr(screener.config, "show_risk", False):
-                sl = float(row.get("STOP_LOSS", 0) or 0)
-                tp = float(row.get("TAKE_PROFIT", 0) or 0)
-                rr = float(row.get("RR_RATIO", 0) or 0)
-                size = float(row.get("POSITION_SIZE", 0) or 0)
+                sl = row.get("STOP_LOSS", 0) or 0
+                tp = row.get("TAKE_PROFIT", 0) or 0
+                rr = row.get("RR_RATIO", 0) or 0
+                size = row.get("POSITION_SIZE", 0) or 0
 
                 htf = sorted(screener.timeframes, key=lambda x: int(x), reverse=True)[0]
-                atr = float(get_enriched_col(row, f"ATR_{htf}", f"ATR|{htf}", 0))
-                rvol = float(get_enriched_col(row, "RVOL", "relative_volume_10d_calc", 0))
+                atr = get_enriched_col(row, f"ATR_{htf}", f"ATR|{htf}", 0)
+                rvol = get_enriched_col(row, "RVOL", "relative_volume_10d_calc", 0)
 
                 from rich.text import Text
 
@@ -304,8 +307,8 @@ class RichConsoleRenderer(BaseRenderer):
             name = str(get_enriched_col(row, "PAIR", "Name"))
             direction = str(row.get("DIRECTION", Direction.LONG.value))
             grade = str(row.get("GRADE", "F"))
-            grid_aligned = int(row.get("GRID_ALIGNED", 0) or 0)
-            grid_total = int(row.get("GRID_TOTAL", 12) or 12)
+            grid_aligned = row.get("GRID_ALIGNED", 0) or 0
+            grid_total = row.get("GRID_TOTAL", 12) or 12
 
             direction_emoji = (
                 VisualStyler.BULL if direction == Direction.LONG.value else VisualStyler.BEAR
@@ -322,6 +325,7 @@ class RichConsoleRenderer(BaseRenderer):
                 osc_val = get_enriched_col(row, f"OSC_{tf}", f"Recommend Other|{tf}", 0)
                 roc_val = get_enriched_col(row, f"ROC_{tf}", f"Roc|{tf}", 0)
 
+                # Matrix cells show only single emojis (🟢/⚪/🔴) to prevent truncation (Todo 065)
                 trend_dirs.append(VisualStyler.matrix_sign(to_scalar(trend_val)))
                 ma_dirs.append(VisualStyler.matrix_sign(to_scalar(ma_val)))
                 osc_dirs.append(VisualStyler.matrix_sign(to_scalar(osc_val)))
@@ -421,13 +425,16 @@ class RichConsoleRenderer(BaseRenderer):
                 pair = str(get_enriched_col(row, "PAIR", "Name"))
                 direction = str(row.get("DIRECTION", Direction.LONG.value))
 
-                confluence_score = float(row.get("CONFLUENCE_SCORE", 0) or 0)
-                direction_display = VisualStyler.strategy_strength_sign(
-                    confluence_score, direction=direction
-                )
+                confluence_score = row.get("CONFLUENCE_SCORE", 0) or 0
+                # Direction should never show ⚪ (Todo 064)
+                direction_display = row.get("DIRECTION_SIGN")
+                if not direction_display:
+                    direction_display = VisualStyler.strategy_direction_sign(
+                        confluence_score, direction=direction
+                    )
 
-                grid_aligned = int(row.get("GRID_ALIGNED", 0) or 0)
-                grid_total = int(row.get("GRID_TOTAL", 12) or 12)
+                grid_aligned = row.get("GRID_ALIGNED", 0) or 0
+                grid_total = row.get("GRID_TOTAL", 12) or 12
                 grid_display = f"{grid_aligned}/{grid_total}"
                 grade = str(row.get("GRADE", "F"))
 
@@ -435,7 +442,7 @@ class RichConsoleRenderer(BaseRenderer):
                     str(i),
                     pair,
                     direction_display,
-                    f"{float(row.get('ENSEMBLE_SCORE', 0) or 0):+.2f}",
+                    f"{(row.get('ENSEMBLE_SCORE', 0) or 0):+.2f}",
                 ]
 
                 if strategy == "confluence":
@@ -443,7 +450,7 @@ class RichConsoleRenderer(BaseRenderer):
                         [
                             str(row.get("CONFLUENCE_PATTERN", "")),
                             str(row.get("CONFLUENCE_SCORE", "N/A")),
-                            str(round(float(row.get("MR_EXTREMITY", 0) or 0), 2)),
+                            str(round((row.get("MR_EXTREMITY", 0) or 0), 2)),
                         ]
                     )
                 else:
@@ -452,10 +459,10 @@ class RichConsoleRenderer(BaseRenderer):
                 row_data.extend([grid_display, grade])
 
                 if getattr(screener.config, "show_risk", False):
-                    sl = float(row.get("STOP_LOSS", 0) or 0)
-                    tp = float(row.get("TAKE_PROFIT", 0) or 0)
-                    rr = float(row.get("RR_RATIO", 0) or 0)
-                    size = float(row.get("POSITION_SIZE", 0) or 0)
+                    sl = row.get("STOP_LOSS", 0) or 0
+                    tp = row.get("TAKE_PROFIT", 0) or 0
+                    rr = row.get("RR_RATIO", 0) or 0
+                    size = row.get("POSITION_SIZE", 0) or 0
                     row_data.extend(
                         [
                             f"{sl:.5f}" if sl else "N/A",
@@ -521,6 +528,7 @@ class RichConsoleRenderer(BaseRenderer):
 
                     grid.add_row(
                         str(tf),
+                        # Single emojis for density (Todo 065)
                         VisualStyler.matrix_sign(to_scalar(trend_val)),
                         VisualStyler.matrix_sign(to_scalar(ma_val)),
                         VisualStyler.matrix_sign(to_scalar(osc_val)),

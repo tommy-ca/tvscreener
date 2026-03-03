@@ -484,17 +484,12 @@ class ScreenerController:
         if request.output.sql or request.output.filters:
             from tvscreener.lib.query import EdgeQueryClient
 
-            # Use a temporary cache for edge querying
-            cache_path = Path("exports/.cache/tvscreener_edge_cache.parquet")
-            self._ensure_parent_exists(cache_path)
-            self._export_results(screener, str(cache_path), {})
-
             try:
                 with EdgeQueryClient() as edge_client:
                     # Apply SQL if provided
                     if request.output.sql:
                         results = edge_client.query_sql(
-                            str(cache_path), request.output.sql, params=request.output.sql_params
+                            results, request.output.sql, params=request.output.sql_params
                         )
                         screener.metadata.config["sql"] = request.output.sql
 
@@ -564,17 +559,12 @@ class ScreenerController:
         if request.output.sql or request.output.filters:
             from tvscreener.lib.query import EdgeQueryClient
 
-            # Use a temporary cache for edge querying
-            cache_path = Path("exports/.cache/tvscreener_edge_cache.parquet")
-            self._ensure_parent_exists(cache_path)
-            self._export_results(scanner, str(cache_path), {})
-
             try:
                 with EdgeQueryClient() as edge_client:
                     # Apply SQL if provided
                     if request.output.sql:
                         results = edge_client.query_sql(
-                            str(cache_path), request.output.sql, params=request.output.sql_params
+                            results, request.output.sql, params=request.output.sql_params
                         )
                         scanner._screener.metadata.config["sql"] = request.output.sql
 

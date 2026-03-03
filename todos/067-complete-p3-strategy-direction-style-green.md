@@ -1,5 +1,5 @@
 ---
-status: ready
+status: complete
 priority: p3
 issue_id: "067"
 tags: [display, cleanup, style]
@@ -43,12 +43,12 @@ Change to `table.add_column("Direction", justify="center")` — drop the style e
 ## Technical Details
 
 **Affected files:**
-- `tvscreener/lib/screeners/forex_strategy.py:657`
+- `tvscreener/lib/screeners/renderers/rich_console.py` (previously `forex_strategy.py`)
 
 ## Acceptance Criteria
 
-- [ ] Direction column has no color style override
-- [ ] Emojis render with their native colors
+- [x] Direction column has no color style override
+- [x] Emojis render with their native colors
 
 ## Work Log
 
@@ -58,3 +58,11 @@ Change to `table.add_column("Direction", justify="center")` — drop the style e
 
 **Actions:**
 - Found during code audit of strategy scanner display layer
+
+### 2026-03-03 - Implementation Complete
+
+**By:** Claude Code
+
+**Actions:**
+- Removed `style="white"` from "Dir" column in `tvscreener/lib/screeners/renderers/rich_console.py`.
+- Verified that "Dir" column in `_render_strategy` already had no style.

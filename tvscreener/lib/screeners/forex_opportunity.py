@@ -204,10 +204,11 @@ class ForexOpportunityScreener(BaseOpportunityScreener[ForexScreener]):
         # Add visual strength signs as a column for downstream use
         if "ENSEMBLE_SCORE" in df.columns:
             df = df.with_columns(
-                STRENGTH_SIGN=VisualStyler.get_strength_expression("ENSEMBLE_SCORE")
+                STRENGTH_SIGN=VisualStyler.get_strength_expression("ENSEMBLE_SCORE"),
+                DIRECTION_SIGN=VisualStyler.get_direction_expression("ENSEMBLE_SCORE"),
             )
         else:
-            df = df.with_columns(STRENGTH_SIGN=nw.lit(""))
+            df = df.with_columns(STRENGTH_SIGN=nw.lit(""), DIRECTION_SIGN=nw.lit(""))
 
         return df
 

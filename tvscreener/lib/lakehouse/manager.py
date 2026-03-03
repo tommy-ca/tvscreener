@@ -49,8 +49,19 @@ class LakehouseManager:
         table_name: str,
         mode: str = "append",
         partition_by: list[str] | None = None,
+        overwrite_filter: Any = None,
     ) -> None:
-        """Write a native dataframe to an Iceberg table with schema evolution."""
+        """Write a native dataframe to an Iceberg table with schema evolution.
+
+        Args:
+            df_native: The dataframe to write (Pandas, Polars, Arrow, etc.)
+            table_name: Name of the table (e.g., 'default.bronze')
+            mode: 'append' or 'overwrite'
+            partition_by: Optional list of columns to partition by (creates identity partitions)
+            overwrite_filter: Optional explicit Iceberg expression to filter what is overwritten.
+                             If not provided and mode='overwrite' and partition_by is set,
+                             it is automatically calculated from the data.
+        """
         nw_df = nw.from_native(df_native)
         arrow_table = self._prepare_arrow(nw_df)
 
@@ -71,7 +82,38 @@ class LakehouseManager:
                 update.union_by_name(arrow_table.schema)
 
             if mode == "overwrite":
-                table.overwrite(arrow_table)
+                if overwrite_filter is not None:
+                    table.overwrite(arrow_table, overwrite_filter=overwrite_filter)
+                elif partition_by:
+                    import pyarrow.compute as pc
+                    from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
+
+                    filters = []
+                    for col in partition_by:
+                        raw_unique = pc.unique(arrow_table.column(col)).to_pylist()
+                        unique_vals = [v for v in raw_unique if v is not None]
+                        has_null = None in raw_unique
+
+                        col_filter = None
+                        if unique_vals:
+                            col_filter = In(term=col, literals=unique_vals)  # type: ignore
+
+                        if has_null:
+                            null_filter = IsNull(term=col)
+                            col_filter = Or(col_filter, null_filter) if col_filter else null_filter
+
+                        if col_filter:
+                            filters.append(col_filter)
+
+                    if not filters:
+                        # Empty data + partition_by: overwrite nothing
+                        table.overwrite(arrow_table, overwrite_filter=AlwaysFalse())
+                    else:
+                        final_filter = filters[0] if len(filters) == 1 else And(*filters)
+                        table.overwrite(arrow_table, overwrite_filter=final_filter)
+
+                else:
+                    table.overwrite(arrow_table)
                 logger.info("Overwrote Iceberg table '%s' (%d rows)", identifier, len(arrow_table))
             else:
                 table.append(arrow_table)
@@ -128,7 +170,13 @@ def get_manager() -> LakehouseManager:
 
 
 def write_iceberg(
-    df: Any, table_name: str, mode: str = "append", partition_by: list[str] | None = None
+    df: Any,
+    table_name: str,
+    mode: str = "append",
+    partition_by: list[str] | None = None,
+    overwrite_filter: Any = None,
 ) -> None:
     """Legacy helper for write_iceberg."""
-    get_manager().write_table(df, table_name, mode=mode, partition_by=partition_by)
+    get_manager().write_table(
+        df, table_name, mode=mode, partition_by=partition_by, overwrite_filter=overwrite_filter
+    )

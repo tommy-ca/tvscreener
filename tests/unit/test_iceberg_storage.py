@@ -2,7 +2,6 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from pyiceberg.exceptions import NoSuchTableError
 
 from tvscreener.lib.lakehouse.manager import LakehouseManager
 
@@ -57,22 +56,61 @@ def test_write_schema_evolution_with_overwrite(mock_catalog):
     mock_table.overwrite.assert_called_once()
 
 
-def test_write_creates_partitioned_table(mock_catalog):
+def test_write_overwrite_partition_filter(mock_catalog):
     storage = LakehouseManager()
     mock_table = MagicMock()
-    mock_catalog.return_value.load_table.side_effect = [
-        NoSuchTableError("Table not found"),
-        mock_table,
-    ]
-
-    # Mock update_spec
-    mock_update = MagicMock()
-    mock_table.update_spec.return_value.__enter__.return_value = mock_update
+    mock_catalog.return_value.load_table.return_value = mock_table
 
     df = pd.DataFrame({"date": ["2026-03-01", "2026-03-02"], "value": [1, 2]})
-    storage.write_table(df, "partitioned_table", partition_by=["date"])
+    storage.write_table(df, "test_table", mode="overwrite", partition_by=["date"])
 
-    mock_catalog.return_value.create_table.assert_called_once()
-    mock_table.update_spec.assert_called_once()
-    mock_update.add_identity_field.assert_called_with("date")
-    mock_table.append.assert_called_once()
+    # Should call overwrite with filter
+    from pyiceberg.expressions import In
+
+    mock_table.overwrite.assert_called_once()
+    kwargs = mock_table.overwrite.call_args.kwargs
+    assert "overwrite_filter" in kwargs
+    # Filter should be In("date", ["2026-03-01", "2026-03-02"])
+    f = kwargs["overwrite_filter"]
+    assert isinstance(f, In)
+    assert f.term.name == "date"
+    assert f.literals == In("date", ["2026-03-01", "2026-03-02"]).literals
+
+
+def test_write_overwrite_multi_partition_filter(mock_catalog):
+    storage = LakehouseManager()
+    mock_table = MagicMock()
+    mock_catalog.return_value.load_table.return_value = mock_table
+
+    df = pd.DataFrame(
+        {"asset": ["stock", "crypto"], "date": ["2026-03-01", "2026-03-02"], "value": [1, 2]}
+    )
+    storage.write_table(df, "test_table", mode="overwrite", partition_by=["asset", "date"])
+
+    # Should call overwrite with And filter
+    from pyiceberg.expressions import And, In
+
+    mock_table.overwrite.assert_called_once()
+    kwargs = mock_table.overwrite.call_args.kwargs
+    assert "overwrite_filter" in kwargs
+    f = kwargs["overwrite_filter"]
+    assert isinstance(f, And)
+    # Check that both asset and date filters are present
+    assert any(isinstance(sub, In) and sub.term.name == "asset" for sub in [f.left, f.right])
+    assert any(isinstance(sub, In) and sub.term.name == "date" for sub in [f.left, f.right])
+
+
+def test_write_explicit_overwrite_filter(mock_catalog):
+    storage = LakehouseManager()
+    mock_table = MagicMock()
+    mock_catalog.return_value.load_table.return_value = mock_table
+
+    from pyiceberg.expressions import EqualTo
+
+    custom_filter = EqualTo("some_col", "some_val")
+    df = pd.DataFrame({"some_col": ["some_val"], "value": [1]})
+    storage.write_table(df, "test_table", mode="overwrite", overwrite_filter=custom_filter)
+
+    mock_table.overwrite.assert_called_once()
+    kwargs = mock_table.overwrite.call_args.kwargs
+    assert kwargs["overwrite_filter"] == custom_filter
