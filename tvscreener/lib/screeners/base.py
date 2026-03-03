@@ -315,7 +315,47 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                     else:
                         partition_by = ["signal_date"]
 
-                write_iceberg(df, table_name, mode=mode, partition_by=partition_by)
+                overwrite_filter = None
+                if (
+                    mode == "overwrite"
+                    and stage in {"silver", "gold"}
+                    and partition_by
+                    and "PAIR" in df.columns
+                ):
+                    from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
+
+                    overwrite_cols = [c for c in partition_by if c in df.columns]
+                    overwrite_cols.append("PAIR")
+
+                    filters = []
+                    for col in dict.fromkeys(overwrite_cols):
+                        raw_vals = df[col].tolist()
+                        unique_vals = sorted({v for v in raw_vals if v is not None})
+                        has_null = any(v is None for v in raw_vals)
+
+                        col_filter = None
+                        if unique_vals:
+                            col_filter = In(term=col, literals=unique_vals)  # type: ignore
+                        if has_null:
+                            null_filter = IsNull(term=col)
+                            col_filter = Or(col_filter, null_filter) if col_filter else null_filter
+
+                        if col_filter:
+                            filters.append(col_filter)
+
+                    overwrite_filter = (
+                        AlwaysFalse()
+                        if not filters
+                        else (filters[0] if len(filters) == 1 else And(*filters))
+                    )
+
+                write_iceberg(
+                    df,
+                    table_name,
+                    mode=mode,
+                    partition_by=partition_by,
+                    overwrite_filter=overwrite_filter,
+                )
             except Exception as e:
                 logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
 
