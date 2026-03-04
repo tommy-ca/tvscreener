@@ -14,12 +14,51 @@ status: draft
 - Make every run traceable via `run_id` + `fetched_at_utc` and provable via Iceberg `snapshot_id`.
 - Keep TradingView screener snapshots as one dataset type, while making room for additional market data types (klines, ticks, orderbooks) with clear table boundaries.
 
+## Current implementation status (as of branch HEAD)
+
+This section captures what is already implemented in code so readers can distinguish “now” vs “proposed”.
+
+- **Catalog**: local SQL (SQLite) catalog + local warehouse are provisioned by code (see `tvscreener/lib/lakehouse/manager.py`).
+- **Run envelope (partial)**:
+  - Implemented: `run_id`, `fetched_at_utc`, `asset_type`, `timeframes`, `timeframe_set_id`, `source`
+  - Gap: `scanner_family` is not yet consistently correct across scanner types; `code_version` and `params_hash` are not yet recorded.
+- **Canonical identity (partial)**:
+  - Implemented in Silver standardization: `venue`, `symbol`, `entity_id` derived from `Symbol` (or best available source column).
+  - Gap: some downstream logic still relies on asset-specific columns like `PAIR` for joins/filters.
+- **Partitioning**: identity-partitioning includes `asset_type` and `timeframe_set_id` to prevent cross-asset/timeframe collisions.
+- **Overwrite safety (improved)**: overwrite scoping prefers `entity_id` when present, falling back to asset-specific keys as needed.
+- **Analytics output (partial)**: a fast `tvscreener.signals_latest` table exists; the plan proposes `signals_batch`/`signals_realtime` as explicit analytics outputs.
+
 ## Current State Audit
 
 ### Iceberg catalog
 
 - Local SQLite catalog at `~/.tvscreener/lakehouse/catalog.db` and local warehouse at `~/.tvscreener/lakehouse/warehouse`.
-- Catalog configuration is embedded in code (`tvscreener/lib/lakehouse/manager.py`).
+- Catalog configuration is now configurable via layered Pydantic settings (YAML/ENV) and is consumed by `tvscreener/lib/lakehouse/manager.py`.
+
+#### Configuration (YAML + ENV layered)
+
+YAML (`tvscreener.yaml`) example:
+
+```yaml
+lakehouse:
+  catalog:
+    mode: local            # local | remote
+    name: local
+    type: sql
+    # remote:
+    #   uri: "postgresql+psycopg://user:pass@host:5432/iceberg"
+    #   warehouse: "s3://bucket/warehouse"
+    properties: {}
+```
+
+ENV example (uses `TVSCREENER_` prefix + nested delimiter `_`):
+
+```bash
+export TVSCREENER_LAKEHOUSE_CATALOG_MODE=remote
+export TVSCREENER_LAKEHOUSE_CATALOG_REMOTE_URI="postgresql+psycopg://user:pass@host:5432/iceberg"
+export TVSCREENER_LAKEHOUSE_CATALOG_REMOTE_WAREHOUSE="s3://bucket/warehouse"
+```
 
 **Risks:**
 
@@ -28,16 +67,16 @@ status: draft
 
 ### Medallion tables
 
-- `tvscreener.bronze` partitioned by `ingest_date` only (`tvscreener/lib/screeners/base.py:292`).
-- `tvscreener.silver`/`tvscreener.gold` partitioned by `asset_type` + date when present.
-- Overwrite scoping currently special-cases `PAIR` to prevent majors/minors overwrites in forex (`tvscreener/lib/screeners/base.py:318`).
+- `tvscreener.bronze` is identity-partitioned by `asset_type`, `ingest_date`, and `timeframe_set_id` (Python identity partitions).
+- `tvscreener.silver`/`tvscreener.gold` are identity-partitioned by `asset_type` + date (when present) + `timeframe_set_id`.
+- Overwrite scoping prefers `entity_id` (when present) and otherwise falls back to `PAIR` / `Symbol` / `Name` to avoid deleting unrelated entities inside the same partition.
 
 **Risks / gaps for multi-asset:**
 
-- No stable representation of the **timeframe set** used for a run.
-- Entity key differs by asset type (`PAIR` for forex, `Symbol`/ticker elsewhere). Overwrite scoping is not generalized.
-- Health schemas in `tvscreener/lib/lakehouse/health.py` do not match real lakehouse columns (case and naming differences), so a stricter multi-asset regime will need a redesigned validation layer.
-- Current tables are effectively “TradingView screener snapshots” even if columns are broadly normalized across asset types; additional dataset types (klines/ticks/orderbooks) must not be forced into the same grain.
+- **Run metadata completeness**: `code_version`, `params_hash`, and `universe_id` are not yet carried through all stages.
+- **Scanner family correctness**: `scanner_family` needs to be consistently set (opportunity vs strategy vs other scanners).
+- **Health validation drift**: `tvscreener/lib/lakehouse/health.py` exists but does not reflect the canonical column naming used in the lakehouse; the current pipeline primarily gates via in-code checks. A stricter multi-asset validation layer should be redesigned to match real schemas.
+- **Dataset taxonomy**: current medallion tables are effectively “TradingView screener snapshots”. Additional dataset types (klines/ticks/orderbooks) should not be forced into the same grain.
 
 ## Proposed Architecture
 

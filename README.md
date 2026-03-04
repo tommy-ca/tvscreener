@@ -342,7 +342,7 @@ for df in ss.stream(interval=30, max_iterations=10):
 
 ## Lakehouse Audit Flow
 
-The lakehouse audit plan ensures `tvscreener.gold` is treated as the canonical signal table and that `exports/` only holds reference snapshots written intentionally with `--write-exports` insurance. Follow `docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md` alongside `docs/audit/lakehouse-audit-flow.md` for the cleanup, scan replay, and SQL audit steps needed to prove the matrix view matches the lakehouse data.
+The lakehouse audit plan ensures `tvscreener.gold` is treated as the canonical signal table and that audits run **directly against Iceberg** (Bronze/Silver/Gold). Optional on-disk snapshots are debugging artifacts only and are written only when you provide an explicit `--output ./snapshots/...` path. Follow `docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md` alongside `docs/audit/lakehouse-audit-flow.md` for the scan replay and SQL audit steps needed to prove the matrix view matches the lakehouse data.
 
 ## Documentation
 

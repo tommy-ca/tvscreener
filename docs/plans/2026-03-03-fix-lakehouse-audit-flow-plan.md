@@ -8,13 +8,16 @@ date: 2026-03-03
 
 ## Overview
 
-This plan phases out the legacy `exports/` artifacts, relies solely on the Iceberg lakehouse, and replays both opportunity and strategy scans (matrix view default) so the analytical signal audit is grounded in Snowflake-grade medallion data.
+This plan phases out legacy repository-local snapshot artifacts, relies solely on the Iceberg lakehouse, and replays both opportunity and strategy scans (matrix view default) so the analytical signal audit is grounded in Snowflake-grade medallion data.
 
 ## Problem Statement
 
-- The `exports/` directory now holds stale parquet/text snapshots that can diverge from the Iceberg-backed `tvscreener.gold` table. Downstream audits have already been misled by those files.
-- EURCHF and other signals need fresh multi-timeframe validation directly from Iceberg to prove their direction, confluence, and scoring attributes rather than parroting exports.
-- We still run scanner commands that write to `exports/` before overwriting lakehouse tables, which wastes disk space and fosters confusion about the source of truth.
+- Repository-local snapshots (historically stored as ad-hoc parquet/text files) can drift from the Iceberg-backed
+  `tvscreener.gold` table and mislead audits.
+- EURCHF and other signals need fresh multi-timeframe validation directly from Iceberg to prove their
+  direction, confluence, and scoring attributes.
+- The default operator workflow must be lakehouse-first: scans write to Iceberg, audits query Iceberg,
+  and any on-disk snapshot is explicitly requested as a debugging artifact.
 
 ## Brainstorm Context
 
@@ -22,7 +25,8 @@ Found brainstorm from 2026-03-02: `lakehouse-medallion-pipeline`. It already arg
 
 ## Proposed Solution
 
-1. **Remove the exports directory or prevent new files from being written.** Keep the folder for ad-hoc reviews only (if kept at all) and update tooling/docs to emphasize `tvscreener.gold` as truth. Consider replacing the CLI `--inspect` defaults with direct lakehouse queries.
+1. **Remove repository snapshots from the default workflow.** Treat Iceberg as truth and only write
+   on-disk snapshots when an operator explicitly provides an output path (e.g. `--output ./snapshots/...`).
 2. **Rerun opportunity and strategy scanners (majors/minors) with the matrix view default.** This will replay Fresh data into Bronze → Silver → Gold, ensuring each medallion table (especially Gold) is populated with the latest matrix-ready signals.
 3. **Validate and audit the resulting Iceberg rows.** For each EURCHF-equivalent signal (and a representative sample of majors and minors), inspect: direction vs. ensemble score, TF×Factor grid, `TF_CONFLUENCE_LONG/SHORT`, `GRID_ALIGNED/TOTAL`, and derived grades. Use EdgeQueryClient/Narwhals pipelines to prove the matrix view matches the raw data and doc the SQL used.
 4. **Document the audit.** Write up the inspection steps/results in the plan or a companion note so other engineers can reproduce the lakehouse-backed review.
@@ -34,14 +38,17 @@ Found brainstorm from 2026-03-02: `lakehouse-medallion-pipeline`. It already arg
 
 ## Tasks
 
-1. **Clean exports folder.** Delete or archive the contents, update `README`/docs to call the folder “reference only,” and ensure no new scan run writes there without a `--write-exports` opt-in.
-2. **Trigger fresh scans.** Run `uv run tvscreener-scan --scanner opportunity --universe majors --matrix` (and minors), then the same for strategy. Confirm each run completes without `exports/` errors and that the Gold table reflects the new snapshot via `pyiceberg`/EdgeQuery.
+1. **Remove repository snapshots from the default workflow.** Archive/delete local snapshot artifacts,
+   update docs to make Iceberg the default, and ensure scans do not produce on-disk files unless an
+   explicit `--output` path is provided.
+2. **Trigger fresh scans.** Run `uv run tvscreener-scan --scanner opportunity --universe majors --matrix` (and minors), then the same for strategy. Confirm each run completes without snapshot-output errors and that the Gold table reflects the new snapshot via `pyiceberg`/EdgeQuery.
 3. **Audit lakehouse rows.** For EURCHF and a handful of matrix entries, capture the SQL/Narwhals expressions used to fetch direction, multi-TF values, and confluence counters. Record the outputs in the plan (tables or summarized tuples) and note any discrepancies between matrix output and raw data.
 4. **Update docs/plan/todos.** Ensure the audit results and the new lakehouse-first flow are captured in documentation so future reviewers know not to trust exports.
 
 ## Acceptance Criteria
 
-- [ ] `exports/` no longer drives default scans; its contents are either removed or clearly labeled “reference snapshots only.”
+- [ ] Default scans and audits are **Iceberg-first** and do not depend on repository-local snapshots.
+- [ ] Any on-disk snapshot is written only when an operator explicitly requests `--output ./snapshots/...` (or another explicit path).
 - [x] Opportunity and strategy scans rerun and write fresh rows to `tvscreener.gold` for majors and minors, still showing the matrix default output in CLI logs.
 - [x] Lakehouse queries (DuckDB EdgeQueryClient or Narwhals) can reproduce the matrix view values for EURCHF (direction short, `TF_CONFLUENCE_SHORT=3`, `ENSEMBLE_SCORE<0`, etc.) and align with the decorated matrix output.
 - [x] Documentation references `Lakehouse Audit Flow` plan and mentions Iceberg tables as the canonical signal source.
@@ -50,7 +57,7 @@ Found brainstorm from 2026-03-02: `lakehouse-medallion-pipeline`. It already arg
 
 - Replay the commands in `docs/audit/lakehouse-audit-flow.md` to refresh the lakehouse tables and capture new `tvscreener.gold` snapshots.
 - Apply the audit SQL against the refreshed data, record the results in this plan, and highlight any discrepancies between the matrix view and the raw rows.
-- Archive or delete the remaining `exports/` snapshots once the reference copies and audit notes are stored.
+- Archive or delete any remaining repository-local snapshot files once the audit notes are stored.
 
 ## Audit Results (2026-03-03)
 

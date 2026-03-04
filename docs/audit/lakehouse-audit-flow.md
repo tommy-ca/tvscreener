@@ -1,22 +1,28 @@
 ---
-title: Lakehouse Audit Flow Reference
+title: Lakehouse Audit Flow (Iceberg-first)
 type: guide
 date: 2026-03-03
 ---
 
-# Lakehouse Audit Flow Reference
+# Lakehouse Audit Flow (Iceberg-first)
 
 ## Purpose
 
-The Lakehouse Audit Flow phases out legacy `exports/` snapshots and relies solely on the Iceberg medallion tables (`tvscreener.bronze`, `tvscreener.silver`, `tvscreener.gold`) as the canonical signal sources. This reference captures the concrete steps for cleaning exports, replaying matrix-first scans, running SQL audits, and keeping a reproducible log of what was inspected so downstream reviewers never have to guess which dataset is authoritative.
+This runbook defines the **canonical** audit workflow for `tvscreener`:
 
-## Step 1: Treat `exports/` as reference-only
+- The Iceberg medallion tables are the source of truth: `tvscreener.bronze`, `tvscreener.silver`, `tvscreener.gold`.
+- Audits MUST be reproducible from Iceberg snapshots and recorded with the SQL used.
+- On-disk snapshots are **optional** operator artifacts and MUST NOT be required for correctness.
 
-- Move any historical `exports/*.parquet` or related `.txt` files into an archival path (for example, `exports/archive/2026-03-03/`) so the root `exports/` directory only contains intentionally captured snapshots for manual reference. Use `mv`, `zip`, or `rsync` to archive the files with a timestamp.
-- Update operators that the default DataOps/MLOps pipeline writes directly into Iceberg and that `exports/` receives exports only when `--output exports/...` **and** `--write-exports` (opt-in flag in custom tooling) are intentionally requested.
-- Document the archive location and the policy in `README.md` and this guide so new reviewers see the rules before running scans.
+## Policy (read this first)
 
-## Step 2: Replay scanners with the matrix view default
+- **Canonical**: Iceberg tables (`tvscreener.*`) are the only canonical source.
+- **Default behavior**: running scans should not produce repository-local snapshot files.
+- **Optional snapshots**: when you need a local “frozen” artifact for debugging, write it explicitly using
+  `--output ./snapshots/...` (or another directory under the working directory). Do not treat those
+  files as authoritative.
+
+## Step 1: Replay scanners (matrix-first)
 
 Run each scanner with `uv run tvscreener-scan` while relying on the matrix view defaults (`--matrix` is implied when no view flag is provided). Example sequence:
 
@@ -27,10 +33,16 @@ uv run tvscreener-scan --scanner strategy --universe majors --matrix
 uv run tvscreener-scan --scanner strategy --universe minors --matrix
 ```
 
+If you are not using the default config location, add `--config tvscreener.yaml` (or your YAML path) to the scan commands.
+
 After each run:
 
-1. Confirm the CLI logs show matrix output and that no new `exports/` files were written without explicit `--output`/`--write-exports` usage.
-2. Use `pyiceberg` or an EdgeQuery pipeline to query `tvscreener.gold` and prove the new snapshot exists. For example:
+1. Confirm the CLI logs show matrix output.
+2. Confirm the lakehouse tables have fresh snapshots (query Iceberg, not files).
+
+## Step 2: Confirm Iceberg snapshots exist (Bronze/Silver/Gold)
+
+Use `pyiceberg` to prove a fresh snapshot exists:
 
 ```python
 from tvscreener.lib.lakehouse import get_catalog
@@ -41,9 +53,17 @@ rows = table.scan(limit=1).to_arrow().to_pandas()
 print(rows)
 ```
 
-3. Record the snapshot ID or timestamp so auditors can retrace what data the CLI produced.
+Record the `snapshot_id` values (Bronze/Silver/Gold) in your audit entry.
 
-## Step 3: Audit the Iceberg rows against the matrix view
+You can also validate via the CLI query subcommand:
+
+```bash
+# NOTE: `query` must be the first token after `tvscreener-scan`.
+# If you pass `--config`, place it at the end.
+uv run tvscreener-scan query tvscreener.gold --sql "SELECT signal_date, PAIR, DIRECTION, ENSEMBLE_SCORE, TOTAL_CONFLUENCE, GRID_ALIGNED, GRID_TOTAL, TF_CONFLUENCE_LONG, TF_CONFLUENCE_SHORT FROM df ORDER BY signal_date DESC LIMIT 25" --head 25 --config tvscreener.yaml
+```
+
+## Step 3: Audit Iceberg rows against the matrix view
 
 The goal of the audit is to prove the decorated matrix view matches the raw Iceberg data for high-confluence signals like EURCHF.
 
@@ -91,8 +111,46 @@ with EdgeQueryClient() as client:
 
 If confluence counts, grid totals, and ensemble scores align with the CLI matrix output (especially the direction and `TF_CONFLUENCE_LONG/SHORT` columns), the lakehouse rows are validated.
 
-## Step 4: Record and share the audit
+## Optional: write a local snapshot (non-canonical)
 
-- Log each audit session directly in `docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md` or a linked note so other engineers can reproduce it. Include the SQL used, the `EdgeQueryClient` library calls, and any `pyiceberg` snapshot IDs.
+If you need a debugging artifact you can re-open later, write it explicitly:
+
+```bash
+uv run tvscreener-scan --scanner opportunity --universe majors --matrix --output ./snapshots/majors_opportunity.parquet
+```
+
+This snapshot is **not** the source of truth. Always cite Iceberg snapshot IDs in audit records.
+
+## Step 4: Record and share the audit (required)
+
+- Log each audit session directly in `docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md` (or a linked note).
+- Include the SQL used, the `EdgeQueryClient`/`pyiceberg` calls, and the Iceberg `snapshot_id`s.
 - Link this guide from the README and plan documents to keep the lakehouse-first policy visible.
-- Bookmark the `tvscreener.gold` table as the single source of truth; any future CLI flag or script that touches `exports/` must explicitly mention the `--write-exports` opt-in and the reference-only policy.
+- Bookmark `tvscreener.gold` as the single source of truth for signals.
+
+### Audit record template (copy/paste)
+
+```text
+Audit timestamp (UTC):
+Run commands:
+- ...
+
+Iceberg snapshot IDs (UTC):
+- tvscreener.bronze: snapshot <id> @ <timestamp>
+- tvscreener.silver: snapshot <id> @ <timestamp>
+- tvscreener.gold: snapshot <id> @ <timestamp>
+
+Spot checks:
+- Pair(s): ...
+- SQL:
+  SELECT ...
+
+Expected invariants:
+- Matrix direction == Iceberg DIRECTION
+- Grid totals and confluence counters match
+
+Notes / discrepancies:
+- ...
+Follow-ups:
+- ...
+```

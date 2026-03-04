@@ -22,13 +22,25 @@ uv run tvscreener-scan --scanner strategy --universe minors --matrix
 ## Validate Iceberg via EdgeQueryClient
 
 ```bash
-uv run tvscreener-scan query tvscreener.gold --sql "SELECT signal_date, PAIR, DIRECTION, ENSEMBLE_SCORE, TOTAL_CONFLUENCE, GRID_ALIGNED, GRID_TOTAL, TF_CONFLUENCE_LONG, TF_CONFLUENCE_SHORT FROM df ORDER BY signal_date DESC LIMIT 25" --head 25
+# NOTE: `query` must be the first token after `tvscreener-scan`.
+# If you pass `--config`, place it at the end.
+uv run tvscreener-scan query tvscreener.gold --sql "SELECT signal_date, PAIR, DIRECTION, ENSEMBLE_SCORE, TOTAL_CONFLUENCE, GRID_ALIGNED, GRID_TOTAL, TF_CONFLUENCE_LONG, TF_CONFLUENCE_SHORT FROM df ORDER BY signal_date DESC LIMIT 25" --head 25 --config tvscreener.yaml
 ```
 
 Key expectations:
 
-- Queries against Iceberg identifiers like `tvscreener.gold` work without requiring `exports/*.parquet`.
+- Queries against Iceberg identifiers like `tvscreener.gold` work without requiring any repository-local parquet snapshots.
 - The matrix output can be reproduced from `tvscreener.gold` (direction, confluence counters, ensemble score).
+
+## Optional: write a local snapshot (non-canonical)
+
+If you need an on-disk artifact for debugging, write it explicitly via `--output`:
+
+```bash
+uv run tvscreener-scan --scanner opportunity --universe majors --matrix --output ./snapshots/majors_opportunity.parquet
+```
+
+This snapshot is not required for the validation steps above and must not be treated as the source of truth.
 
 ## Tests
 

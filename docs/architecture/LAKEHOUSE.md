@@ -23,13 +23,13 @@ graph LR
 ### 1. Bronze (Raw Ingestion)
 - **Source**: Directly from `tvscreener` library calls to TradingView.
 - **Content**: Raw, unformatted JSON/Dictionary data converted to DataFrames.
-- **Storage**: Appended to Iceberg tables with `ingest_date` partitioning.
+- **Storage**: Appended to Iceberg tables with identity partitions including `asset_type`, `ingest_date`, and `timeframe_set_id`.
 - **Purpose**: Data lineage and "replay" capability. If logic changes, we can re-process from Bronze without hitting the API.
 
 ### 2. Silver (Standardization)
 - **Source**: Bronze layer or fresh ingestion.
 - **Content**: Canonical column names (e.g., `CLOSE`, `VOLUME`), standardized asset identifiers (e.g., `EURUSD` instead of `FX:EURUSD`), and basic technical indicators.
-- **Storage**: Overwritten or appended to Iceberg tables with `asset_type` partitioning.
+- **Storage**: Overwritten to Iceberg tables with identity partitions including `asset_type` and `timeframe_set_id` (and a date column when present).
 - **Purpose**: Clean, high-performance dataset for analysis. Enables cross-asset queries.
 
 ### 3. Gold (Scoring & Serving)
@@ -44,6 +44,32 @@ graph LR
 - **Storage Backend**: Local Parquet files organized by the Iceberg spec.
 - **Query Engine**: [DuckDB](https://duckdb.org/) for lightning-fast OLAP queries on the Edge.
 - **Lazy Processing**: [Narwhals](https://github.com/narwhals-dev/narwhals) for agnostic, lazy-evaluated transformations that work across Pandas, Polars, and DuckDB.
+
+## Configuration (local vs remote catalog)
+
+The lakehouse catalog/warehouse is configured via layered settings (YAML + ENV).
+
+YAML (`tvscreener.yaml`) example:
+
+```yaml
+lakehouse:
+  catalog:
+    mode: local            # local | remote
+    name: local
+    type: sql
+    # remote:
+    #   uri: "postgresql+psycopg://user:pass@host:5432/iceberg"
+    #   warehouse: "s3://bucket/warehouse"
+    properties: {}
+```
+
+ENV example:
+
+```bash
+export TVSCREENER_LAKEHOUSE_CATALOG_MODE=remote
+export TVSCREENER_LAKEHOUSE_CATALOG_REMOTE_URI="postgresql+psycopg://user:pass@host:5432/iceberg"
+export TVSCREENER_LAKEHOUSE_CATALOG_REMOTE_WAREHOUSE="s3://bucket/warehouse"
+```
 
 ## Time Travel & Replay
 
