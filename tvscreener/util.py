@@ -1,3 +1,4 @@
+import hashlib
 import math
 import os
 from pathlib import Path
@@ -138,6 +139,35 @@ def is_status_code_ok(response):
 
 def get_url(subtype):
     return f"https://scanner.tradingview.com/{subtype}/scan"
+
+
+def canonicalize_asset_type(asset_type: str) -> str:
+    """Normalize user-facing asset type strings to internal keys."""
+    at = (asset_type or "").strip().lower()
+    aliases = {
+        "stocks": "stock",
+        "equities": "stock",
+        "equity": "stock",
+        "stock": "stock",
+        "fx": "forex",
+        "forex": "forex",
+        "cryptos": "crypto",
+        "crypto": "crypto",
+        "commodities": "futures",
+        "commodity": "futures",
+        "futures": "futures",
+        "bonds": "bond",
+        "bond": "bond",
+        "coins": "coin",
+        "coin": "coin",
+    }
+    return aliases.get(at, at)
+
+
+def timeframe_set_id(timeframes: list[str]) -> str:
+    """Stable ID for a timeframe set (sorted, comma-separated)."""
+    tf_str = ",".join(sorted(str(t).strip() for t in timeframes if str(t).strip()))
+    return hashlib.blake2s(tf_str.encode("utf-8"), digest_size=8).hexdigest()
 
 
 # Use proper abbreviations including K for thousands

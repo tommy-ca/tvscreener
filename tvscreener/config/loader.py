@@ -70,6 +70,38 @@ def load_settings(config_path: str | None = None) -> ScreenerSettings:
     if risk_data:
         yaml_config["risk"] = risk_data
 
+    # Backward compatibility: allow flat lakehouse_* keys for nested lakehouse model
+    # Example:
+    # - lakehouse_catalog_mode: remote  -> lakehouse: { catalog: { mode: remote } }
+    # - lakehouse_catalog_remote_uri: ... -> lakehouse: { catalog: { remote: { uri: ... } } }
+    if any(k.startswith("lakehouse_") for k in yaml_config):
+
+        def _assign_nested(root: dict[str, Any], parts: list[str], value: Any) -> None:
+            cur: dict[str, Any] = root
+            for p in parts[:-1]:
+                nxt = cur.get(p)
+                if not isinstance(nxt, dict):
+                    nxt = {}
+                    cur[p] = nxt
+                cur = nxt
+            cur[parts[-1]] = value
+
+        lakehouse_nested: dict[str, Any] = {}
+        for k in list(yaml_config.keys()):
+            if not k.startswith("lakehouse_"):
+                continue
+            sub_key = k[len("lakehouse_") :]
+            value = yaml_config.pop(k)
+            parts = [p for p in sub_key.split("_") if p]
+            if not parts:
+                continue
+            _assign_nested(lakehouse_nested, parts, value)
+
+        if lakehouse_nested:
+            yaml_config.setdefault("lakehouse", {})
+            if isinstance(yaml_config["lakehouse"], dict):
+                yaml_config["lakehouse"] = {**yaml_config["lakehouse"], **lakehouse_nested}
+
     try:
         # Load from ENV/dotenv first to get explicit overrides
         env_settings = ScreenerSettings()

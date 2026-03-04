@@ -38,3 +38,22 @@ risk:
   atr_multiplier: 2.0
   account_balance: 10000.0
   pip_value: 10.0
+
+# Iceberg lakehouse settings (Bronze/Silver/Gold are the canonical store)
+lakehouse:
+  catalog:
+    # mode: local (default) uses a local SQLite catalog + file warehouse under ~/.tvscreener/lakehouse
+    # mode: remote uses a shared SQL catalog (e.g. Postgres) + a shared warehouse (e.g. S3)
+    mode: local
+    name: local
+    type: sql
+    # Local mode overrides (optional). Use absolute paths if you set these.
+    # local:
+    #   base_dir: "/home/you/.tvscreener/lakehouse"
+    #   catalog_db: "catalog.db"
+    #   warehouse_dir: "warehouse"
+    # Remote mode config (required only if mode=remote)
+    # remote:
+    #   uri: "postgresql+psycopg://user:pass@host:5432/iceberg"
+    #   warehouse: "s3://bucket/warehouse"
+    properties: {}

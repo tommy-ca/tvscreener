@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CLI for forex scanners."""
+"""CLI for TradingView scanners."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ def main() -> int:
         args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(
-            description="Run forex scanners",
+            description="Run TradingView scanners",
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
 
@@ -70,7 +70,7 @@ def main() -> int:
         )
         parser.add_argument(
             "--asset-type",
-            choices=["forex", "stocks", "commodity", "crypto"],
+            choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
             default="forex",
         )
         parser.add_argument("--universe", "-u", choices=["majors", "minors", "all"], default=None)

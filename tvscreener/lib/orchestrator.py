@@ -34,7 +34,7 @@ from tvscreener.lib.screeners.forex_strategy import (
     StrategyType,
 )
 from tvscreener.score import ScoringConfig as ScoreWeights
-from tvscreener.util import parse_timeframe_weights, validate_path
+from tvscreener.util import canonicalize_asset_type, parse_timeframe_weights, validate_path
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -44,9 +44,12 @@ logger = logging.getLogger(__name__)
 
 UNIVERSE_MAP: dict[str, AssetUniverse] = {
     "forex": FOREX_UNIVERSE,
+    "stock": STOCK_UNIVERSE,
+    "crypto": CRYPTO_UNIVERSE,
+    "futures": COMMODITY_UNIVERSE,
+    # Aliases for CLI/backwards compatibility
     "stocks": STOCK_UNIVERSE,
     "commodity": COMMODITY_UNIVERSE,
-    "crypto": CRYPTO_UNIVERSE,
 }
 
 
@@ -161,24 +164,38 @@ class ScreenerController:
 
     def get_universe(self, asset_type: str) -> AssetUniverse:
         """Get universe config by asset type with validation."""
+        asset_type = canonicalize_asset_type(asset_type)
         if asset_type not in UNIVERSE_MAP:
             raise ConfigurationError(
                 f"Unknown asset type: {asset_type}. Valid options: {', '.join(UNIVERSE_MAP.keys())}"
             )
         return UNIVERSE_MAP[asset_type]
 
-    def get_pairs(self, universe: str | None, specific: list[str] | None) -> list[str]:
-        """Resolve pairs based on universe or specific list."""
+    def get_pairs(
+        self, asset_type: str, universe: str | None, specific: list[str] | None
+    ) -> list[str]:
+        """Resolve symbols based on asset type, universe selector, or explicit list."""
         if specific:
             return specific
-        if universe == "majors":
-            return FOREX_MAJORS
-        elif universe == "minors":
-            return FOREX_MINORS
-        return DEFAULT_FOREX_PAIRS
+
+        asset_type = canonicalize_asset_type(asset_type)
+        if asset_type == "forex":
+            if universe == "majors":
+                return FOREX_MAJORS
+            if universe == "minors":
+                return FOREX_MINORS
+            if universe in (None, "all"):
+                return DEFAULT_FOREX_PAIRS
+            # Unknown forex selector: fall back to default
+            return DEFAULT_FOREX_PAIRS
+
+        # Non-forex: use configured universe pairs
+        cfg = self.get_universe(asset_type)
+        return list(cfg.pairs)
 
     def resolve_defaults(self, request: ScanRequest) -> ScanRequest:
         """Fill in missing parameters from settings."""
+        request.assets.asset_type = canonicalize_asset_type(request.assets.asset_type)
         settings = load_settings(request.output.config_path)
 
         if request.assets.universe is None:
@@ -281,7 +298,7 @@ class ScreenerController:
         if self.console:
             self.console.print("[bold cyan]Running Lakehouse Maintenance...[/bold cyan]")
 
-        manager = get_manager()
+        manager = get_manager(getattr(args, "config", None))
         table_name = getattr(args, "table", "forex.opportunities")
 
         if getattr(args, "expire_snapshots", False):
@@ -360,6 +377,10 @@ class ScreenerController:
 
     def run_from_args(self, args: argparse.Namespace) -> int:
         """Run scan from argparse namespace."""
+        # Initialize lakehouse manager early so catalog config is consistent for the process.
+        # This ensures CLI `--config` affects Iceberg catalog/warehouse selection.
+        get_manager(getattr(args, "config", None))
+
         command = getattr(args, "command", "scan")
         if command == "maintenance":
             return self.run_maintenance(args)
@@ -464,7 +485,9 @@ class ScreenerController:
     ) -> tuple[pd.DataFrame, BaseOpportunityScreener]:
         """Run opportunity screener and return results + screener instance."""
         request = self.resolve_defaults(request)
-        pairs = self.get_pairs(request.assets.universe, request.assets.pairs)
+        pairs = self.get_pairs(
+            request.assets.asset_type, request.assets.universe, request.assets.pairs
+        )
         timeframes = (
             request.assets.timeframes.split(",")
             if request.assets.timeframes
@@ -473,7 +496,7 @@ class ScreenerController:
 
         if self.console:
             self.console.print(
-                f"[cyan]Scanning {len(pairs)} {request.assets.asset_type} pairs...[/cyan]"
+                f"[cyan]Scanning {len(pairs)} {request.assets.asset_type} symbols...[/cyan]"
             )
 
         config = self._build_opportunity_config(request)
@@ -544,7 +567,9 @@ class ScreenerController:
     ) -> tuple[pd.DataFrame, ForexStrategyScanner]:
         """Run strategy scanner and return results + scanner instance."""
         request = self.resolve_defaults(request)
-        pairs = self.get_pairs(request.assets.universe, request.assets.pairs)
+        pairs = self.get_pairs(
+            request.assets.asset_type, request.assets.universe, request.assets.pairs
+        )
         timeframes = (
             request.assets.timeframes.split(",")
             if request.assets.timeframes
@@ -553,7 +578,7 @@ class ScreenerController:
 
         if self.console:
             self.console.print(
-                f"[cyan]Scanning {len(pairs)} {request.assets.asset_type} pairs for {request.assets.strategy} signals...[/cyan]"
+                f"[cyan]Scanning {len(pairs)} {request.assets.asset_type} symbols for {request.assets.strategy} signals...[/cyan]"
             )
 
         config = self._build_strategy_config(request)
@@ -953,10 +978,11 @@ class ScreenerController:
         if grade:
             grade_order = {"A+": 6, "A": 5, "B": 4, "C": 3, "D": 2, "F": 1}
             min_grade_value = grade_order.get(grade, 0)
-            df = df[df["GRADE"].map(grade_order).fillna(0) >= min_grade_value]
+            grade_values = df["GRADE"].map(lambda g: grade_order.get(g, 0)).fillna(0)
+            df = df.loc[grade_values >= min_grade_value]
 
         if min_confluence is not None:
-            df = df[df["TOTAL_CONFLUENCE"] >= min_confluence]
+            df = df.loc[df["TOTAL_CONFLUENCE"] >= min_confluence]
 
         return df
 

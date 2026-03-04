@@ -17,29 +17,68 @@ class LakehouseManager:
     Flattens the previous multi-class hierarchy into a single entry point.
     """
 
-    def __init__(self) -> None:
-        self.base_dir = Path.home() / ".tvscreener" / "lakehouse"
-        self.catalog_db_path = self.base_dir / "catalog.db"
-        self.warehouse_path = self.base_dir / "warehouse"
+    def __init__(self, config_path: str | None = None) -> None:
+        # Config is loaded via layered Pydantic settings (ENV/.env/YAML/defaults).
+        # `config_path` is the YAML path as provided to the CLI (optional).
+        from tvscreener.config.loader import load_settings
 
-        # Provision directories
-        self.base_dir.mkdir(parents=True, exist_ok=True)
-        self.warehouse_path.mkdir(parents=True, exist_ok=True)
+        self._config_path = config_path
+        self._settings = load_settings(config_path)
+        self._catalog_settings = self._settings.lakehouse.catalog
 
-        # SQL Catalog URI: sqlite:////abs/path/to/db
-        self.uri = f"sqlite:////{self.catalog_db_path.absolute()}"
+        self.base_dir: Path | None = None
+        self.catalog_db_path: Path | None = None
+        self.warehouse_path: Path | None = None
+
+        # Local catalog defaults/provisioning
+        if self._catalog_settings.mode == "local":
+            base_dir = self._settings.lakehouse_local_base_dir()
+            if self._catalog_settings.local.base_dir:
+                base_dir = Path(self._catalog_settings.local.base_dir).expanduser()
+
+            self.base_dir = base_dir
+            self.catalog_db_path = base_dir / self._catalog_settings.local.catalog_db
+            self.warehouse_path = base_dir / self._catalog_settings.local.warehouse_dir
+
+            self.base_dir.mkdir(parents=True, exist_ok=True)
+            self.warehouse_path.mkdir(parents=True, exist_ok=True)
+
         self._catalog: Catalog | None = None
+
+    def _warehouse_uri(self) -> str:
+        """Return the Iceberg warehouse URI for the configured catalog mode."""
+        if self._catalog_settings.mode == "local":
+            assert self.warehouse_path is not None
+            return f"file://{self.warehouse_path.absolute()}"
+
+        remote = self._catalog_settings.remote
+        assert remote is not None
+        warehouse = remote.warehouse
+        if "://" in warehouse:
+            return warehouse
+        return f"file://{Path(warehouse).expanduser().absolute()}"
+
+    def _catalog_uri(self) -> str:
+        """Return the Iceberg SQL catalog URI."""
+        if self._catalog_settings.mode == "local":
+            assert self.catalog_db_path is not None
+            return f"sqlite:////{self.catalog_db_path.absolute()}"
+        remote = self._catalog_settings.remote
+        assert remote is not None
+        return remote.uri
 
     def get_catalog(self) -> Catalog:
         """Loads and returns the Iceberg catalog instance."""
         if self._catalog is None:
+            props: dict[str, Any] = {
+                "type": self._catalog_settings.type,
+                "uri": self._catalog_uri(),
+                "warehouse": self._warehouse_uri(),
+                **(self._catalog_settings.properties or {}),
+            }
             self._catalog = load_catalog(
-                "local",
-                **{
-                    "type": "sql",
-                    "uri": self.uri,
-                    "warehouse": f"file://{self.warehouse_path.absolute()}",
-                },
+                self._catalog_settings.name,
+                **props,
             )
         return self._catalog
 
@@ -85,21 +124,22 @@ class LakehouseManager:
                 if overwrite_filter is not None:
                     table.overwrite(arrow_table, overwrite_filter=overwrite_filter)
                 elif partition_by:
-                    import pyarrow.compute as pc
                     from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
 
                     filters = []
                     for col in partition_by:
-                        raw_unique = pc.unique(arrow_table.column(col)).to_pylist()
+                        col_vals = arrow_table.column(col).to_pylist()
+                        # Stable de-dupe while preserving order
+                        raw_unique = list(dict.fromkeys(col_vals))
                         unique_vals = [v for v in raw_unique if v is not None]
                         has_null = None in raw_unique
 
                         col_filter = None
                         if unique_vals:
-                            col_filter = In(term=col, literals=unique_vals)  # type: ignore
+                            col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
 
                         if has_null:
-                            null_filter = IsNull(term=col)
+                            null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
                             col_filter = Or(col_filter, null_filter) if col_filter else null_filter
 
                         if col_filter:
@@ -126,13 +166,43 @@ class LakehouseManager:
             if partition_by:
                 with table.update_spec() as update:
                     for col in partition_by:
-                        update.add_identity_field(col)
+                        update.add_identity(col)
 
             table.append(arrow_table)
             logger.info("Created Iceberg table '%s' (%d rows)", identifier, len(arrow_table))
 
     def _prepare_arrow(self, nw_df: nw.DataFrame) -> pa.Table:
-        """Cast datetime64[ns] to [us] for Iceberg compatibility."""
+        """Cast datetime columns to microseconds and strip timezones for Iceberg compatibility."""
+        # Iceberg timestamps are typically timezone-naive; normalize any tz-aware datetimes to UTC
+        # and drop tz info before Arrow conversion.
+        try:
+            import datetime as _dt
+
+            import pandas as _pd
+
+            native = nw_df.to_native()
+            if isinstance(native, _pd.DataFrame):
+                for col in list(native.columns):
+                    s = native[col]
+                    # datetime64[ns, tz]
+                    if _pd.api.types.is_datetime64tz_dtype(s):
+                        native[col] = s.dt.tz_convert("UTC").dt.tz_localize(None)
+                        continue
+                    # object series containing tz-aware datetimes
+                    if s.dtype == "object":
+                        sample = None
+                        for v in s.head(50).tolist():
+                            if isinstance(v, _dt.datetime):
+                                sample = v
+                                break
+                        if sample is not None and getattr(sample, "tzinfo", None) is not None:
+                            coerced = _pd.to_datetime(s, utc=True, errors="coerce")
+                            native[col] = coerced.dt.tz_convert("UTC").dt.tz_localize(None)
+                nw_df = nw.from_native(native)
+        except Exception:
+            # Best-effort normalization; continue to Arrow conversion.
+            pass
+
         datetime_cols = [
             col for col, dtype in nw_df.schema.items() if isinstance(dtype, nw.Datetime)
         ]
@@ -162,11 +232,28 @@ class LakehouseManager:
             logger.info("Compaction requested for %s (Hook)", table_name)
 
 
-def get_manager() -> LakehouseManager:
-    """Singleton provider for LakehouseManager."""
-    if not hasattr(get_manager, "_instance"):
-        get_manager._instance = LakehouseManager()
-    return get_manager._instance
+_MANAGER_INSTANCE: LakehouseManager | None = None
+
+
+def get_manager(config_path: str | None = None) -> LakehouseManager:
+    """Singleton provider for LakehouseManager.
+
+    If called with a config_path before the singleton is created, that YAML will be used for
+    lakehouse settings. Subsequent calls ignore config_path to avoid mid-process catalog swaps.
+    """
+    global _MANAGER_INSTANCE
+    if _MANAGER_INSTANCE is None:
+        _MANAGER_INSTANCE = LakehouseManager(config_path=config_path)
+    elif config_path and getattr(_MANAGER_INSTANCE, "_config_path", None) not in (
+        None,
+        config_path,
+    ):
+        logger.warning(
+            "LakehouseManager already initialized with config_path=%s; ignoring new config_path=%s",
+            getattr(_MANAGER_INSTANCE, "_config_path", None),
+            config_path,
+        )
+    return _MANAGER_INSTANCE
 
 
 def write_iceberg(

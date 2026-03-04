@@ -1,9 +1,79 @@
-from typing import Literal
+from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS
+
+
+class LakehouseLocalCatalogSettings(BaseModel):
+    """Local-dev Iceberg SQL catalog + file warehouse settings."""
+
+    # Base directory for local lakehouse state (catalog + warehouse).
+    # If unset, defaults to ~/.tvscreener/lakehouse
+    base_dir: str | None = None
+
+    # File names / subdirs (relative to base_dir).
+    catalog_db: str = Field(default="catalog.db")
+    warehouse_dir: str = Field(default="warehouse")
+
+    @field_validator("catalog_db", "warehouse_dir", mode="before")
+    @classmethod
+    def strip_strings(cls, v: Any) -> Any:
+        return v.strip() if isinstance(v, str) else v
+
+
+class LakehouseRemoteCatalogSettings(BaseModel):
+    """Remote/shared Iceberg SQL catalog settings (e.g., Postgres)."""
+
+    # SQLAlchemy URI for the Iceberg SQL catalog (pyiceberg "sql" catalog).
+    # Example: postgresql+psycopg://user:pass@host:5432/iceberg
+    uri: str
+
+    # Warehouse location for table data.
+    # Examples: file:///mnt/warehouse, s3://bucket/prefix, abfs://...
+    warehouse: str
+
+    @field_validator("uri", "warehouse", mode="before")
+    @classmethod
+    def strip_strings(cls, v: Any) -> Any:
+        return v.strip() if isinstance(v, str) else v
+
+
+class LakehouseCatalogSettings(BaseModel):
+    """Iceberg catalog configuration (local or remote SQL catalog)."""
+
+    mode: Literal["local", "remote"] = Field(default="local")
+    name: str = Field(default="local")
+
+    # pyiceberg catalog type. For this project we only support SQL catalogs today.
+    type: Literal["sql"] = Field(default="sql")
+
+    # Local mode settings (sqlite catalog + file warehouse).
+    local: LakehouseLocalCatalogSettings = Field(default_factory=LakehouseLocalCatalogSettings)
+
+    # Remote mode settings (postgres catalog + shared warehouse).
+    remote: LakehouseRemoteCatalogSettings | None = Field(default=None)
+
+    # Extra catalog properties passed to pyiceberg load_catalog (e.g. object store auth/endpoints).
+    properties: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> LakehouseCatalogSettings:
+        if self.mode == "remote" and self.remote is None:
+            raise ValueError(
+                "lakehouse.catalog.remote must be set when lakehouse.catalog.mode=remote"
+            )
+        return self
+
+
+class LakehouseSettings(BaseModel):
+    """Top-level lakehouse settings group."""
+
+    catalog: LakehouseCatalogSettings = Field(default_factory=LakehouseCatalogSettings)
 
 
 class OpportunitySettings(BaseModel):
@@ -89,6 +159,7 @@ class ScreenerSettings(BaseSettings):
     # Scoped Settings
     opportunity: OpportunitySettings = Field(default_factory=OpportunitySettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
+    lakehouse: LakehouseSettings = Field(default_factory=LakehouseSettings)
 
     @field_validator("min_ma_score", "max_atr", "min_volume", "min_roc", mode="before")
     @classmethod
@@ -113,3 +184,8 @@ class ScreenerSettings(BaseSettings):
         if v and isinstance(v, str):
             return v.lower().strip()
         return v
+
+    def lakehouse_local_base_dir(self) -> Path:
+        """Resolved local base dir for lakehouse files."""
+        base = self.lakehouse.catalog.local.base_dir
+        return Path(base).expanduser() if base else (Path.home() / ".tvscreener" / "lakehouse")
