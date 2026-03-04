@@ -10,7 +10,8 @@ dependencies: ["190"]
 
 ## Problem Statement
 
-- Opportunity and strategy scans still default to writing `exports/` snapshots before overwriting the lakehouse tables, which wastes time and duplicates storage (docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md:31-35).
+- Opportunity and strategy scans need to be rerun with matrix defaults so the medallion tables contain
+  the latest matrix-ready signals required for audits.
 - Without rerunning these scanners with matrix defaults, the medallion tables may lack the latest matrix-ready signals needed for the audit.
 
 ## Findings
@@ -20,19 +21,19 @@ dependencies: ["190"]
 
 ## Proposed Solutions
 
-1. Run `uv run tvscreener-scan --scanner opportunity --universe majors --matrix` and repeat for minors, ensuring the run completes without `exports/` errors.
+1. Run `uv run tvscreener-scan --scanner opportunity --universe majors --matrix` and repeat for minors.
 2. Repeat for strategy scanners with the `--matrix` flag so both scan families produce matrix data.
 3. Confirm via `pyiceberg`/EdgeQuery that the new rows appear in `tvscreener.gold` for both majors and minors.
 
 ## Recommended Action
 
-- Rerun the specified scans with matrix defaults, monitor logs for `exports/` suppression, and validate lakehouse ingestion.
+- Rerun the specified scans with matrix defaults and validate lakehouse ingestion via Iceberg queries.
 
 ## Acceptance Criteria
 
 - Opportunity and strategy scans for majors and minors complete successfully with the matrix default.
 - `tvscreener.gold` reflects the fresh data for each scan (reports via `pyiceberg`/EdgeQuery).
-- No new files are accidentally written into `exports/` during the reruns.
+- No repository-local snapshot files are produced unless an explicit `--output` path is provided.
 
 ## Work Log
 

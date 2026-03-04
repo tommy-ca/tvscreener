@@ -10,12 +10,13 @@ dependencies: ["192"]
 
 ## Problem Statement
 
-- The audit plan lacks executable steps for future reviewers to reproduce the lakehouse-first review, and downstream docs still point to `exports/` as a signal source (docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md:27-40).
+- The audit plan needs executable steps for future reviewers to reproduce the lakehouse-first review,
+  and docs must clearly state that Iceberg tables are canonical (not repository-local snapshot files).
 
 ## Findings
 
 - The plan calls out documenting inspection steps/results, SQL used, and the new lakehouse-first flow so other engineers know to trust Iceberg data (lines 27-42).
-- Without updated docs, future auditors may still run scans against `exports/` or misinterpret matrix outputs.
+- Without updated docs, future auditors may still rely on stale snapshot artifacts or misinterpret matrix outputs.
 
 ## Proposed Solutions
 
@@ -31,7 +32,7 @@ dependencies: ["192"]
 
 - The `Lakehouse Audit Flow` plan or companion note contains documented SQL steps and outputs for key signals.
 - README/docs emphasize the lakehouse-first audit flow and mention `tvscreener.gold` as the canonical signal table.
-- Future auditors can replay the documented queries without relying on `exports/` outputs.
+- Future auditors can replay the documented queries without relying on repository-local snapshot outputs.
 
 ## Work Log
 
