@@ -147,3 +147,45 @@ class DataTransformer:
         df = df.drop(["_is_canonical", "_exchange_score", "_volume"])
 
         return df
+
+    @staticmethod
+    @nw.narwhalify
+    def add_canonical_identity(df: Any, asset_type: str) -> Any:
+        """Add canonical identity columns: venue, symbol, entity_id.
+
+        Uses TradingView's `Symbol` field when available.
+        """
+        if len(df) == 0:
+            return df
+
+        asset_type = (asset_type or "").strip().lower()
+
+        source_col = None
+        # Prefer fully-qualified TradingView symbols when available, but fall back to common
+        # per-asset identifiers like PAIR for forex.
+        for candidate in ("Symbol", "symbol", "Name", "name", "PAIR", "pair"):
+            if candidate in df.columns:
+                source_col = candidate
+                break
+
+        if not source_col:
+            return df
+
+        raw = nw.col(source_col).fill_null("").cast(nw.String)
+        has_colon = raw.str.contains(":")
+
+        venue = (
+            nw.when(has_colon)
+            .then(raw.str.replace(r":.*$", "", literal=False))
+            .otherwise(nw.lit(""))
+        )
+        symbol = nw.when(has_colon).then(raw.str.replace(r"^.*:", "", literal=False)).otherwise(raw)
+
+        # Prefer fully-qualified TradingView symbols. If not qualified, prefix with asset_type.
+        entity_id = (
+            nw.when(has_colon)
+            .then(raw)
+            .otherwise(raw.str.replace(r"^", f"{asset_type}:", literal=False))
+        )
+
+        return df.with_columns(venue=venue, symbol=symbol, entity_id=entity_id)

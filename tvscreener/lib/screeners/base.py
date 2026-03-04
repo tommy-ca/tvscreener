@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from uuid import uuid4
 
 import narwhals as nw
 import pandas as pd
@@ -15,7 +16,12 @@ from tvscreener.lib.lakehouse import get_catalog, write_iceberg
 from tvscreener.lib.screeners.metadata_utils import MetadataCollector
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
 from tvscreener.score import DEFAULT_SCORING_CONFIG, ScoringConfig, ScoringEngine
-from tvscreener.util import validate_path
+from tvscreener.util import (
+    canonicalize_asset_type,
+    timeframe_set_id,
+    to_scalar,
+    validate_path,
+)
 
 if TYPE_CHECKING:
     from tvscreener.core.base import Screener
@@ -138,6 +144,7 @@ class ExportMixin(ABC):
 class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
     """Abstract base for high-level asset-specific opportunity screeners."""
 
+    asset_type: str = ""
     symbols: list[str] = field(default_factory=list)
     timeframes: list[str] = field(default_factory=lambda: ["15", "60", "240"])
     config: ScreenerConfig = field(default_factory=ScreenerConfig)
@@ -145,9 +152,31 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
     post_filters: list[DataFrameFilter] = field(default_factory=list)
     _cached_data: pd.DataFrame | None = field(init=False, default=None)
     _risk_engine: RiskEngine = field(init=False)
+    _run_id: str | None = field(init=False, default=None)
+    _fetched_at_utc: datetime | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self._validate_inputs()
+
+        if not self.asset_type:
+            name = self.__class__.__name__.lower()
+            if "forex" in name:
+                self.asset_type = "forex"
+            elif "stock" in name:
+                self.asset_type = "stock"
+            elif "crypto" in name:
+                self.asset_type = "crypto"
+            elif "futures" in name or "commodity" in name:
+                self.asset_type = "futures"
+            elif "bond" in name:
+                self.asset_type = "bond"
+            elif "coin" in name:
+                self.asset_type = "coin"
+            else:
+                self.asset_type = "unknown"
+
+        self.asset_type = canonicalize_asset_type(self.asset_type)
+
         self._engine = ScoringEngine(
             config=self.config.scoring_config,
             timeframes=self.timeframes,
@@ -165,6 +194,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             {
                 "symbols_count": len(self.symbols),
                 "timeframes": self.timeframes,
+                "asset_type": self.asset_type,
                 "include_atr": self.config.include_atr or self.config.show_risk,
                 "include_rsi": self.config.include_rsi,
                 "min_rvol": self.config.min_rvol,
@@ -196,6 +226,19 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
     def get_opportunities(self, use_cache: bool = False) -> pd.DataFrame:
         if use_cache and self._cached_data is not None:
             return self._cached_data
+
+        # Run envelope for auditability + idempotency
+        self._run_id = self._run_id or str(uuid4())
+        self._fetched_at_utc = self._fetched_at_utc or datetime.now(timezone.utc)
+        self.metadata.update_config(
+            {
+                "run_id": self._run_id,
+                "fetched_at_utc": self._fetched_at_utc.isoformat(),
+                "timeframe_set_id": timeframe_set_id(self.timeframes),
+                "scanner_family": "opportunity",
+                "source": "tradingview",
+            }
+        )
 
         logger.info(
             "Scanning %s symbols across %s timeframes",
@@ -230,7 +273,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         self._cached_data = df
         avg_score = 0.0
         if not df.empty and "ENSEMBLE_SCORE" in df.columns:
-            avg_score = float(df["ENSEMBLE_SCORE"].mean())
+            avg_score = to_scalar(df["ENSEMBLE_SCORE"].mean())
 
         self.metadata.finish(
             results_count=len(df),
@@ -271,13 +314,26 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                 catalog = get_catalog()
                 table = catalog.load_table(table_name)
                 logger.info("Resuming from %s Iceberg table", stage.capitalize())
-                return table.to_pandas()
+                arrow_table: Any = table.scan().to_arrow()
+                return arrow_table.to_pandas()  # type: ignore[attr-defined]
             except NoSuchTableError:
                 pass
             except Exception as e:
                 logger.debug("Failed to load from %s: %s", stage.capitalize(), e)
 
         df = runner_func()
+
+        # Attach run envelope + canonical columns for persistence
+        if not df.empty:
+            if "run_id" not in df.columns and self._run_id:
+                df["run_id"] = self._run_id
+            if "fetched_at_utc" not in df.columns and self._fetched_at_utc:
+                df["fetched_at_utc"] = self._fetched_at_utc
+            df["asset_type"] = self.asset_type
+            df["timeframes"] = ",".join(sorted(self.timeframes))
+            df["timeframe_set_id"] = timeframe_set_id(self.timeframes)
+            df["scanner_family"] = "opportunity"
+            df["source"] = "tradingview"
 
         # Write-Audit-Publish (WAP) pattern (Todo 174)
         # Block Iceberg commits if data health check fails
@@ -292,52 +348,64 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                 if stage == "bronze":
                     if "ingest_date" not in df.columns:
                         df["ingest_date"] = now_utc.strftime("%Y-%m-%d")
-                    partition_by = ["ingest_date"]
+                    partition_by = ["asset_type", "ingest_date", "timeframe_set_id"]
                 elif stage == "silver":
-                    # asset_type should ideally come from the screener
-                    if "asset_type" not in df.columns:
-                        df["asset_type"] = self.__class__.__name__.replace("Screener", "").lower()
-
                     # Use both asset_type and any available date column to prevent historical loss (Todo 183)
                     if "signal_date" in df.columns:
-                        partition_by = ["asset_type", "signal_date"]
+                        partition_by = ["asset_type", "signal_date", "timeframe_set_id"]
                     elif "ingest_date" in df.columns:
-                        partition_by = ["asset_type", "ingest_date"]
+                        partition_by = ["asset_type", "ingest_date", "timeframe_set_id"]
                     else:
-                        partition_by = ["asset_type"]
+                        partition_by = ["asset_type", "timeframe_set_id"]
                 elif stage == "gold":
                     if "signal_date" not in df.columns:
                         df["signal_date"] = now_utc.strftime("%Y-%m-%d")
 
-                    # Partition by both signal_date and asset_type if available
-                    if "asset_type" in df.columns:
-                        partition_by = ["asset_type", "signal_date"]
-                    else:
-                        partition_by = ["signal_date"]
+                    partition_by = ["asset_type", "signal_date", "timeframe_set_id"]
 
                 overwrite_filter = None
-                if (
-                    mode == "overwrite"
-                    and stage in {"silver", "gold"}
-                    and partition_by
-                    and "PAIR" in df.columns
-                ):
+                if mode == "overwrite" and stage in {"silver", "gold"} and partition_by:
                     from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
 
+                    key_col = (
+                        "entity_id"
+                        if "entity_id" in df.columns
+                        else "PAIR"
+                        if "PAIR" in df.columns
+                        else "Symbol"
+                        if "Symbol" in df.columns
+                        else "Name"
+                        if "Name" in df.columns
+                        else None
+                    )
+
                     overwrite_cols = [c for c in partition_by if c in df.columns]
-                    overwrite_cols.append("PAIR")
+                    if key_col:
+                        overwrite_cols.append(key_col)
 
                     filters = []
                     for col in dict.fromkeys(overwrite_cols):
                         raw_vals = df[col].tolist()
                         unique_vals = sorted({v for v in raw_vals if v is not None})
                         has_null = any(v is None for v in raw_vals)
+                        # Cleanup safety: if older rows were written before a column existed in the
+                        # table partition spec, those legacy data files may report NULL partition
+                        # metadata and will not be matched by IN(...) filters alone. Always include
+                        # IS NULL for partition columns and for the selected key column.
+                        if col in partition_by:
+                            has_null = True
+
+                        # If older rows were written before the key column existed,
+                        # they will have NULL for that key in the table and would not be matched by
+                        # an IN(...) filter. Always include IS NULL for the selected key column.
+                        if key_col and col == key_col:
+                            has_null = True
 
                         col_filter = None
                         if unique_vals:
-                            col_filter = In(term=col, literals=unique_vals)  # type: ignore
+                            col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
                         if has_null:
-                            null_filter = IsNull(term=col)
+                            null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
                             col_filter = Or(col_filter, null_filter) if col_filter else null_filter
 
                         if col_filter:
@@ -356,6 +424,54 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                     partition_by=partition_by,
                     overwrite_filter=overwrite_filter,
                 )
+
+                # Fast "latest" table for intraday queries
+                if stage == "gold" and not df.empty:
+                    latest_partition_by = ["asset_type", "timeframe_set_id"]
+                    latest_overwrite_filter = None
+                    if mode == "overwrite":
+                        from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
+
+                        key_col = "entity_id" if "entity_id" in df.columns else None
+                        overwrite_cols = [c for c in latest_partition_by if c in df.columns]
+                        if key_col:
+                            overwrite_cols.append(key_col)
+
+                        filters = []
+                        for col in dict.fromkeys(overwrite_cols):
+                            raw_vals = df[col].tolist()
+                            unique_vals = sorted({v for v in raw_vals if v is not None})
+                            has_null = any(v is None for v in raw_vals)
+                            if col in latest_partition_by:
+                                has_null = True
+                            if key_col and col == key_col:
+                                has_null = True
+
+                            col_filter = None
+                            if unique_vals:
+                                col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
+                            if has_null:
+                                null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
+                                col_filter = (
+                                    Or(col_filter, null_filter) if col_filter else null_filter
+                                )
+
+                            if col_filter:
+                                filters.append(col_filter)
+
+                        latest_overwrite_filter = (
+                            AlwaysFalse()
+                            if not filters
+                            else (filters[0] if len(filters) == 1 else And(*filters))
+                        )
+
+                    write_iceberg(
+                        df,
+                        "tvscreener.signals_latest",
+                        mode="overwrite",
+                        partition_by=latest_partition_by,
+                        overwrite_filter=latest_overwrite_filter,
+                    )
             except Exception as e:
                 logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
 
@@ -379,6 +495,11 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
         # Step 1: Enrich with canonical names
         df = self._prepare_enriched_data(df)
+
+        # Step 1.5: Canonical identity columns (multi-asset safe)
+        from tvscreener.lib.screeners.transformer import DataTransformer
+
+        df = DataTransformer.add_canonical_identity(df, self.asset_type)
 
         # Step 2: Apply asset-specific filters
         df = self._apply_asset_filters(df)
@@ -428,7 +549,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                 self.config.volume_outlier_threshold,
             )
 
-        return df[mask]
+        return df.loc[mask]
 
     def _validate_health(self, df: pd.DataFrame, stage: str) -> bool:
         """Validate health of the data before committing to the next stage (WAP Pattern).
@@ -449,6 +570,36 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             null_pct = df["PRICE"].isna().mean()
             if null_pct > 0.9:
                 logger.error("Too many null prices (%.1f%%) in stage '%s'", null_pct * 100, stage)
+                return False
+
+        # Coverage gating: do not publish Silver/Gold on partial ingestion
+        if stage in {"silver", "gold"}:
+            ingest_stats = self.metadata.config.get("ingest_stats") or {}
+            expected = ingest_stats.get("requested_tickers_count")
+            coverage_val = ingest_stats.get("coverage")
+            threshold_raw = self.config.extra_options.get("min_ingest_coverage", 0.98)
+            threshold = 0.98
+            if isinstance(threshold_raw, (int, float, str)):
+                try:
+                    threshold = float(threshold_raw)
+                except ValueError:
+                    threshold = 0.98
+
+            coverage: float | None = None
+            if coverage_val is not None:
+                try:
+                    coverage = float(coverage_val)
+                except (TypeError, ValueError):
+                    coverage = None
+
+            if expected and coverage is not None and coverage < threshold:
+                logger.error(
+                    "Ingest coverage %.3f below threshold %.3f (expected=%s). Blocking publish for stage '%s'",
+                    coverage,
+                    threshold,
+                    expected,
+                    stage,
+                )
                 return False
 
         return True
@@ -481,6 +632,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         # Batching (TV API usually supports ~500 symbols per request)
         batch_size = self.config.extra_options.get("batch_size", 500)
         all_dfs = []
+        failed_batches = 0
 
         for i in range(0, len(tickers), batch_size):
             batch_tickers = tickers[i : i + batch_size]
@@ -500,11 +652,33 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                     all_dfs.append(df)
             except Exception as e:
                 logger.error("Error fetching batch %s: %s", i // batch_size + 1, e)
+                failed_batches += 1
 
         if not all_dfs:
             return pd.DataFrame()
 
         combined_df = pd.concat(all_dfs, ignore_index=True)
+
+        # Coverage stats for reliability gating
+        returned_unique = 0
+        if "Symbol" in combined_df.columns:
+            returned_unique = combined_df["Symbol"].dropna().astype(str).nunique()
+        elif "Name" in combined_df.columns:
+            returned_unique = combined_df["Name"].dropna().astype(str).nunique()
+        expected = len(tickers)
+        coverage = (returned_unique / expected) if expected else 1.0
+        self.metadata.update_config(
+            {
+                "ingest_stats": {
+                    "requested_tickers_count": expected,
+                    "returned_unique": returned_unique,
+                    "coverage": coverage,
+                    "failed_batches": failed_batches,
+                    "batch_size": batch_size,
+                }
+            }
+        )
+
         # Enforce PyArrow backend at the Silver boundary for zero-copy efficiency
         if not combined_df.empty:
             combined_df = combined_df.convert_dtypes(dtype_backend="pyarrow")
@@ -561,18 +735,12 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         """Handle duplicate results (e.g. from different exchanges)."""
         if df.empty:
             return df
-        # Default implementation: just keep first by name using narwhals
-        from tvscreener.lib.screeners.transformer import DataTransformer
-
-        # If DataTransformer has a specific method, use it, else fallback to unique
-        if (
-            hasattr(DataTransformer, "normalize_forex_pairs")
-            and self.__class__.__name__ == "ForexOpportunityScreener"
-        ):
-            # This is handled by subclass overrides usually, but for base:
-            pass
-
+        # Default implementation: keep first by canonical identity if present
         df_nw = nw.from_native(df)
-        if "Name" in df_nw.columns:
+        if "entity_id" in df_nw.columns:
+            df_nw = df_nw.unique(subset=["entity_id"])
+        elif "Symbol" in df_nw.columns:
+            df_nw = df_nw.unique(subset=["Symbol"])
+        elif "Name" in df_nw.columns:
             df_nw = df_nw.unique(subset=["Name"])
         return nw.to_native(df_nw)

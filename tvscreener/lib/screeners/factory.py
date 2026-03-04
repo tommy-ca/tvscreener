@@ -14,6 +14,7 @@ from tvscreener import (
 from tvscreener.lib.screeners.base import BaseOpportunityScreener, ScreenerConfig
 from tvscreener.lib.screeners.forex_opportunity import ForexOpportunityScreener
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS
+from tvscreener.util import canonicalize_asset_type
 
 ASSET_MAP = {
     "stock": {"field_class": StockField, "screener_class": tvs.StockScreener},
@@ -31,7 +32,7 @@ class GenericOpportunityScreener(BaseOpportunityScreener):
     def __init__(
         self, asset_type: str, symbols: list[str], timeframes: list[str], config: ScreenerConfig
     ):
-        self.asset_type = asset_type.lower()
+        self.asset_type = canonicalize_asset_type(asset_type)
         if self.asset_type not in ASSET_MAP:
             # Fallback to stock or raise error? Todo says clear error message.
             raise ValueError(
@@ -56,7 +57,7 @@ class AssetScreenerFactory:
         timeframes: list[str],
         config: Any,  # Can be ForexScreenerConfig or ScreenerConfig
     ) -> BaseOpportunityScreener:
-        asset_type = asset_type.lower()
+        asset_type = canonicalize_asset_type(asset_type)
 
         # Use specialized implementation for forex if available and requested
         if asset_type == "forex":

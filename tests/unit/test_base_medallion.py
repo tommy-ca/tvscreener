@@ -41,7 +41,11 @@ def test_ingest_no_replay(mock_catalog, mock_write_iceberg):
     assert df.iloc[0]["Name"] == "TEST"
     mock_catalog.assert_not_called()
     mock_write_iceberg.assert_called_with(
-        ANY, "tvscreener.bronze", mode="append", partition_by=["ingest_date"]
+        ANY,
+        "tvscreener.bronze",
+        mode="append",
+        partition_by=["asset_type", "ingest_date", "timeframe_set_id"],
+        overwrite_filter=None,
     )
 
 
@@ -50,7 +54,8 @@ def test_ingest_replay_success(mock_catalog, mock_write_iceberg):
     screener = MockScreener(symbols=["TEST"], config=config)
 
     mock_table = MagicMock()
-    mock_table.to_pandas.return_value = pd.DataFrame({"Name": ["REPLAYED"], "Price": [2.0]})
+    replayed = pd.DataFrame({"Name": ["REPLAYED"], "Price": [2.0]})
+    mock_table.scan.return_value.to_arrow.return_value.to_pandas.return_value = replayed
     mock_catalog.return_value.load_table.return_value = mock_table
 
     df = screener._ingest()
@@ -80,7 +85,11 @@ def test_standardize_no_replay(mock_catalog, mock_write_iceberg):
 
     assert not df.empty
     mock_write_iceberg.assert_called_with(
-        ANY, "tvscreener.silver", mode="overwrite", partition_by=["asset_type"]
+        ANY,
+        "tvscreener.silver",
+        mode="overwrite",
+        partition_by=["asset_type", "timeframe_set_id"],
+        overwrite_filter=ANY,
     )
 
 
@@ -96,6 +105,7 @@ def test_score_no_replay(mock_catalog, mock_write_iceberg):
         df = screener._score(input_df)
         assert not df.empty
         mock_rank.assert_called_once()
-        mock_write_iceberg.assert_called_with(
-            ANY, "tvscreener.gold", mode="overwrite", partition_by=["signal_date"]
-        )
+
+        calls = [(c.args, c.kwargs) for c in mock_write_iceberg.call_args_list]
+        assert any(args[1] == "tvscreener.gold" for args, _ in calls)
+        assert any(args[1] == "tvscreener.signals_latest" for args, _ in calls)
