@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -47,19 +48,23 @@ class EdgeQueryClient:
             )
 
         if db_path is None:
-            # Default to a persistent cache in exports/
-            db_path = Path("exports/.tvscreener_cache.duckdb")
+            # Default to a persistent cache outside the repo working dir
+            db_path = Path.home() / ".tvscreener" / "cache" / "edge.duckdb"
 
         db_path = Path(db_path)
         if str(db_path) != ":memory:":
             db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create connection. Persistent by default.
-        # Harden DuckDB: read_only=True for existing DBs, lock_configuration=True, enable_external_access=False
+        # Harden DuckDB:
+        # - For on-disk DBs, open read-write only if the file doesn't exist yet (first run),
+        #   then read-only on subsequent runs.
+        # - Always lock configuration and disable external access.
         is_memory = str(db_path) == ":memory:"
+        read_only = False if is_memory else db_path.exists()
         self.con = duckdb.connect(
             str(db_path),
-            read_only=not is_memory,
+            read_only=read_only,
             config={"lock_configuration": "True", "enable_external_access": "False"},
         )
 
@@ -75,29 +80,29 @@ class EdgeQueryClient:
         """Register standard Technical Analysis macros using DuckDB window functions."""
         # Simple Moving Average
         self.con.execute(
-            "CREATE OR REPLACE MACRO sma(v, p) AS avg(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
+            "CREATE OR REPLACE TEMP MACRO sma(v, p) AS avg(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
         )
         # Moving Minimum
         self.con.execute(
-            "CREATE OR REPLACE MACRO min_p(v, p) AS min(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
+            "CREATE OR REPLACE TEMP MACRO min_p(v, p) AS min(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
         )
         # Moving Maximum
         self.con.execute(
-            "CREATE OR REPLACE MACRO max_p(v, p) AS max(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
+            "CREATE OR REPLACE TEMP MACRO max_p(v, p) AS max(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
         )
         # Moving Sum
         self.con.execute(
-            "CREATE OR REPLACE MACRO sum_p(v, p) AS sum(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
+            "CREATE OR REPLACE TEMP MACRO sum_p(v, p) AS sum(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)"
         )
         # Change (Current - Previous)
         self.con.execute(
-            "CREATE OR REPLACE MACRO change(v) AS v - lag(v) OVER (ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING)"
+            "CREATE OR REPLACE TEMP MACRO change(v) AS v - lag(v) OVER (ROWS BETWEEN 1 PRECEDING AND 1 PRECEDING)"
         )
 
         # Advanced TA Macros
         # Z-Score (This one works because it doesn't nest window functions)
         self.con.execute(
-            "CREATE OR REPLACE MACRO z_score(v, p) AS (v - avg(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)) / "
+            "CREATE OR REPLACE TEMP MACRO z_score(v, p) AS (v - avg(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW)) / "
             "NULLIF(stddev(v) OVER (ROWS BETWEEN p - 1 PRECEDING AND CURRENT ROW), 0)"
         )
 
@@ -160,10 +165,12 @@ class EdgeQueryClient:
             else:
                 logger.warning("Params must be a dict for MiniJinja rendering. Skipping.")
 
-        # 2. Get relation and create view
+        # 2. Get relation and register it as a temp view
         try:
             relation = self.get_relation(data, snapshot_id=snapshot_id)
-            relation.create_view(table_alias)
+            # Use DuckDB's in-process register/unregister instead of CREATE VIEW to keep
+            # compatibility with read-only database connections.
+            self.con.register(table_alias, relation)
         except Exception as e:
             logger.error("Failed to register data for query: %s", e)
             raise RuntimeError(f"Failed to register data for query: {e}") from e
@@ -181,9 +188,8 @@ class EdgeQueryClient:
             logger.error("Edge SQL query failed: %s", e)
             raise RuntimeError(f"Edge SQL query failed: {e}") from None
         finally:
-            # Safely drop the view using an identifier-quoted name
-            safe_alias = '"' + table_alias.replace('"', '""') + '"'
-            self.con.execute(f"DROP VIEW IF EXISTS {safe_alias}")
+            with contextlib.suppress(Exception):
+                self.con.unregister(table_alias)
 
     def _filter_sql_params(
         self, query: str, params: dict[str, Any] | list[Any] | None
@@ -316,7 +322,8 @@ class AnalyticsPipeline:
         # 1. Register current state as a unique view to avoid collisions in the DAG
         view_name = f"view_{uuid.uuid4().hex[:8]}_{self._step_count}"
         self._step_count += 1
-        self.current_relation.create_view(view_name)
+        # Use connection-level registration to avoid CREATE VIEW on read-only DBs.
+        self.client.con.register(view_name, self.current_relation)
 
         # 2. Render MiniJinja with 'df' bound to the current view_name
         template_context = {**params, "df": view_name}
