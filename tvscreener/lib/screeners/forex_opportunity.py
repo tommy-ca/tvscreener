@@ -4,7 +4,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-import narwhals as nw
 import pandas as pd
 
 from tvscreener.beauty import VisualStyler
@@ -195,20 +194,24 @@ class ForexOpportunityScreener(BaseOpportunityScreener[ForexScreener]):
             return df[mask]
         return df
 
-    @nw.narwhalify
     def _prepare_enriched_data(self, df: Any) -> Any:
         """Prepare DataFrame with canonical names and human-readable factor columns."""
         if len(df) == 0:
             return df
 
+        df = super()._prepare_enriched_data(df)
+
         # Add visual strength signs as a column for downstream use
-        if "ENSEMBLE_SCORE" in df.columns:
-            df = df.with_columns(
-                STRENGTH_SIGN=VisualStyler.get_strength_expression("ENSEMBLE_SCORE"),
-                DIRECTION_SIGN=VisualStyler.get_direction_expression("ENSEMBLE_SCORE"),
-            )
-        else:
-            df = df.with_columns(STRENGTH_SIGN=nw.lit(""), DIRECTION_SIGN=nw.lit(""))
+        if isinstance(df, pd.DataFrame):
+            if "ENSEMBLE_SCORE" in df.columns:
+                scores = pd.to_numeric(df["ENSEMBLE_SCORE"], errors="coerce").fillna(0.0)
+                df["STRENGTH_SIGN"] = scores.map(
+                    lambda v: VisualStyler.opportunity_strength_sign(float(v), is_roc=False)
+                )
+                df["DIRECTION_SIGN"] = scores.map(lambda v: VisualStyler.direction_emoji(float(v)))
+            else:
+                df["STRENGTH_SIGN"] = ""
+                df["DIRECTION_SIGN"] = ""
 
         return df
 
