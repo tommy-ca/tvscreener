@@ -1,7 +1,9 @@
 import json
+import random
 import time
 from collections.abc import Callable, Iterator
 from enum import Enum
+from typing import Any
 
 import pandas as pd
 import requests
@@ -65,18 +67,18 @@ class Screener:
     """Base screener class for querying TradingView screeners."""
 
     # Subclasses should override this to enable field type validation
-    _field_type: type = None
+    _field_type: type[Enum] | None = None
 
     def __init__(self):
-        self.sort = None
-        self.url = None
-        self.filters = []
-        self.options = {}
-        self.symbols = None
-        self.misc = {}
-        self.specific_fields = None
+        self.sort: dict[str, Any] | None = None
+        self.url: str = ""
+        self.filters: list[Filter] = []
+        self.options: dict[str, Any] = {}
+        self.symbols: list[str] | None = None
+        self.misc: dict[str, Any] = {}
+        self.specific_fields: list[Field] | None = None
 
-        self.range = None
+        self.range: list[int] | None = None
         self.set_range()
         self.add_option("lang", "en")
 
@@ -90,7 +92,7 @@ class Screener:
     def search(self, value: str):
         self.add_filter(ExtraFilter.SEARCH, FilterOperator.MATCH, value)
 
-    def _get_filter(self, filter_type: Field | ExtraFilter) -> Filter:
+    def _get_filter(self, filter_type: Field | ExtraFilter) -> Filter | None:
         for filter_ in self.filters:
             if filter_.field == filter_type:
                 return filter_
@@ -155,7 +157,9 @@ class Screener:
         else:
             self._add_new_filter(filter_)
 
-    def where(self, condition_or_field, operation: FilterOperator = None, value=None) -> "Screener":
+    def where(
+        self, condition_or_field, operation: FilterOperator | None = None, value=None
+    ) -> "Screener":
         """
         Add a filter condition (fluent method).
 
@@ -190,6 +194,10 @@ class Screener:
             )
         else:
             # Legacy syntax: ss.where(field, operator, value)
+            if operation is None:
+                raise ValueError("Legacy where() requires an operation")
+            if value is None:
+                raise ValueError("Legacy where() requires a value")
             self.add_filter(condition_or_field, operation, value)
         return self
 
@@ -410,87 +418,120 @@ class Screener:
             print("Payload:")
             print(payload_json)
 
-        try:
-            # Fixed: Add timeout to prevent hanging indefinitely
-            response = requests.post(
-                self.url, data=payload_json, timeout=REQUEST_TIMEOUT, headers=REQUEST_HEADERS
-            )
+        retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
+        max_retries = 3
+        base_backoff = 0.5
 
-            if is_status_code_ok(response):
-                try:
-                    resp_json = response.json()
-                    self._validate_api_response(resp_json, payload_json, response.status_code)
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.post(
+                    self.url, data=payload_json, timeout=REQUEST_TIMEOUT, headers=REQUEST_HEADERS
+                )
 
-                    # Extract data from validated response
-                    data = []
-                    expected_len = len(columns)
-                    for i, item in enumerate(resp_json["data"]):
-                        symbol = item["s"]
-                        values = item["d"]
+                if is_status_code_ok(response):
+                    try:
+                        resp_json = response.json()
+                        self._validate_api_response(resp_json, payload_json, response.status_code)
 
-                        # Ensure the number of columns matches the number of data points
-                        if len(values) != expected_len:
-                            raise MalformedRequestException(
-                                response.status_code,
-                                f"Data length mismatch at index {i}: expected {expected_len} values, got {len(values)}",
-                                self.url,
-                                payload_json,
-                            )
-                        data.append([symbol] + values)
+                        # Extract data from validated response
+                        data = []
+                        expected_len = len(columns)
+                        for i, item in enumerate(resp_json["data"]):
+                            symbol = item["s"]
+                            values = item["d"]
 
-                except (ValueError, KeyError, TypeError) as e:
-                    # Catch-all for any other parsing errors that escaped validation
-                    raise MalformedRequestException(
-                        response.status_code,
-                        f"Failed to parse API response: {str(e)}",
-                        self.url,
-                        payload_json,
-                    ) from e
+                            if len(values) != expected_len:
+                                raise MalformedRequestException(
+                                    response.status_code,
+                                    f"Data length mismatch at index {i}: expected {expected_len} values, got {len(values)}",
+                                    self.url,
+                                    payload_json,
+                                )
+                            data.append([symbol] + values)
 
-                df = ScreenerDataFrame(data, columns)
-                # Store sanitized API context for audit trails/exports
-                # Filter headers to prevent sensitive data leakage (Issue 059)
-                safe_headers = {
-                    "Content-Type",
-                    "Date",
-                    "Server",
-                    "User-Agent",
-                    "X-Request-Id",
-                }
-                sanitized_headers = {k: v for k, v in response.headers.items() if k in safe_headers}
-                df.attrs["api_context"] = {
-                    "url": self.url,
-                    "status_code": response.status_code,
-                    "headers": sanitized_headers,
-                    "method": "POST",
-                }
-                return df
-            else:
+                    except (ValueError, KeyError, TypeError) as e:
+                        raise MalformedRequestException(
+                            response.status_code,
+                            f"Failed to parse API response: {str(e)}",
+                            self.url,
+                            payload_json,
+                        ) from e
+
+                    df = ScreenerDataFrame(data, columns)
+                    safe_headers = {
+                        "Content-Type",
+                        "Date",
+                        "Server",
+                        "User-Agent",
+                        "X-Request-Id",
+                        "Retry-After",
+                    }
+                    sanitized_headers = {
+                        k: v for k, v in response.headers.items() if k in safe_headers
+                    }
+                    df.attrs["api_context"] = {
+                        "url": self.url,
+                        "status_code": response.status_code,
+                        "headers": sanitized_headers,
+                        "method": "POST",
+                    }
+                    return df
+
+                # Non-OK response
+                if response.status_code in retryable_statuses and attempt < max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    if retry_after and str(retry_after).strip().isdigit():
+                        sleep_s = min(float(retry_after), 30.0)
+                    else:
+                        # Exponential backoff with jitter
+                        sleep_s = min(base_backoff * (2**attempt), 10.0)
+                        sleep_s = sleep_s * (0.8 + 0.4 * random.random())
+                    time.sleep(sleep_s)
+                    continue
+
                 raise MalformedRequestException(
                     response.status_code, response.text, self.url, payload_json
                 )
 
-        except requests.Timeout as e:
-            raise MalformedRequestException(
-                408,  # Request Timeout
-                f"Request timed out after {REQUEST_TIMEOUT} seconds",
-                self.url,
-                payload_json,
-            ) from e
-        except requests.RequestException as e:
-            raise MalformedRequestException(
-                0,  # Unknown status code
-                str(e),
-                self.url,
-                payload_json,
-            ) from e
+            except requests.Timeout as e:
+                last_exc = e
+                if attempt < max_retries:
+                    sleep_s = min(base_backoff * (2**attempt), 10.0)
+                    sleep_s = sleep_s * (0.8 + 0.4 * random.random())
+                    time.sleep(sleep_s)
+                    continue
+                raise MalformedRequestException(
+                    408,
+                    f"Request timed out after {REQUEST_TIMEOUT} seconds",
+                    self.url,
+                    payload_json,
+                ) from e
+            except requests.RequestException as e:
+                last_exc = e
+                if attempt < max_retries:
+                    sleep_s = min(base_backoff * (2**attempt), 10.0)
+                    sleep_s = sleep_s * (0.8 + 0.4 * random.random())
+                    time.sleep(sleep_s)
+                    continue
+                raise MalformedRequestException(
+                    0,
+                    str(e),
+                    self.url,
+                    payload_json,
+                ) from e
+
+        # Should never reach here
+        if last_exc:
+            raise MalformedRequestException(0, str(last_exc), self.url, payload_json) from last_exc
+        raise MalformedRequestException(0, "Unknown error", self.url, payload_json)
 
     def stream(
         self,
         interval: float = 5.0,
         max_iterations: int | None = None,
         on_update: Callable[["ScreenerDataFrame"], None] | None = None,
-    ) -> Iterator["ScreenerDataFrame"]:
+    ) -> Iterator["ScreenerDataFrame" | None]:
         """
         Stream screener data at regular intervals.
 
