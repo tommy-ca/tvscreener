@@ -11,6 +11,11 @@ date: 2026-03-03
 This runbook defines the **canonical** audit workflow for `tvscreener`:
 
 - The Iceberg medallion tables are the source of truth: `tvscreener.bronze`, `tvscreener.silver`, `tvscreener.gold`.
+- Planned (dataset-aware, Iceberg-native): stage namespaces + dataset tables:
+  - `tvscreener_bronze.screener_snapshot`
+  - `tvscreener_silver.screener_snapshot`
+  - `tvscreener_gold.screener_snapshot`
+  (with current table IDs treated as compatibility aliases during migration).
 - Audits MUST be reproducible from Iceberg snapshots and recorded with the SQL used.
 - On-disk snapshots are **optional** operator artifacts and MUST NOT be required for correctness.
 
@@ -49,6 +54,8 @@ from tvscreener.lib.lakehouse import get_catalog
 
 catalog = get_catalog()
 table = catalog.load_table("tvscreener.gold")
+# Planned dataset-aware naming:
+# table = catalog.load_table("tvscreener_gold.screener_snapshot")
 rows = table.scan(limit=1).to_arrow().to_pandas()
 print(rows)
 ```

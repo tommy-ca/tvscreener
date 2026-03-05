@@ -38,6 +38,38 @@ graph LR
 - **Storage**: Finalized results ready for consumption.
 - **Purpose**: Actionable signals. This is what the user sees in the CLI and MCP tools.
 
+## Data pipelines vs analytics pipelines
+
+This repo treats **multi-timeframe screening** as two distinct pipeline concerns:
+
+- **Data pipelines (canonical)**:
+  - Produce **Iceberg medallion tables** (current: `tvscreener.bronze`, `tvscreener.silver`, `tvscreener.gold`)
+  - Planned (dataset-aware, Iceberg-native): stage namespaces + dataset tables:
+    - `tvscreener_bronze.screener_snapshot`
+    - `tvscreener_silver.screener_snapshot`
+    - `tvscreener_gold.screener_snapshot`
+  - Carry a run envelope (`run_id`, `fetched_at_utc`, `timeframes`, `timeframe_set_id`, `asset_type`, `source`, `scanner_family`)
+  - Focus on correctness, replayability, and stable schemas
+
+- **Analytics pipelines (products)**:
+  - Consume Iceberg tables (optionally at a specific snapshot) and emit analytics products such as:
+    - current: `tvscreener.signals_latest` (latest-per-entity, matrix-ready)
+    - planned: `tvscreener_product.signals_latest` (product namespace)
+    - future `signals_batch` (batch rollups per run/date)
+  - Are allowed to choose different query backends, as long as they honor the same analytics contract
+    (DuckDB today; other backends later)
+
+This separation lets us evolve analytics patterns and query engines without breaking canonical data storage.
+
+## Multi-timeframe model
+
+- **timeframes**: the configured timeframe list for a scan (e.g. `15,60,240`), stored as a canonical string.
+- **timeframe_set_id**: a stable ID derived from `timeframes` and used to keep different timeframe sets from colliding.
+
+Today the lakehouse stores **wide-form** rows (timeframe-as-columns) for matrix UX. The long-term direction
+is to support **long-form** medallion tables with a `timeframe` column, and then materialize wide “matrix”
+outputs as analytics products.
+
 ## Technology Stack
 
 - **Table Format**: [Apache Iceberg](https://iceberg.apache.org/) (via `pyiceberg`) for transactional consistency and time-travel.
@@ -80,7 +112,9 @@ from tvscreener.lib.query import EdgeQueryClient
 
 with EdgeQueryClient() as client:
     # Query a specific historical snapshot
-    df = client.query_sql("forex.opportunities", "SELECT * FROM df", snapshot_id=123456789)
+    df = client.query_sql("tvscreener.gold", "SELECT * FROM df", snapshot_id=123456789)
+    # Planned dataset-aware naming:
+    # df = client.query_sql("tvscreener_gold.screener_snapshot", "SELECT * FROM df", snapshot_id=123456789)
 ```
 
 ## Maintenance
@@ -88,5 +122,5 @@ with EdgeQueryClient() as client:
 Lakehouse maintenance can be performed via the CLI:
 
 ```bash
-tvscreener-scan maintenance --expire-snapshots --days 7 --table forex.opportunities
+uv run tvscreener-scan maintenance --expire-snapshots --days 7 --table tvscreener.gold --config tvscreener.yaml
 ```

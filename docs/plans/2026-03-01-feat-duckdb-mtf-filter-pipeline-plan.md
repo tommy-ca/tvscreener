@@ -4,6 +4,12 @@ type: feat
 date: 2026-03-01
 ---
 
+> Status note (as of 2026-03-04): DuckDB is now positioned primarily as an **edge analytics engine**
+> (`EdgeQueryClient`) querying **Iceberg identifiers** (materialized to Arrow) with hardened config.
+> This plan remains useful for the *MTF shorthand parser / composition model*, but “in-flight SQL
+> filtering during scans” should be treated as optional and must not be required for producing
+> canonical Iceberg medallion outputs.
+
 ## Enhancement Summary
 
 **Deepened on:** 2026-03-01
