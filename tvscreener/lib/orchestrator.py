@@ -58,6 +58,7 @@ class AssetSelection:
     """Routing and asset selection parameters."""
 
     scanner: str = "strategy"
+    pipeline: str = "both"  # data | analytics | both
     strategy: str = "all"
     asset_type: str = "forex"
     universe: str | None = None
@@ -395,6 +396,7 @@ class ScreenerController:
         request = ScanRequest(
             assets=AssetSelection(
                 scanner=args.scanner,
+                pipeline=getattr(args, "pipeline", "both"),
                 strategy=args.strategy,
                 asset_type=args.asset_type,
                 universe=args.universe,
@@ -455,18 +457,61 @@ class ScreenerController:
 
     def run_opportunity_scan(self, request: ScanRequest) -> int:
         """Run opportunity screener and handle output."""
-        results, screener = self.get_opportunity_results(request)
+        request = self.resolve_defaults(request)
+        pipeline = (request.assets.pipeline or "both").strip().lower()
+        if pipeline not in ("data", "analytics", "both"):
+            pipeline = "both"
+
+        # 1) Data pipeline (fetch + Iceberg)
+        if pipeline in ("data", "both"):
+            _results, _screener = self.get_opportunity_results(request)
+            if pipeline == "data":
+                # Data pipeline run is complete; analytics pipeline is responsible for matrix rendering.
+                if self.console:
+                    self.console.print("[green]Data pipeline complete (Iceberg updated).[/green]")
+                return len(_results)
+
+        # 2) Analytics pipeline (Iceberg + render)
+        pairs = self.get_pairs(
+            request.assets.asset_type, request.assets.universe, request.assets.pairs
+        )
+        timeframes = (
+            request.assets.timeframes.split(",")
+            if request.assets.timeframes
+            else ["15", "60", "240"]
+        )
+
+        # Build a screener instance only for enrichment + rendering (no fetch).
+        config = self._build_opportunity_config(request)
+        screener = AssetScreenerFactory.create_screener(
+            asset_type=request.assets.asset_type,
+            symbols=pairs,
+            timeframes=timeframes,
+            config=config,
+        )
+
+        results = self._load_latest_signals_latest(
+            asset_type=request.assets.asset_type,
+            pairs=pairs,
+            timeframes=timeframes,
+        )
+        results = self._apply_edge_filters(results, request)
+
+        if request.output.confluence_grade or request.output.min_opportunity_confluence:
+            results = self._filter_by_confluence(
+                results,
+                grade=request.output.confluence_grade,
+                min_confluence=request.output.min_opportunity_confluence,
+            )
 
         metadata = self._build_opportunity_metadata(request)
-
         if request.output.output:
-            self._export_results(screener, request.output.output, metadata)
+            self._export_dataframe(results, request.output.output, metadata, label="opportunities")
 
         if self.console:
             if results.empty:
                 self.console.print("[yellow]No results found matching criteria.[/yellow]")
             else:
-                # Restore specialized view parity: pass SQL/Filtered results back to renderer
                 screener.print_summary(
                     results_df=results,
                     detailed=request.output.detailed,
@@ -541,12 +586,46 @@ class ScreenerController:
 
     def run_strategy_scan(self, request: ScanRequest) -> int:
         """Run strategy scanner and handle output."""
-        results, scanner = self.get_strategy_results(request)
+        request = self.resolve_defaults(request)
+        pipeline = (request.assets.pipeline or "both").strip().lower()
+        if pipeline not in ("data", "analytics", "both"):
+            pipeline = "both"
+
+        # Strategy depends on opportunity-style Gold rows; in split mode:
+        # - data: refresh Iceberg (opportunity medallion) only
+        # - analytics: compute strategy signals from Iceberg-backed data only
+        # - both: refresh then compute from Iceberg
+        if pipeline in ("data", "both"):
+            results, _screener = self.get_opportunity_results(request)
+            if pipeline == "data":
+                if self.console:
+                    self.console.print("[green]Data pipeline complete (Iceberg updated).[/green]")
+                # Return the count of refreshed Gold rows for correct CLI exit semantics.
+                return len(results)
+
+        pairs = self.get_pairs(
+            request.assets.asset_type, request.assets.universe, request.assets.pairs
+        )
+        timeframes = (
+            request.assets.timeframes.split(",")
+            if request.assets.timeframes
+            else ["15", "60", "240"]
+        )
+
+        raw_data = self._load_latest_signals_latest(
+            asset_type=request.assets.asset_type,
+            pairs=pairs,
+            timeframes=timeframes,
+        )
+
+        config = self._build_strategy_config(request)
+        scanner = ForexStrategyScanner(pairs=pairs, timeframes=timeframes, config=config)
+        results = self._fetch_data_with_progress(lambda: scanner.scan_from_data(raw_data))
+        results = self._apply_edge_filters(results, request)
 
         metadata = self._build_strategy_metadata(request)
-
         if request.output.output:
-            self._export_results(scanner, request.output.output, metadata)
+            self._export_dataframe(results, request.output.output, metadata, label="signals")
 
         if self.console:
             if results.empty:
@@ -778,6 +857,130 @@ class ScreenerController:
 
         if self.console:
             self.console.print(f"[green]Saved to {output_path}[/green]")
+
+    def _export_dataframe(
+        self, df: Any, output: str, metadata: dict[str, Any], *, label: str
+    ) -> None:
+        """Export a provided dataframe without triggering a fetch."""
+        import logging
+
+        try:
+            output_path = self._validate_path(output)
+            self._ensure_parent_exists(output_path)
+        except ValueError as e:
+            if self.console:
+                self.console.print(f"[red]Error: {e}[/red]")
+            return
+
+        output_lower = str(output_path).lower()
+        from tvscreener.lib.screeners.export_helpers import get_export_function
+
+        logger = logging.getLogger(__name__)
+
+        def df_getter() -> Any:
+            return df
+
+        try:
+            if output_lower.endswith(".csv"):
+                get_export_function("csv")(
+                    df_getter,
+                    str(output_path),
+                    include_index=False,
+                    logger=logger,
+                    label=label,
+                    metadata=metadata,
+                )
+            elif output_lower.endswith(".json"):
+                get_export_function("json")(
+                    df_getter,
+                    str(output_path),
+                    orient="records",
+                    logger=logger,
+                    label=label,
+                    metadata=metadata,
+                )
+            elif output_lower.endswith(".parquet"):
+                get_export_function("parquet")(
+                    df_getter,
+                    str(output_path),
+                    include_index=False,
+                    logger=logger,
+                    label=label,
+                    metadata=metadata,
+                )
+            elif output_lower.endswith(".xml"):
+                get_export_function("xml")(
+                    df_getter,
+                    str(output_path),
+                    include_index=False,
+                    logger=logger,
+                    label=label,
+                    metadata=metadata,
+                )
+            else:
+                if self.console:
+                    self.console.print(f"[yellow]Unknown output format: {output}[/yellow]")
+                return
+        except Exception as e:
+            if self.console:
+                self.console.print(f"[red]Export failed: {e}[/red]")
+            logger.error("Export failed: %s", e)
+            return
+
+        if self.console:
+            self.console.print(f"[green]Saved to {output_path}[/green]")
+
+    def _apply_edge_filters(self, df: pd.DataFrame, request: ScanRequest) -> pd.DataFrame:
+        """Apply optional Edge SQL / filter expressions to a dataframe."""
+        if df.empty:
+            return df
+        if not (request.output.sql or request.output.filters):
+            return df
+
+        from tvscreener.lib.query import EdgeQueryClient
+
+        try:
+            with EdgeQueryClient() as edge_client:
+                if request.output.sql:
+                    df = edge_client.query_sql(
+                        df, request.output.sql, params=request.output.sql_params
+                    )
+                if request.output.filters:
+                    for f in request.output.filters:
+                        df = edge_client.query_sql(df, f"SELECT * FROM df WHERE {f}")
+        except Exception as e:
+            logger.error("Failed to apply edge filters: %s", e)
+        return df
+
+    def _load_latest_signals_latest(
+        self, *, asset_type: str, pairs: list[str], timeframes: list[str]
+    ) -> pd.DataFrame:
+        """Load latest-per-entity Gold rows from Iceberg for analytics rendering."""
+        from tvscreener.lib.query import EdgeQueryClient
+        from tvscreener.util import canonicalize_asset_type, timeframe_set_id
+
+        at = canonicalize_asset_type(asset_type)
+        tfsid = timeframe_set_id(timeframes)
+
+        def _in_list(vals: list[str]) -> str:
+            safe = [v.replace("'", "''") for v in vals]
+            inner = ", ".join(f"'{v}'" for v in safe)
+            return f"({inner})" if inner else "('')"
+
+        pairs_in = _in_list(pairs)
+
+        base_where = "asset_type = $asset_type AND timeframe_set_id = $tfsid"
+        params = {"asset_type": at, "tfsid": tfsid}
+
+        order_by = "ORDER BY ENSEMBLE_SCORE DESC, GRID_ALIGNED DESC, fetched_at_utc DESC"
+        sql_pair = f"SELECT * FROM df WHERE {base_where} AND PAIR IN {pairs_in} {order_by}"
+        sql_symbol = f"SELECT * FROM df WHERE {base_where} AND symbol IN {pairs_in} {order_by}"
+
+        with EdgeQueryClient() as edge_client:
+            try:
+                return edge_client.query_sql("tvscreener.signals_latest", sql_pair, params=params)
+            except Exception:
+                return edge_client.query_sql("tvscreener.signals_latest", sql_symbol, params=params)
 
     def _build_opportunity_config(self, request: ScanRequest) -> ForexScreenerConfig:
         score_filters = []

@@ -69,6 +69,12 @@ def main() -> int:
             default="strategy",
         )
         parser.add_argument(
+            "--pipeline",
+            choices=["both", "data", "analytics"],
+            default="both",
+            help="Execution mode: data (fetch+Iceberg), analytics (Iceberg+render), both (data then analytics)",
+        )
+        parser.add_argument(
             "--asset-type",
             choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
             default="forex",

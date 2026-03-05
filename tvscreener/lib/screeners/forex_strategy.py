@@ -124,14 +124,20 @@ class ForexStrategyScanner(ExportMixin):
         return sorted_tfs[0], sorted_tfs[0], sorted_tfs[0]
 
     def scan(self, use_cache: bool = False) -> pd.DataFrame:
-        """Scan selected strategies and return combined results."""
+        """Scan selected strategies using a fresh data pipeline run."""
         if use_cache and self._cached_results is not None:
             logger.info("Returning cached scan results")
             return self._cached_results
 
         raw_data = self._screener.get_opportunities()
+        return self.scan_from_data(raw_data, cache_result=True)
 
-        if raw_data.empty:
+    def scan_from_data(self, raw_data: pd.DataFrame, cache_result: bool = False) -> pd.DataFrame:
+        """Scan selected strategies from a provided (Iceberg-backed) dataframe.
+
+        This is the analytics-pipeline entrypoint: it does not fetch upstream data and does not write Iceberg tables.
+        """
+        if raw_data is None or raw_data.empty:
             return pd.DataFrame()
 
         strategies_to_run = self.config.include_strategies
@@ -220,6 +226,8 @@ class ForexStrategyScanner(ExportMixin):
                     break
 
         self._cached_results = combined
+        if not cache_result:
+            self._cached_results = None
 
         # Finish metadata
         self._screener.metadata.set_config(
