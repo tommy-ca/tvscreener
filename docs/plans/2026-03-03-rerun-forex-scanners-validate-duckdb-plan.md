@@ -13,10 +13,23 @@ Rerun forex opportunity/strategy scanners for majors and minors using the matrix
 ## Commands
 
 ```bash
-uv run tvscreener-scan --scanner opportunity --universe majors --matrix
-uv run tvscreener-scan --scanner opportunity --universe minors --matrix
-uv run tvscreener-scan --scanner strategy --universe majors --matrix
-uv run tvscreener-scan --scanner strategy --universe minors --matrix
+# (Recommended) Split mode: run data pipelines, then rerun analytics from Iceberg.
+
+# 1) Data pipelines (fetch + persist to Iceberg)
+uv run tvscreener-scan --scanner opportunity --pipeline data --universe majors
+uv run tvscreener-scan --scanner opportunity --pipeline data --universe minors
+
+# 2) Analytics pipelines (query Iceberg + render the same matrix view)
+uv run tvscreener-scan --scanner opportunity --pipeline analytics --universe majors --matrix --limit 100
+uv run tvscreener-scan --scanner opportunity --pipeline analytics --universe minors --matrix --limit 100
+
+# Strategy is an analytics pipeline over Iceberg-backed Gold rows
+uv run tvscreener-scan --scanner strategy --pipeline analytics --universe majors --matrix --limit 100
+uv run tvscreener-scan --scanner strategy --pipeline analytics --universe minors --matrix --limit 100
+
+# (Optional) One-shot mode: data then analytics in one command
+uv run tvscreener-scan --scanner opportunity --pipeline both --universe majors --matrix --limit 100
+uv run tvscreener-scan --scanner opportunity --pipeline both --universe minors --matrix --limit 100
 ```
 
 ## Validate Iceberg via EdgeQueryClient
