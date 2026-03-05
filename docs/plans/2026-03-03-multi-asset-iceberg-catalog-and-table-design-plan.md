@@ -14,6 +14,19 @@ status: draft
 - Make every run traceable via `run_id` + `fetched_at_utc` and provable via Iceberg `snapshot_id`.
 - Keep TradingView screener snapshots as one dataset type, while making room for additional market data types (klines, ticks, orderbooks) with clear table boundaries.
 
+## Multi-timeframe-first principle (scope driver)
+
+Multi-timeframe is not an “extra feature”; it is the core scaling axis that determines table shape,
+analytics patterns, and query backend choices.
+
+Principles:
+
+- Treat `timeframe_set_id` as a **first-class key** for all wide-form outputs (prevents collisions).
+- Plan for **long-form** medallion tables where `timeframe` is an explicit column, enabling:
+  - variable timeframe sets without schema churn
+  - point-in-time (PIT) analytics and per-timeframe audits
+- Treat “matrix view” as an **analytics product** (a rollup across timeframes), not a storage grain.
+
 ## Current implementation status (as of branch HEAD)
 
 This section captures what is already implemented in code so readers can distinguish “now” vs “proposed”.
@@ -77,6 +90,49 @@ export TVSCREENER_LAKEHOUSE_CATALOG_REMOTE_WAREHOUSE="s3://bucket/warehouse"
 - **Scanner family correctness**: `scanner_family` needs to be consistently set (opportunity vs strategy vs other scanners).
 - **Health validation drift**: `tvscreener/lib/lakehouse/health.py` exists but does not reflect the canonical column naming used in the lakehouse; the current pipeline primarily gates via in-code checks. A stricter multi-asset validation layer should be redesigned to match real schemas.
 - **Dataset taxonomy**: current medallion tables are effectively “TradingView screener snapshots”. Additional dataset types (klines/ticks/orderbooks) should not be forced into the same grain.
+
+## Bottlenecks + suggested improvements (brainstorm summary)
+
+This section is a quick “what will hurt first” review to guide the next design iteration toward
+multi-asset + multi-source + multi-screener scaling.
+
+### 1) Upstream throughput + partial runs
+- **Risk**: TradingView (and future sources) will rate-limit or partially fail.
+- **Mitigation**: keep Bronze append-forensics, but **gate Silver/Gold publish** on coverage metrics,
+  and record per-source coverage stats for each run.
+
+### 2) Iceberg write amplification (small files)
+- **Risk**: frequent overwrites create many small files + metadata overhead.
+- **Mitigation**: periodic compaction + snapshot expiry; batch writes per stage/unit; avoid schema
+  union on every write once schemas stabilize.
+
+### 3) Query scalability (Arrow materialization)
+- **Risk**: Iceberg → Arrow → DuckDB is memory-bound for large history.
+- **Mitigation**: prefer small “product tables” for UX (`signals_latest`, future `signals_batch`) and
+  enforce query patterns that prune partitions early (filter on partition columns, limit).
+
+### 4) Wide schemas vs variable timeframe sets
+- **Risk**: timeframe-as-columns scales poorly and creates schema churn.
+- **Mitigation**: long-form migration path (timeframe as a column) with optional materialized wide
+  outputs for matrix UX only.
+
+For the more detailed roadmap + requirements, see OpenSpec:
+`docs/openspec/changes/add-multi-asset-multi-source-screener-framework/`.
+
+## Contract: separate data pipelines from analytics pipelines
+
+To enable flexible query backends and analytics patterns, define explicit contracts:
+
+### Data pipelines (canonical)
+- Write canonical data/features to Iceberg medallion tables.
+- Never depend on a specific query engine.
+- Output schema should be stable and replayable at the Iceberg snapshot level.
+
+### Analytics pipelines (products)
+- Consume Iceberg identifiers (optionally at a snapshot) and produce:
+  - latest-per-entity products (`signals_latest`)
+  - batch rollups (`signals_batch`) and strategy-specific outputs
+- May use different query backends behind a common contract (DuckDB today; others later).
 
 ## Proposed Architecture
 

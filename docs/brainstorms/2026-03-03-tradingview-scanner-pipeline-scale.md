@@ -26,6 +26,31 @@ This brainstorm focuses on correctness + operability first (no silent partial ru
 - Multi-asset correctness: keys and overwrite scope work for non-forex assets.
 - Scalable querying: common audits and dashboards do not require loading entire Iceberg tables into memory.
 
+## Bottlenecks (observed + expected)
+
+### 1) TradingView API throughput + partial runs
+- **Bottleneck**: upstream rate limits and transient failures cause partial symbol coverage.
+- **Current mitigation**: retry/backoff in the TradingView client + ingest coverage gating before publishing Silver/Gold.
+- **Next**: per-source concurrency controls and durable “run unit” retry semantics (so we can re-run only failed subsets).
+
+### 2) Iceberg write amplification (small files)
+- **Bottleneck**: frequent overwrites can produce many small files and metadata churn.
+- **Next**:
+  - explicit compaction workflows (maintenance hook + scheduled compaction)
+  - avoid schema union on every write when schema is stable
+  - batch writes per stage (single Arrow table per scan unit)
+
+### 3) EdgeQueryClient scaling (Arrow materialization)
+- **Bottleneck**: querying large historical tables requires scanning to Arrow first.
+- **Next**:
+  - “product tables” (`signals_latest`, future `signals_batch`) for common queries
+  - default audit queries always filter on partition columns and limit early
+  - for very large history: time-windowed scans and explicit snapshot selection
+
+### 4) Timeframes as columns (wide schema)
+- **Bottleneck**: adding timeframes expands schema and complicates variable timeframe sets.
+- **Next**: phase toward long-form medallion (timeframe as a column), with materialized wide views for UX only.
+
 ## Key Ideas
 
 ### 1) Canonical identity columns (non-negotiable)
@@ -129,3 +154,8 @@ Cons: more moving parts (scheduler/queue) and more complexity.
 - Decide Approach A vs A->B migration path.
 - Implement multi-asset routing fixes (CLI asset_type normalization + universe resolution).
 - Add `run_id` + coverage gating and switch overwrite key from `PAIR` to `entity_id`.
+
+## Roadmap pointer (OpenSpec)
+
+For the multi-asset + multi-source + multi-screener expansion plan, see:
+`docs/openspec/changes/add-multi-asset-multi-source-screener-framework/`.
