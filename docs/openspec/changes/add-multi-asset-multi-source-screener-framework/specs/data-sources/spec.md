@@ -21,6 +21,19 @@ The system SHALL compute coverage/health metrics for each run and data source.
 - **THEN** Bronze MAY be written with coverage metadata
 - **AND** Silver/Gold publish is blocked for that run/unit
 
+### Requirement: Source-aware fetch throttling and bounded retries
+The system SHALL support per-source fetch throttling and bounded retry policy for ingestion steps.
+
+#### Scenario: Throttling is source-scoped
+- **WHEN** ingestion is configured with source-specific rate limit policy
+- **THEN** fetch batches are delayed according to that source policy (`min_interval_seconds`, `jitter_seconds`)
+- **AND** analytics-only steps are unaffected by fetch throttling
+
+#### Scenario: Retries are bounded for fetch steps
+- **WHEN** transient fetch failures occur
+- **THEN** ingestion retries failed batches with exponential backoff + jitter
+- **AND** retries stop at configured max attempts for that source
+
 ### Requirement: Provenance for reconciliation
 The system SHALL record enough provenance to reconcile and compare data across sources.
 
@@ -29,3 +42,10 @@ The system SHALL record enough provenance to reconcile and compare data across s
 - **THEN** the system records `source`
 - **AND** records a source-scoped identifier when available (e.g. `source_event_id`)
 
+### Requirement: Per-asset source coverage is measurable
+The system SHALL support readiness assessment of source coverage by asset type.
+
+#### Scenario: Source readiness matrix can be produced
+- **WHEN** maintainers evaluate expansion to commodities, crypto, or equities
+- **THEN** they can report source readiness per asset type (universe coverage, rate-limit profile,
+  retry behavior, and provenance completeness)

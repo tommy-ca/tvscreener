@@ -40,3 +40,25 @@ The system SHALL allow the same screening program to be evaluated using differen
 - **THEN** the analytics pipeline can execute those steps using the configured backend
 - **AND** the resulting dataset remains compatible with rendering and export contracts
 
+### Requirement: Multi-asset multi-timeframe scanner parity
+The system SHALL execute the same screener/scanner program across multiple asset types and
+timeframe sets using the same functional contract.
+
+#### Scenario: One program, many assets
+- **WHEN** a screener is configured for forex, stocks, and crypto
+- **THEN** orchestration applies the same composition steps (rank, filter, strategy confirm)
+- **AND** per-asset outputs are tagged with canonical run envelope columns
+
+#### Scenario: One program, many timeframe sets
+- **WHEN** a screener is configured for multiple timeframe sets
+- **THEN** outputs remain comparable through `timeframe_set_id`
+- **AND** matrix-ready analytics can be generated without screener-family-specific schema forks
+
+### Requirement: Cross-asset screener parity is reviewable
+The system SHALL support explicit parity review before enabling new asset families in production.
+
+#### Scenario: Parity review across commodities, crypto, and equities
+- **WHEN** maintainers assess readiness for additional asset types
+- **THEN** they can verify screener parity for composition steps, output contracts,
+  and matrix rendering compatibility
+- **AND** any asset-specific exception is documented as a controlled gap, not an implicit fork

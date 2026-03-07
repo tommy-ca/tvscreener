@@ -33,3 +33,17 @@ cross-timeframe aggregates.
 - **THEN** it aggregates across timeframes into stable columns used by the matrix renderer
 - **AND** the output is persisted as an analytics product table (e.g. `signals_batch`, `signals_latest`)
 
+### Requirement: Functional-first analytics delivery
+The system SHALL prioritize functional parity and correctness of analytics outputs over optimization
+work during initial multi-asset, multi-timeframe rollout.
+
+#### Scenario: FR acceptance before NFR tuning
+- **WHEN** planning analytics implementation work
+- **THEN** required product outputs and correctness checks are completed first
+- **AND** optimization tasks (performance/cost/observability refinements) are explicitly scheduled after FR completion
+
+#### Scenario: NFR rollout is guarded by FR regression checks
+- **WHEN** non-functional work is introduced after FR baseline completion
+- **THEN** core FR contract tests (multi-asset identity, deterministic fan-out, analytics product-table outputs)
+  remain passing
+- **AND** NFR changes do not alter functional output contracts for `signals_latest`/`signals_batch`

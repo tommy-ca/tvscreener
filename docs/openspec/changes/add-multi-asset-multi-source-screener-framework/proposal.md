@@ -29,6 +29,68 @@ outputs, plus stronger provenance and reproducibility guarantees.
   - multi-screener composition (rankers + filters + strategy-specific logic)
   - flexible analytics backends (DuckDB today; other query backends later) with the same analytics contract
 
+## Delivery Priority (FR before NFR)
+
+### Functional requirements (ship first)
+1. Multi-asset correctness in persisted contracts:
+   - canonical identity (`asset_type`, `entity_id`) and non-destructive overwrite scope
+2. Multi-timeframe correctness:
+   - stable `timeframe_set_id` + optional per-row `timeframe` for long-form evolution
+3. Source-agnostic ingestion:
+   - `DataSource` adapter contract and source provenance on Bronze
+4. Scanner/screener orchestration at scale:
+   - deterministic fan-out over `asset_type x universe_shard x timeframe_set x scanner_family`
+5. Analytics product consistency:
+   - stable outputs (`signals_latest`, `signals_batch`) across scanner families
+
+### Non-functional requirements (defer until FR baseline is stable)
+- Performance optimization (compaction cadence, Arrow materialization tuning)
+- Workflow/platform hardening (additional orchestration engines, advanced retry policy tuning)
+- Extended observability and SLO dashboards beyond minimum correctness gates
+
+This change explicitly prioritizes FR completion over NFR optimization to reach a usable,
+scalable multi-asset, multi-timeframe screener/scanner baseline faster.
+
+## Current Status Review
+
+Functional baseline status for this change package is now complete:
+- FR-1 to FR-5 implementation baseline delivered (identity/overwrite safety, timeframe-set contracts,
+  source adapters, screener registry/composition, analytics product tables)
+- verification smoke completed for multi-asset and multi-timeframe contracts
+- deterministic fan-out contract validated with stable `params_hash` expansion behavior
+
+Next execution focus moves to deferred NFRs, but only with FR regression gates kept green.
+
+Operational transition target:
+- rerun scanners via Prefect workflows as the standard orchestration path
+- scanner CLI default runner switched to Prefect after readiness audits passed
+
+## Expansion readiness audit target
+
+Next planning objective is to audit readiness for expanding beyond current forex-led workflows to:
+- commodities
+- cryptocurrencies
+- equities
+
+The audit will evaluate whether existing contracts are sufficient without schema/orchestration forks,
+and identify explicit gaps before production-scale rollout.
+
+Current readiness classification:
+- equities: `ready-with-gaps`
+- cryptocurrencies: `ready-with-gaps`
+- commodities: `blocked`
+
+## Rescheduled preparation focus
+
+Execution is rescheduled to prioritize multi-asset expansion readiness before additional NFR work.
+
+Preparation order:
+1. close strategy parity gap for non-forex assets
+2. introduce asset-specific universe selector semantics
+3. add non-forex ticker normalization/validation guardrails
+4. rerun multi-asset/multi-timeframe Prefect smoke for readiness reclassification
+5. resume deferred NFR track after expansion prep gates are green
+
 ## Impact
 - Affected specs (new):
   - `multi-asset-pipeline`
@@ -38,4 +100,3 @@ outputs, plus stronger provenance and reproducibility guarantees.
 - Affected docs (update):
   - `docs/plans/2026-03-02-duckdb-edge-architecture.md` (reflect Iceberg-first reality)
   - `docs/brainstorms/2026-03-03-tradingview-scanner-pipeline-scale.md` (bottlenecks + roadmap)
-

@@ -61,6 +61,29 @@ This repo treats **multi-timeframe screening** as two distinct pipeline concerns
 
 This separation lets us evolve analytics patterns and query engines without breaking canonical data storage.
 
+## Execution layer (local runner vs workflow engines)
+
+Pipeline *definition* is kept engine-agnostic and can be represented as a JSON-serializable `PipelineRunSpec`.
+Execution is delegated to a runner:
+
+- **Local runner**: executes in-process (current default CLI behavior)
+- **Export runner**: emits `PipelineRunSpec` JSON for external orchestration systems to submit as run config/parameters
+- **Prefect runner (optional)**: executes the spec via a Prefect flow (`--runner prefect`, install via `uv sync --extra prefect`)
+
+Workflow engines (Dagster/Prefect/Temporal/Airflow/Argo/etc.) are integrated via lightweight adapters/wrappers that live
+outside the core `tvscreener` library package so the core remains dependency-free.
+
+## Operational reruns (forex majors/minors)
+
+The repo supports deterministic reruns for **forex majors and minors** using Prefect batch fan-out:
+
+- Batch templates live under `workflows/prefect/batches/` (e.g. `forex_majors_minors_both.json`).
+- Artifacts are keyed by `params_hash` and written under `artifacts/prefect/<params_hash>/` so replays are stable and
+  machine-discoverable.
+- Expected behavior:
+  - **Data** runs update canonical Iceberg tables (Bronze/Silver/Gold + product tables such as `signals_latest`).
+  - **Analytics** runs are expected to be **read-only** w.r.t. Iceberg and only emit artifacts (e.g. results parquet).
+
 ## Multi-timeframe model
 
 - **timeframes**: the configured timeframe list for a scan (e.g. `15,60,240`), stored as a canonical string.

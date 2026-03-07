@@ -10,26 +10,92 @@ date: 2026-03-03
 
 Rerun forex opportunity/strategy scanners for majors and minors using the matrix view, then validate that DuckDB `EdgeQueryClient` can query Iceberg tables correctly.
 
-## Commands
+## Commands (direct CLI)
 
 ```bash
 # (Recommended) Split mode: run data pipelines, then rerun analytics from Iceberg.
 
 # 1) Data pipelines (fetch + persist to Iceberg)
-uv run tvscreener-scan --scanner opportunity --pipeline data --universe majors
-uv run tvscreener-scan --scanner opportunity --pipeline data --universe minors
+uv run tvscreener-scan --scanner opportunity --pipeline data --asset-type forex --universe majors --config tvscreener.yaml
+uv run tvscreener-scan --scanner opportunity --pipeline data --asset-type forex --universe minors --config tvscreener.yaml
 
 # 2) Analytics pipelines (query Iceberg + render the same matrix view)
-uv run tvscreener-scan --scanner opportunity --pipeline analytics --universe majors --matrix --limit 100
-uv run tvscreener-scan --scanner opportunity --pipeline analytics --universe minors --matrix --limit 100
+uv run tvscreener-scan --scanner opportunity --pipeline analytics --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --scanner opportunity --pipeline analytics --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
 
 # Strategy is an analytics pipeline over Iceberg-backed Gold rows
-uv run tvscreener-scan --scanner strategy --pipeline analytics --universe majors --matrix --limit 100
-uv run tvscreener-scan --scanner strategy --pipeline analytics --universe minors --matrix --limit 100
+uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
 
 # (Optional) One-shot mode: data then analytics in one command
-uv run tvscreener-scan --scanner opportunity --pipeline both --universe majors --matrix --limit 100
-uv run tvscreener-scan --scanner opportunity --pipeline both --universe minors --matrix --limit 100
+uv run tvscreener-scan --scanner opportunity --pipeline both --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --scanner opportunity --pipeline both --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
+```
+
+### Forex all-universe (matrix view)
+
+```bash
+# Data refresh (opportunity only; strategy data would duplicate upstream fetch)
+uv run tvscreener-scan --scanner opportunity --pipeline data --asset-type forex --universe all --config tvscreener.yaml
+
+# Analytics replays (matrix view) from Iceberg
+uv run tvscreener-scan --scanner opportunity --pipeline analytics --asset-type forex --universe all --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type forex --universe all --matrix --limit 100 --config tvscreener.yaml
+```
+
+## Commands (Prefect batch reruns)
+
+Use Prefect for deterministic artifacts keyed by `params_hash`, plus safe fan-out/sharding.
+
+```bash
+uv sync --extra prefect
+
+# Prefect local runtime (recommended for stable local runs)
+export PREFECT_HOME="$PWD/.prefect-home"
+export PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=180
+
+# Full refresh: data then analytics (majors+minors, opportunity+strategy)
+uv run --extra prefect python workflows/prefect/run_batch.py \
+  --batch workflows/prefect/batches/forex_majors_minors_both.json \
+  --data-concurrency 1 \
+  --analytics-concurrency 8 \
+  --rate-limit-min-interval 1.0 \
+  --rate-limit-jitter 0.25
+
+# Analytics-only replay (no upstream calls)
+uv run --extra prefect python workflows/prefect/run_batch.py \
+  --batch workflows/prefect/batches/forex_majors_minors_analytics.json \
+  --concurrency 12 \
+  --skip-existing
+```
+
+Artifacts are written under `artifacts/prefect/<params_hash>/` (plus `artifacts/prefect/batch/<batch_id>/`).
+
+### Prefect: forex all-universe
+
+Batch templates:
+- `workflows/prefect/batches/forex_all_refresh.json` (opportunity both + strategy analytics)
+- `workflows/prefect/batches/forex_all_analytics.json` (analytics-only replay)
+
+```bash
+uv sync --extra prefect
+export PREFECT_HOME="$PWD/.prefect-home"
+export PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=180
+
+# Full refresh
+uv run --extra prefect python workflows/prefect/run_batch.py \
+  --batch workflows/prefect/batches/forex_all_refresh.json \
+  --data-concurrency 1 \
+  --analytics-concurrency 8 \
+  --rate-limit-min-interval 1.0 \
+  --rate-limit-jitter 0.25 \
+  --skip-existing
+
+# Analytics-only replay
+uv run --extra prefect python workflows/prefect/run_batch.py \
+  --batch workflows/prefect/batches/forex_all_analytics.json \
+  --concurrency 12 \
+  --skip-existing
 ```
 
 ## Validate Iceberg via EdgeQueryClient
@@ -58,8 +124,7 @@ This snapshot is not required for the validation steps above and must not be tre
 ## Tests
 
 ```bash
-uv run pytest tests/test_analytics_pipeline.py -v
-uv run pytest tests/unit/test_forex_opportunity.py tests/unit/test_forex_strategy.py -v
+uv run pytest -q
 ```
 
 ## Notes
