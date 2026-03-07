@@ -60,6 +60,9 @@ mcp = [
 cli = [
     "rich>=13.0.0"
 ]
+prefect = [
+    "prefect>=3.0.0"
+]
 
 [project.scripts]
 tvscreener-mcp = "tvscreener.mcp:run"
@@ -107,6 +110,8 @@ indent-style = "space"
 skip-magic-trailing-comma = false
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tests/repro"]
 markers = [
     "slow: long-running functional tests",
 ]
