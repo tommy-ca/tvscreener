@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import random
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,6 +15,7 @@ import narwhals as nw
 import pandas as pd
 from pyiceberg.exceptions import NoSuchTableError
 
+from tvscreener.lib.data_sources import build_data_source
 from tvscreener.lib.lakehouse import get_catalog, write_iceberg
 from tvscreener.lib.screeners.metadata_utils import MetadataCollector
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
@@ -228,11 +232,17 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             return self._cached_data
 
         # Run envelope for auditability + idempotency
-        self._run_id = self._run_id or str(uuid4())
+        env_run_id = (os.getenv("TVSCREENER_RUN_ID") or "").strip()
+        env_params_hash = (os.getenv("TVSCREENER_PARAMS_HASH") or "").strip()
+        env_code_version = (os.getenv("TVSCREENER_CODE_VERSION") or "").strip()
+
+        self._run_id = self._run_id or env_run_id or str(uuid4())
         self._fetched_at_utc = self._fetched_at_utc or datetime.now(timezone.utc)
         self.metadata.update_config(
             {
                 "run_id": self._run_id,
+                "params_hash": env_params_hash or self._run_id,
+                "code_version": env_code_version or "unknown",
                 "fetched_at_utc": self._fetched_at_utc.isoformat(),
                 "timeframe_set_id": timeframe_set_id(self.timeframes),
                 "scanner_family": "opportunity",
@@ -294,6 +304,79 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         """Stage 3: Scoring (Gold)."""
         return self._resume_or_run("gold", lambda: self._apply_scoring(df))
 
+    def _to_long_form(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Convert wide timeframe columns into long-form factor rows."""
+        if df.empty:
+            return df
+
+        base_cols = [
+            c
+            for c in [
+                "run_id",
+                "params_hash",
+                "code_version",
+                "fetched_at_utc",
+                "asset_type",
+                "timeframes",
+                "timeframe_set_id",
+                "source",
+                "scanner_family",
+                "signal_date",
+                "ingest_date",
+                "entity_id",
+                "PAIR",
+                "Symbol",
+                "Name",
+                "ENSEMBLE_SCORE",
+                "GRID_ALIGNED",
+                "GRID_TOTAL",
+                "GRID_PCT",
+                "GRADE",
+                "TF_CONFLUENCE",
+                "FACTOR_CONFLUENCE",
+                "DIRECTION",
+            ]
+            if c in df.columns
+        ]
+
+        factor_patterns = {
+            "trend": "TREND_{tf}",
+            "ma": "MA_{tf}",
+            "osc": "OSC_{tf}",
+            "roc": "ROC_{tf}",
+            "atr": "ATR_{tf}",
+            "rsi": "RSI_{tf}",
+        }
+        fallback_patterns = {
+            "trend": "Recommend All|{tf}",
+            "ma": "Recommend Ma|{tf}",
+            "osc": "Recommend Other|{tf}",
+            "roc": "Roc|{tf}",
+            "atr": "Atr|{tf}",
+            "rsi": "Rsi|{tf}",
+        }
+
+        frames: list[pd.DataFrame] = []
+        for tf in self.timeframes:
+            tf_df = df[base_cols].copy()
+            tf_df["timeframe"] = tf
+            has_factor = False
+
+            for out_col, pattern in factor_patterns.items():
+                col = pattern.format(tf=tf)
+                if col not in df.columns:
+                    col = fallback_patterns[out_col].format(tf=tf)
+                if col in df.columns:
+                    tf_df[out_col] = df[col]
+                    has_factor = True
+
+            if has_factor:
+                frames.append(tf_df)
+
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(frames, ignore_index=True)
+
     def _resume_or_run(
         self,
         stage: str,
@@ -333,7 +416,14 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             df["timeframes"] = ",".join(sorted(self.timeframes))
             df["timeframe_set_id"] = timeframe_set_id(self.timeframes)
             df["scanner_family"] = "opportunity"
-            df["source"] = "tradingview"
+            if "source" not in df.columns:
+                df["source"] = self.metadata.config.get("source", "tradingview")
+            if "source_event_id" not in df.columns:
+                df["source_event_id"] = self._run_id or ""
+            df["params_hash"] = (
+                (os.getenv("TVSCREENER_PARAMS_HASH") or "").strip() or self._run_id or ""
+            )
+            df["code_version"] = (os.getenv("TVSCREENER_CODE_VERSION") or "").strip() or "unknown"
 
         # Write-Audit-Publish (WAP) pattern (Todo 174)
         # Block Iceberg commits if data health check fails
@@ -427,6 +517,46 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
                 # Fast "latest" table for intraday queries
                 if stage == "gold" and not df.empty:
+                    batch_partition_by = [
+                        c
+                        for c in [
+                            "asset_type",
+                            "signal_date",
+                            "timeframe_set_id",
+                            "scanner_family",
+                            "params_hash",
+                        ]
+                        if c in df.columns
+                    ]
+                    write_iceberg(
+                        df,
+                        "tvscreener.signals_batch",
+                        mode="overwrite",
+                        partition_by=batch_partition_by,
+                    )
+
+                    if bool(self.config.extra_options.get("long_form_output", False)):
+                        long_df = self._to_long_form(df)
+                        if not long_df.empty:
+                            long_partition_by = [
+                                c
+                                for c in [
+                                    "asset_type",
+                                    "signal_date",
+                                    "timeframe_set_id",
+                                    "timeframe",
+                                    "scanner_family",
+                                    "params_hash",
+                                ]
+                                if c in long_df.columns
+                            ]
+                            write_iceberg(
+                                long_df,
+                                "tvscreener.signals_long",
+                                mode="overwrite",
+                                partition_by=long_partition_by,
+                            )
+
                     latest_partition_by = ["asset_type", "timeframe_set_id"]
                     latest_overwrite_filter = None
                     if mode == "overwrite":
@@ -629,6 +759,20 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
         screener.select(*select_fields)
         self._prepare_screener(screener, field_class)
 
+        data_source_name = str(self.config.extra_options.get("data_source", "tradingview"))
+        adapter = build_data_source(data_source_name)
+        self.metadata.update_config({"source": adapter.source})
+
+        source_policy = dict(
+            self.config.extra_options.get("source_policies", {}).get(adapter.source, {})
+        )
+        min_interval = float(source_policy.get("min_interval_seconds", 0.0) or 0.0)
+        jitter = float(source_policy.get("jitter_seconds", 0.0) or 0.0)
+        max_retries = int(source_policy.get("fetch_max_retries", 2) or 0)
+        retry_base = float(source_policy.get("fetch_retry_base_seconds", 0.5) or 0.0)
+        retry_max = float(source_policy.get("fetch_retry_max_seconds", 10.0) or 0.0)
+        last_fetch_ts = 0.0
+
         # Batching (TV API usually supports ~500 symbols per request)
         batch_size = self.config.extra_options.get("batch_size", 500)
         all_dfs = []
@@ -636,25 +780,70 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
         for i in range(0, len(tickers), batch_size):
             batch_tickers = tickers[i : i + batch_size]
-            screener.set_tickers(*batch_tickers)
 
-            try:
-                df = screener.get()
-                if "api_context" in df.attrs:
-                    ctx = df.attrs["api_context"]
-                    self.metadata.add_api_call(
-                        url=ctx.get("url", ""),
-                        status_code=ctx.get("status_code", 0),
-                        method=ctx.get("method", "GET"),
-                        headers=ctx.get("headers", {}),
+            fetched = False
+            for attempt in range(max_retries + 1):
+                try:
+                    # Source-aware per-worker throttling before each fetch attempt.
+                    if min_interval > 0:
+                        now = time.time()
+                        delay = (last_fetch_ts + min_interval) - now
+                        if delay > 0:
+                            time.sleep(delay)
+                    if jitter > 0:
+                        time.sleep(random.random() * jitter)
+
+                    df = adapter.fetch_batch(screener=screener, tickers=batch_tickers)
+                    last_fetch_ts = time.time()
+
+                    if "api_context" in df.attrs:
+                        ctx = df.attrs["api_context"]
+                        self.metadata.add_api_call(
+                            url=ctx.get("url", ""),
+                            status_code=ctx.get("status_code", 0),
+                            method=ctx.get("method", "GET"),
+                            headers=ctx.get("headers", {}),
+                        )
+                    if not df.empty:
+                        all_dfs.append(df)
+                    fetched = True
+                    break
+                except Exception as e:
+                    if attempt >= max_retries:
+                        logger.error(
+                            "Error fetching batch %s after retries: %s", i // batch_size + 1, e
+                        )
+                        break
+                    sleep_s = min(retry_base * (2**attempt), retry_max)
+                    if jitter > 0:
+                        sleep_s += random.random() * jitter
+                    logger.warning(
+                        "Retrying fetch batch %s (%s/%s) after %.2fs: %s",
+                        i // batch_size + 1,
+                        attempt + 1,
+                        max_retries,
+                        sleep_s,
+                        e,
                     )
-                if not df.empty:
-                    all_dfs.append(df)
-            except Exception as e:
-                logger.error("Error fetching batch %s: %s", i // batch_size + 1, e)
+                    if sleep_s > 0:
+                        time.sleep(sleep_s)
+
+            if not fetched:
                 failed_batches += 1
 
         if not all_dfs:
+            expected = len(tickers)
+            self.metadata.update_config(
+                {
+                    "ingest_stats": {
+                        "requested_tickers_count": expected,
+                        "returned_unique": 0,
+                        "coverage": 0.0 if expected else 1.0,
+                        "failed_batches": failed_batches,
+                        "batch_size": batch_size,
+                    }
+                }
+            )
             return pd.DataFrame()
 
         combined_df = pd.concat(all_dfs, ignore_index=True)

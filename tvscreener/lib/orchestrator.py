@@ -33,6 +33,7 @@ from tvscreener.lib.screeners.forex_strategy import (
     StrategyConfig,
     StrategyType,
 )
+from tvscreener.lib.screeners.registry import ScreenerFamilyRegistry
 from tvscreener.score import ScoringConfig as ScoreWeights
 from tvscreener.util import canonicalize_asset_type, parse_timeframe_weights, validate_path
 
@@ -162,6 +163,10 @@ class ScreenerController:
 
     def __init__(self, console: Console | None = None):
         self.console = console
+        self._family_registry = ScreenerFamilyRegistry()
+        self._family_registry.register("opportunity", self.run_opportunity_scan)
+        self._family_registry.register("strategy", self.run_strategy_scan)
+        self._family_registry.register("inspect", self.run_inspect_parquet)
 
     def get_universe(self, asset_type: str) -> AssetUniverse:
         """Get universe config by asset type with validation."""
@@ -284,15 +289,7 @@ class ScreenerController:
     def run_scan(self, request: ScanRequest) -> int:
         """Main entry point to run a scan."""
         request = self.resolve_defaults(request)
-
-        if request.assets.scanner == "opportunity":
-            return self.run_opportunity_scan(request)
-        elif request.assets.scanner == "strategy":
-            return self.run_strategy_scan(request)
-        elif request.assets.scanner == "inspect":
-            return self.run_inspect_parquet(request)
-        else:
-            raise ValueError(f"Unknown scanner type: {request.assets.scanner}")
+        return self._family_registry.run(request.assets.scanner, request)
 
     def run_maintenance(self, args: argparse.Namespace) -> int:
         """Run lakehouse maintenance tasks."""
@@ -495,6 +492,7 @@ class ScreenerController:
             pairs=pairs,
             timeframes=timeframes,
         )
+        snapshot_label = self._snapshot_label_from_df(results)
         results = self._apply_edge_filters(results, request)
 
         if request.output.confluence_grade or request.output.min_opportunity_confluence:
@@ -518,6 +516,7 @@ class ScreenerController:
                     matrix=request.output.matrix,
                     limit=request.output.limit,
                     show_risk=request.output.show_risk,
+                    snapshot_label=snapshot_label,
                 )
 
         if request.output.save_config:
@@ -617,6 +616,7 @@ class ScreenerController:
             pairs=pairs,
             timeframes=timeframes,
         )
+        snapshot_label = self._snapshot_label_from_df(raw_data)
 
         config = self._build_strategy_config(request)
         scanner = ForexStrategyScanner(pairs=pairs, timeframes=timeframes, config=config)
@@ -637,6 +637,7 @@ class ScreenerController:
                     matrix=request.output.matrix,
                     limit=request.output.limit,
                     show_risk=request.output.show_risk,
+                    snapshot_label=snapshot_label,
                 )
 
         return len(results)
@@ -765,41 +766,6 @@ class ScreenerController:
                         from rich.table import Table
 
                         table = Table(title=f"Preview of {request.output.output}")
-                        for col in results.columns:
-                            table.add_column(col)
-                        for _, row in results.iterrows():
-                            table.add_row(*[str(val) for val in row])
-                        self.console.print(table)
-                except Exception as e:
-                    self.console.print(f"[red]Failed to inspect Iceberg table: {e}[/red]")
-        return 0
-
-        if not is_iceberg:
-            # Security: Validate path before inspection
-            try:
-                validated_path = self._validate_path(request.output)
-            except ValueError as e:
-                if self.console:
-                    self.console.print(f"[red]Error: {e}[/red]")
-                return -1
-
-            inspect_parquet(
-                path=str(validated_path),
-                head=request.head or 10,
-                metadata_only=request.metadata_only,
-            )
-        else:
-            if self.console:
-                self.console.print(f"[cyan]Inspecting Iceberg Table: {request.output}[/cyan]")
-                try:
-                    with EdgeQueryClient() as edge_client:
-                        # Simple preview for Iceberg
-                        results = edge_client.query_sql(
-                            request.output, f"SELECT * FROM df LIMIT {request.head or 10}"
-                        )
-                        from rich.table import Table
-
-                        table = Table(title=f"Preview of {request.output}")
                         for col in results.columns:
                             table.add_column(col)
                         for _, row in results.iterrows():
@@ -981,6 +947,33 @@ class ScreenerController:
                 return edge_client.query_sql("tvscreener.signals_latest", sql_pair, params=params)
             except Exception:
                 return edge_client.query_sql("tvscreener.signals_latest", sql_symbol, params=params)
+
+    def _snapshot_label_from_df(self, df: Any) -> str | None:
+        """Best-effort snapshot label for matrix view headers.
+
+        For Iceberg-backed analytics runs, we derive a human-readable snapshot time from
+        the `fetched_at_utc` column (if present) on the loaded dataframe.
+        """
+        try:
+            if df is None or getattr(df, "empty", True):
+                return None
+            if not hasattr(df, "columns") or "fetched_at_utc" not in df.columns:
+                return None
+            import pandas as pd
+
+            ts = pd.to_datetime(df["fetched_at_utc"], errors="coerce")
+            ts = ts.dropna()
+            if ts.empty:
+                return None
+            t_min = ts.min()
+            t_max = ts.max()
+            # Display as UTC (Iceberg timestamps are treated as UTC in this repo).
+            fmt = "%Y-%m-%d %H:%M:%S"
+            if t_min == t_max:
+                return f"{t_max.strftime(fmt)} UTC"
+            return f"{t_min.strftime(fmt)}..{t_max.strftime(fmt)} UTC"
+        except Exception:
+            return None
 
     def _build_opportunity_config(self, request: ScanRequest) -> ForexScreenerConfig:
         score_filters = []

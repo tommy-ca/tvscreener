@@ -1,0 +1,14 @@
+{
+  "batch_id": "forex-all-analytics",
+  "defaults": {
+    "asset_type": "forex",
+    "universe": "all",
+    "timeframes": ["15", "60", "240"],
+    "pipeline_mode": "analytics",
+    "config_path": "tvscreener.yaml"
+  },
+  "sharding": { "enabled": true, "max_pairs_per_run": 50 },
+  "matrix": {
+    "scanners": ["opportunity", "strategy"]
+  }
+}

@@ -44,7 +44,7 @@ class EdgeQueryClient:
     def __init__(self, db_path: str | Path | None = None):
         if not DUCKDB_AVAILABLE:
             raise RuntimeError(
-                "DuckDB is required for Edge querying. Install with `pip install duckdb`."
+                "DuckDB is required for Edge querying. Install the `duckdb` dependency (in this repo: `uv sync`)."
             )
 
         if db_path is None:

@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -101,18 +102,17 @@ class LakehouseManager:
                              If not provided and mode='overwrite' and partition_by is set,
                              it is automatically calculated from the data.
         """
+        identifier = self._normalize_table_identifier(table_name)
+
         nw_df = nw.from_native(df_native)
         arrow_table = self._prepare_arrow(nw_df)
 
         catalog = self.get_catalog()
-        # Use dots for namespaces if provided, otherwise default to "default"
-        identifier = table_name if "." in table_name else f"default.{table_name}"
 
         # Ensure namespace exists
-        if "." in identifier:
-            namespace = identifier.split(".")[0]
-            with contextlib.suppress(Exception):
-                catalog.create_namespace(namespace)
+        namespace = identifier.split(".")[0]
+        with contextlib.suppress(Exception):
+            catalog.create_namespace(namespace)
 
         try:
             table = catalog.load_table(identifier)
@@ -170,6 +170,46 @@ class LakehouseManager:
 
             table.append(arrow_table)
             logger.info("Created Iceberg table '%s' (%d rows)", identifier, len(arrow_table))
+
+    _IDENT_PART_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+    def _normalize_table_identifier(self, table_name: str) -> str:
+        """Normalize and validate an Iceberg identifier.
+
+        Accepts:
+        - `table` (normalized to `default.table`)
+        - `namespace.table`
+
+        Rejects path traversal and path-like identifiers (e.g. containing '/', '\\\\', '..').
+        """
+        if table_name is None:
+            raise ValueError("Invalid table identifier: None")
+        raw = str(table_name).strip()
+        if not raw:
+            raise ValueError("Invalid table identifier: empty")
+        if raw != str(table_name):
+            raise ValueError(f"Invalid table identifier: '{table_name}' (whitespace not allowed)")
+        if any(sep in raw for sep in ("/", "\\", ":")):
+            raise ValueError(f"Invalid table identifier: '{raw}' (path separators not allowed)")
+        if ".." in raw:
+            raise ValueError(f"Invalid table identifier: '{raw}' ('..' not allowed)")
+        if raw.startswith(".") or raw.endswith("."):
+            raise ValueError(f"Invalid table identifier: '{raw}' (cannot start/end with '.')")
+        if raw.count(".") > 1:
+            raise ValueError(
+                f"Invalid table identifier: '{raw}' (expected 'table' or 'namespace.table')"
+            )
+
+        if "." in raw:
+            namespace, table = raw.split(".")
+        else:
+            namespace, table = "default", raw
+
+        if not self._IDENT_PART_RE.match(namespace):
+            raise ValueError(f"Invalid namespace: '{namespace}'")
+        if not self._IDENT_PART_RE.match(table):
+            raise ValueError(f"Invalid table name: '{table}'")
+        return f"{namespace}.{table}"
 
     def _prepare_arrow(self, nw_df: nw.DataFrame) -> pa.Table:
         """Cast datetime columns to microseconds and strip timezones for Iceberg compatibility."""

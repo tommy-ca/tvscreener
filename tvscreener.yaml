@@ -6,6 +6,9 @@ default_universe: "majors"
 default_timeframes: "240,60,15"
 contract_type: "cfd"
 
+# Orchestration defaults
+# Scanner CLI now defaults to Prefect runner; use `--runner local` for fallback/debug.
+
 # Strategy settings
 min_confluence: 1
 trend_threshold: 0.2

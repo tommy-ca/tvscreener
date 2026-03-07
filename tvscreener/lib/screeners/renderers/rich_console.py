@@ -147,12 +147,15 @@ class RichConsoleRenderer(BaseRenderer):
         detailed = kwargs.get("detailed", False)
         matrix = kwargs.get("matrix", False)
         limit = kwargs.get("limit")
+        snapshot_label = kwargs.get("snapshot_label")
 
         if detailed:
             self._render_opportunity_detailed(screener, df, console, limit=limit)
             return
         if matrix:
-            self._render_opportunity_matrix(screener, df, console, Table, limit=limit)
+            self._render_opportunity_matrix(
+                screener, df, console, Table, limit=limit, snapshot_label=snapshot_label
+            )
             return
 
         from tvscreener.constants.forex import DEFAULT_LIMIT_SUMMARY
@@ -392,14 +395,16 @@ class RichConsoleRenderer(BaseRenderer):
         console: Console,
         Table: type[Table],
         limit: int | None = None,
+        snapshot_label: str | None = None,
     ) -> None:
         from tvscreener.constants.forex import DEFAULT_LIMIT_MATRIX
 
         display_limit = limit if limit is not None else DEFAULT_LIMIT_MATRIX
         display_df = df.head(display_limit)
-        self._render_confluence_matrix(
-            screener, display_df, console, Table, title="Confluence Matrix"
-        )
+        title = "Confluence Matrix"
+        if snapshot_label:
+            title = f"{title} (Snapshot: {snapshot_label})"
+        self._render_confluence_matrix(screener, display_df, console, Table, title=title)
 
         shown = len(display_df)
         console.print(f"\n[dim]{VisualStyler.legend()}[/dim]")
@@ -411,9 +416,12 @@ class RichConsoleRenderer(BaseRenderer):
         matrix = kwargs.get("matrix", False)
         detailed = kwargs.get("detailed", False)
         limit = kwargs.get("limit")
+        snapshot_label = kwargs.get("snapshot_label")
 
         if matrix:
-            self._render_strategy_matrix(screener, df, console, Table, limit=limit)
+            self._render_strategy_matrix(
+                screener, df, console, Table, limit=limit, snapshot_label=snapshot_label
+            )
             return
 
         if detailed:
@@ -633,6 +641,7 @@ class RichConsoleRenderer(BaseRenderer):
         console: Console,
         Table: type[Table],
         limit: int | None = None,
+        snapshot_label: str | None = None,
     ) -> None:
         from tvscreener.constants.forex import DEFAULT_LIMIT_MATRIX
 
@@ -640,9 +649,10 @@ class RichConsoleRenderer(BaseRenderer):
         for strategy in df["STRATEGY"].unique():
             strategy_df = df[df["STRATEGY"] == strategy]
             display_df = strategy_df.head(display_limit) if display_limit > 0 else strategy_df
-            self._render_confluence_matrix(
-                screener, display_df, console, Table, title=f"Strategy Matrix: {strategy}"
-            )
+            title = f"Strategy Matrix: {strategy}"
+            if snapshot_label:
+                title = f"{title} (Snapshot: {snapshot_label})"
+            self._render_confluence_matrix(screener, display_df, console, Table, title=title)
 
             shown = len(display_df)
             console.print(f"[dim]Showing {shown} of {len(strategy_df)} signals[/dim]")

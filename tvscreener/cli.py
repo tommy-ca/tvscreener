@@ -75,6 +75,22 @@ def main() -> int:
             help="Execution mode: data (fetch+Iceberg), analytics (Iceberg+render), both (data then analytics)",
         )
         parser.add_argument(
+            "--runner",
+            choices=["local", "export", "prefect"],
+            default="prefect",
+            help="Execution runner: prefect (execute via Prefect flow), local (execute in-process), export (emit PipelineRunSpec JSON)",
+        )
+        parser.add_argument(
+            "--spec-out",
+            default=None,
+            help="Write PipelineRunSpec JSON to this file (only when --runner export)",
+        )
+        parser.add_argument(
+            "--artifacts-dir",
+            default="artifacts/prefect",
+            help="Artifacts directory (used by --runner prefect)",
+        )
+        parser.add_argument(
             "--asset-type",
             choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
             default="forex",
@@ -271,11 +287,6 @@ def main() -> int:
 
     setup_logging(args.verbose)
 
-    # Register renderers
-    from tvscreener.lib.screeners.renderers.rich_console import register_renderers
-
-    register_renderers()
-
     # Parse sql_params if provided
     if getattr(args, "sql_params", None):
         import json
@@ -287,6 +298,41 @@ def main() -> int:
             return 1
     else:
         args.sql_params = {}
+
+    # Export runner: emit a PipelineRunSpec JSON payload for workflow engines.
+    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "export":
+        from tvscreener.lib.pipeline_runner import PipelineRunSpec
+
+        spec = PipelineRunSpec.from_cli_args(args)
+        payload = spec.model_dump_json(indent=2)
+        spec_out = getattr(args, "spec_out", None)
+        if spec_out:
+            from pathlib import Path
+
+            Path(spec_out).write_text(payload, encoding="utf-8")
+        else:
+            print(payload)
+        return 0
+
+    # Prefect runner: execute via Prefect flow in-process (no intermediate spec file required).
+    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "prefect":
+        from tvscreener.lib.pipeline_runner import PipelineRunSpec
+
+        spec = PipelineRunSpec.from_cli_args(args)
+        try:
+            from tvscreener.lib.prefect_runner import run_prefect
+
+            _ = run_prefect(spec, artifacts_dir=getattr(args, "artifacts_dir", "artifacts/prefect"))
+            return 0
+        except Exception as e:
+            console.print(f"[red]Prefect runner failed: {e}[/red]")
+            console.print("[dim]Hint: install with `uv sync --extra prefect`[/dim]")
+            return 2
+
+    # Register renderers (interactive CLI output)
+    from tvscreener.lib.screeners.renderers.rich_console import register_renderers
+
+    register_renderers()
 
     # Initialize orchestrator and run
     controller = ScreenerController(console=console)

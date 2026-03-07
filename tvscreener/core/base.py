@@ -78,8 +78,9 @@ class Screener:
         self.misc: dict[str, Any] = {}
         self.specific_fields: list[Field] | None = None
 
-        self.range: list[int] | None = None
-        self.set_range()
+        # TradingView /scan defaults (range is a hard cap even when explicit tickers are provided).
+        self.range: list[int] | None = [DEFAULT_MIN_RANGE, DEFAULT_MAX_RANGE]
+        self._range_is_default: bool = True
         self.add_option("lang", "en")
 
     # def add_prebuilt_filter(self, filter_: Filter):
@@ -241,6 +242,7 @@ class Screener:
         self, from_range: int = default_min_range, to_range: int = default_max_range
     ) -> "Screener":
         self.range = [from_range, to_range]
+        self._range_is_default = False
         return self
 
     def sort_by(self, sort_by: Field, ascending=True):
@@ -411,6 +413,17 @@ class Screener:
         columns = get_columns_to_request(self.specific_fields)
 
         payload = self._build_payload(list(columns.keys()))
+
+        # If the caller provided an explicit tickers list but didn't customize range, auto-size range
+        # so TradingView doesn't truncate results at the default 150 rows.
+        try:
+            symbols = payload.get("symbols") or {}
+            tickers = symbols.get("tickers") or []
+            if self._range_is_default and isinstance(tickers, list) and tickers:
+                payload["range"] = [0, len(tickers)]
+        except Exception:
+            # Best-effort only; do not fail the request building path.
+            pass
         payload_json = json.dumps(payload, indent=4)
 
         if print_request:
@@ -531,7 +544,7 @@ class Screener:
         interval: float = 5.0,
         max_iterations: int | None = None,
         on_update: Callable[["ScreenerDataFrame"], None] | None = None,
-    ) -> Iterator["ScreenerDataFrame" | None]:
+    ) -> Iterator["ScreenerDataFrame | None"]:
         """
         Stream screener data at regular intervals.
 
