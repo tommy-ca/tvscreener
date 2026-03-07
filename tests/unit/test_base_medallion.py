@@ -108,4 +108,116 @@ def test_score_no_replay(mock_catalog, mock_write_iceberg):
 
         calls = [(c.args, c.kwargs) for c in mock_write_iceberg.call_args_list]
         assert any(args[1] == "tvscreener.gold" for args, _ in calls)
+        assert any(args[1] == "tvscreener.signals_batch" for args, _ in calls)
         assert any(args[1] == "tvscreener.signals_latest" for args, _ in calls)
+
+
+def test_score_writes_long_form_when_enabled(mock_catalog, mock_write_iceberg):
+    config = ScreenerConfig(extra_options={"long_form_output": True})
+    screener = MockScreener(symbols=["TEST"], timeframes=["15", "60"], config=config)
+    input_df = pd.DataFrame(
+        {
+            "entity_id": ["fx:eurusd"],
+            "PAIR": ["EURUSD"],
+            "TREND_15": [0.4],
+            "TREND_60": [0.8],
+            "ROC_15": [0.1],
+            "ROC_60": [0.2],
+            "ENSEMBLE_SCORE": [0.5],
+        }
+    )
+
+    with patch("tvscreener.score.ScoringEngine.rank_opportunities", return_value=input_df):
+        _ = screener._score(input_df)
+
+    calls = [(c.args, c.kwargs) for c in mock_write_iceberg.call_args_list]
+    assert any(args[1] == "tvscreener.signals_long" for args, _ in calls)
+
+    long_call = next((args for args, _ in calls if args[1] == "tvscreener.signals_long"), None)
+    assert long_call is not None
+    long_df = long_call[0]
+    assert list(long_df["timeframe"]) == ["15", "60"]
+    assert "trend" in long_df.columns
+    assert "roc" in long_df.columns
+
+
+def test_ingest_persists_params_hash_and_code_version(
+    mock_catalog, mock_write_iceberg, monkeypatch
+):
+    monkeypatch.setenv("TVSCREENER_PARAMS_HASH", "phash-123")
+    monkeypatch.setenv("TVSCREENER_CODE_VERSION", "git-abc123")
+
+    config = ScreenerConfig()
+    screener = MockScreener(symbols=["TEST"], config=config)
+
+    _ = screener._ingest()
+
+    persisted_df = mock_write_iceberg.call_args.args[0]
+    assert "params_hash" in persisted_df.columns
+    assert "code_version" in persisted_df.columns
+    assert persisted_df.iloc[0]["params_hash"] == "phash-123"
+    assert persisted_df.iloc[0]["code_version"] == "git-abc123"
+
+
+def test_fetch_all_data_retries_then_succeeds():
+    config = ScreenerConfig(
+        extra_options={
+            "batch_size": 1,
+            "source_policies": {
+                "tradingview": {
+                    "min_interval_seconds": 0,
+                    "jitter_seconds": 0,
+                    "fetch_max_retries": 2,
+                    "fetch_retry_base_seconds": 0,
+                    "fetch_retry_max_seconds": 0,
+                }
+            },
+        }
+    )
+    screener = MockScreener(symbols=["TEST"], config=config)
+
+    client = MagicMock()
+    client.get.side_effect = [
+        RuntimeError("transient"),
+        pd.DataFrame({"Symbol": ["TEST"], "Name": ["TEST"], "Price": [1.0]}),
+    ]
+    screener._get_screener_instance = lambda: client
+
+    df = BaseOpportunityScreener._fetch_all_data(screener)
+
+    assert client.get.call_count == 2
+    assert not df.empty
+    assert "source" in df.columns
+    assert "source_event_id" in df.columns
+    stats = screener.metadata.config.get("ingest_stats") or {}
+    assert stats.get("failed_batches") == 0
+
+
+def test_fetch_all_data_retries_are_bounded_on_failure():
+    config = ScreenerConfig(
+        extra_options={
+            "batch_size": 1,
+            "source_policies": {
+                "tradingview": {
+                    "min_interval_seconds": 0,
+                    "jitter_seconds": 0,
+                    "fetch_max_retries": 1,
+                    "fetch_retry_base_seconds": 0,
+                    "fetch_retry_max_seconds": 0,
+                }
+            },
+        }
+    )
+    screener = MockScreener(symbols=["TEST"], config=config)
+
+    client = MagicMock()
+    client.get.side_effect = RuntimeError("always-fail")
+    screener._get_screener_instance = lambda: client
+
+    df = BaseOpportunityScreener._fetch_all_data(screener)
+
+    assert df.empty
+    assert client.get.call_count == 2  # initial + one retry
+    stats = screener.metadata.config.get("ingest_stats") or {}
+    assert stats.get("failed_batches") == 1
+    assert stats.get("coverage") == 0.0

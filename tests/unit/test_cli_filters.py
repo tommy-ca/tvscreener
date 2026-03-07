@@ -59,6 +59,8 @@ def test_cli_filter_args_take_precedence(monkeypatch):
         "argv",
         [
             "tvscreener.cli",
+            "--runner",
+            "local",
             "--min-confluence",
             "5",
             "--trend-threshold",
@@ -79,4 +81,47 @@ def test_cli_filter_args_take_precedence(monkeypatch):
         "trend_threshold": 0.5,
         "mr_threshold": 0.7,
         "min_roc": 0.3,
+    }
+
+
+def test_cli_defaults_to_prefect_runner(monkeypatch):
+    called = {}
+
+    def fake_run_prefect(spec, *, artifacts_dir):
+        called["runner"] = "prefect"
+        called["scanner_family"] = spec.scanner_family
+        called["pipeline_mode"] = spec.pipeline_mode
+        called["asset_type"] = spec.asset_type
+        called["artifacts_dir"] = artifacts_dir
+        return {}
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "tvscreener.cli",
+            "--scanner",
+            "opportunity",
+            "--pipeline",
+            "analytics",
+            "--asset-type",
+            "forex",
+            "--pairs",
+            "EURUSD",
+        ],
+    )
+
+    from tvscreener.lib import prefect_runner
+
+    monkeypatch.setattr(prefect_runner, "run_prefect", fake_run_prefect)
+
+    exit_code = cli.main()
+
+    assert exit_code == 0
+    assert called == {
+        "runner": "prefect",
+        "scanner_family": "opportunity",
+        "pipeline_mode": "analytics",
+        "asset_type": "forex",
+        "artifacts_dir": "artifacts/prefect",
     }

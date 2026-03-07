@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -31,6 +32,31 @@ class TestApiValidation(unittest.TestCase):
 
         self.assertEqual(len(df), 1)
         self.assertEqual(df.iloc[0]["Symbol"], "NASDAQ:AAPL")
+
+    @patch("requests.post")
+    def test_explicit_tickers_auto_sizes_range(self, mock_post):
+        # Arrange: 200 explicit tickers and default range should auto-size to 200
+        tickers = [f"NASDAQ:TEST{i}" for i in range(200)]
+        self.ss.set_tickers(*tickers)
+
+        mock_response = MagicMock()
+        mock_response.ok = True
+        mock_response.status_code = 200
+        # We will patch get_columns_to_request so expected_len is stable.
+        mock_response.json.return_value = {
+            "data": [{"s": t, "d": [1.0, 2.0]} for t in tickers],
+        }
+        mock_post.return_value = mock_response
+
+        with patch("tvscreener.core.base.get_columns_to_request") as mock_cols:
+            mock_cols.return_value = {"price": "Price", "volume": "Volume"}
+            _df = self.ss.get()
+
+        # Assert: outgoing payload range covers all tickers
+        sent_payload = json.loads(mock_post.call_args.kwargs["data"])
+        self.assertEqual(sent_payload["symbols"]["tickers"], tickers)
+        self.assertEqual(sent_payload["range"], [0, len(tickers)])
+        self.assertEqual(len(_df), len(tickers))
 
     @patch("requests.post")
     def test_validate_missing_data_key(self, mock_post):
