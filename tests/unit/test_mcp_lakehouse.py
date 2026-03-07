@@ -2,6 +2,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytest.importorskip("mcp")
+
 from tvscreener.mcp.tools import lakehouse_get_schema, lakehouse_list_tables, lakehouse_maintenance
 
 
