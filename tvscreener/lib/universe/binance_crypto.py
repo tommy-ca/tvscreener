@@ -51,9 +51,13 @@ def compute_volatility_24h_pct(df: pd.DataFrame):
     # Type checkers struggle with pandas' operator overloads.
     import numpy as np
 
-    high_arr = pd.to_numeric(high, errors="coerce").to_numpy(dtype=float)
-    low_arr = pd.to_numeric(low, errors="coerce").to_numpy(dtype=float)
-    price_arr = pd.to_numeric(price, errors="coerce").to_numpy(dtype=float)
+    high_series = pd.Series(pd.to_numeric(high, errors="coerce"), index=df.index)
+    low_series = pd.Series(pd.to_numeric(low, errors="coerce"), index=df.index)
+    price_series = pd.Series(pd.to_numeric(price, errors="coerce"), index=df.index)
+
+    high_arr = np.asarray(high_series, dtype="float64")
+    low_arr = np.asarray(low_series, dtype="float64")
+    price_arr = np.asarray(price_series, dtype="float64")
     vol_arr = np.where(price_arr != 0, (high_arr - low_arr) / price_arr * 100.0, np.nan)
     return pd.Series(vol_arr, index=df.index)
 
@@ -133,6 +137,20 @@ def build_binance_crypto_universe(
     ranked = filter_and_rank_candidates(candidates, constraints=constraints)
 
     tickers = ranked["Symbol"].astype(str).tolist() if not ranked.empty else []
+
+    def _symbol_from_ticker(ticker: str) -> str:
+        raw = (ticker or "").strip()
+        if ":" in raw:
+            raw = raw.split(":", 1)[1]
+        if raw.endswith(".P"):
+            raw = raw[: -len(".P")]
+        return raw
+
+    instrument_type = (constraints.instrument_type or "").strip().lower()
+
+    def _entity_id(ticker: str) -> str:
+        return f"binance:{instrument_type}:{_symbol_from_ticker(ticker)}"
+
     snapshot = {
         "generated_at_utc": datetime.now(tz=UTC).isoformat(),
         "constraints": {
@@ -148,6 +166,10 @@ def build_binance_crypto_universe(
                 {
                     "rank": int(row.get("rank")),
                     "ticker": str(row.get("Symbol")),
+                    "symbol": _symbol_from_ticker(str(row.get("Symbol"))),
+                    "venue": "binance",
+                    "instrument_type": instrument_type,
+                    "entity_id": _entity_id(str(row.get("Symbol"))),
                     "Name": row.get("Name"),
                     "Type": row.get("Type"),
                     "Subtype": row.get("Subtype"),

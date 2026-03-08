@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -78,19 +80,35 @@ def run_prefect(spec: PipelineRunSpec, *, artifacts_dir: str = "artifacts/runs")
 
 
 @task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
-def _run_data_task(spec: PipelineRunSpec) -> tuple[RunResult, str | None]:
+def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
     data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
     console = _console_for_spec(data_spec)
-    res = LocalRunner(console=console).run(data_spec)
+    previous = os.environ.get("TVSCREENER_RUN_DIR")
+    os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    try:
+        res = LocalRunner(console=console).run(data_spec)
+    finally:
+        if previous is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous
     matrix_text = console.export_text() if console is not None else None
     return res, matrix_text
 
 
 @task(retries=0)  # type: ignore[misc]
-def _run_analytics_task(spec: PipelineRunSpec) -> tuple[RunResult, str | None]:
+def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
     analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
     console = _console_for_spec(analytics_spec)
-    res = LocalRunner(console=console).run(analytics_spec)
+    previous = os.environ.get("TVSCREENER_RUN_DIR")
+    os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    try:
+        res = LocalRunner(console=console).run(analytics_spec)
+    finally:
+        if previous is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous
     matrix_text = console.export_text() if console is not None else None
     return res, matrix_text
 
@@ -105,6 +123,31 @@ def prefect_run_flow(
     run_dir = base_dir / params_hash
     _ensure_dir(run_dir)
 
+    # Resolve universe/pairs once for determinism and persist universe.json
+    # into the run artifacts directory when applicable.
+    controller = None
+    with contextlib.suppress(Exception):
+        from tvscreener.lib.orchestrator import ScreenerController
+
+        controller = ScreenerController(console=None)
+
+    if controller is not None:
+        previous = os.environ.get("TVSCREENER_RUN_DIR")
+        os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
+        try:
+            req = controller.resolve_defaults(spec.to_scan_request())
+            pairs = controller.get_pairs(
+                req.assets.asset_type, req.assets.universe, req.assets.pairs
+            )
+            spec = spec.model_copy(
+                update={"pairs": pairs, "universe": req.assets.universe}
+            ).normalized()
+        finally:
+            if previous is None:
+                os.environ.pop("TVSCREENER_RUN_DIR", None)
+            else:
+                os.environ["TVSCREENER_RUN_DIR"] = previous
+
     analytics_output = spec.output
     if spec.pipeline_mode in ("analytics", "both") and not analytics_output:
         analytics_output = str(_default_results_path(run_dir, spec))
@@ -118,7 +161,7 @@ def prefect_run_flow(
         f"asset_type:{spec.asset_type}",
     ):
         if spec.pipeline_mode == "data":
-            res, matrix_text = _run_data_task(spec)
+            res, matrix_text = _run_data_task(spec, str(run_dir))
             matrix_path = None
             if matrix_text:
                 _write_matrix_artifact(run_dir, matrix_text)
@@ -140,7 +183,7 @@ def prefect_run_flow(
             return payload
 
         if spec.pipeline_mode == "analytics":
-            res, matrix_text = _run_analytics_task(spec)
+            res, matrix_text = _run_analytics_task(spec, str(run_dir))
             matrix_path = None
             if matrix_text:
                 _write_matrix_artifact(run_dir, matrix_text)
@@ -162,8 +205,8 @@ def prefect_run_flow(
             _write_json(run_dir / "run_result.json", payload)
             return payload
 
-        data_res, data_matrix_text = _run_data_task(spec)
-        analytics_res, analytics_matrix_text = _run_analytics_task(spec)
+        data_res, data_matrix_text = _run_data_task(spec, str(run_dir))
+        analytics_res, analytics_matrix_text = _run_analytics_task(spec, str(run_dir))
 
         matrix_path = None
         matrix_text = analytics_matrix_text or data_matrix_text
