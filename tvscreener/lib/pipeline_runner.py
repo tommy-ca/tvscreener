@@ -110,6 +110,7 @@ class PipelineRunSpec(BaseModel):
     # Asset/scanner parameters
     strategy: str | None = None
     contract_type: str | None = None
+    instrument_type: str | None = None
     min_volume: float | None = None
     max_atr: float | None = None
     min_ma_score: float | None = None
@@ -226,6 +227,7 @@ class PipelineRunSpec(BaseModel):
             timeframes=tfs,
             strategy=getattr(args, "strategy", None),
             contract_type=getattr(args, "contract_type", None),
+            instrument_type=getattr(args, "instrument_type", None),
             min_volume=getattr(args, "min_volume", None),
             max_atr=getattr(args, "max_atr", None),
             min_ma_score=getattr(args, "min_ma_score", None),
@@ -280,6 +282,7 @@ class PipelineRunSpec(BaseModel):
                 pairs=self.pairs,
                 timeframes=tfs_str,
                 contract_type=self.contract_type,
+                instrument_type=self.instrument_type,
                 min_volume=self.min_volume,
                 max_atr=self.max_atr,
                 min_ma_score=self.min_ma_score,
@@ -372,10 +375,13 @@ class LocalRunner:
             "TVSCREENER_RUN_ID": os.environ.get("TVSCREENER_RUN_ID"),
             "TVSCREENER_PARAMS_HASH": os.environ.get("TVSCREENER_PARAMS_HASH"),
             "TVSCREENER_CODE_VERSION": os.environ.get("TVSCREENER_CODE_VERSION"),
+            "TVSCREENER_INSTRUMENT_TYPE": os.environ.get("TVSCREENER_INSTRUMENT_TYPE"),
         }
         os.environ["TVSCREENER_RUN_ID"] = env_run_id
         os.environ["TVSCREENER_PARAMS_HASH"] = env_run_id
         os.environ["TVSCREENER_CODE_VERSION"] = spec.code_version or "unknown"
+        if spec.instrument_type:
+            os.environ["TVSCREENER_INSTRUMENT_TYPE"] = spec.instrument_type
 
         # Ensure lakehouse config is initialized consistently for this process.
         from tvscreener.lib.lakehouse import get_manager

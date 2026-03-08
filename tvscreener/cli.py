@@ -102,7 +102,18 @@ def main() -> int:
             choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
             default="forex",
         )
-        parser.add_argument("--universe", "-u", choices=["majors", "minors", "all"], default=None)
+        parser.add_argument(
+            "--universe",
+            "-u",
+            choices=[
+                "majors",
+                "minors",
+                "all",
+                "binance_spot_top100",
+                "binance_perp_top100",
+            ],
+            default=None,
+        )
         parser.add_argument("--pairs", nargs="+", help="Specific pairs to scan")
         parser.add_argument("--timeframes", "-t", default=None, help="Comma-separated timeframes")
         parser.add_argument(
@@ -110,6 +121,12 @@ def main() -> int:
             choices=["spot", "cfd", "spreadbet", "all"],
             default=None,
             help="Contract type to filter (default: cfd)",
+        )
+        parser.add_argument(
+            "--instrument-type",
+            choices=["spot", "perp"],
+            default=None,
+            help="Instrument type (crypto only): spot or perp",
         )
         parser.add_argument("--output", "-o", help="Output file (csv/json/parquet/xml)")
         parser.add_argument("--save-config", help="Save opportunity config to YAML")

@@ -67,6 +67,7 @@ class AssetSelection:
     pairs: list[str] | None = None
     timeframes: str | None = None
     contract_type: str | None = None
+    instrument_type: str | None = None
     min_volume: float | None = None
     max_atr: float | None = None
     min_ma_score: float | None = None
@@ -197,6 +198,22 @@ class ScreenerController:
             return DEFAULT_FOREX_PAIRS
 
         # Non-forex: use configured universe pairs
+        if asset_type == "crypto" and universe in {"binance_spot_top100", "binance_perp_top100"}:
+            from tvscreener.lib.universe.binance_crypto import (
+                BinanceCryptoUniverseConstraints,
+                build_binance_crypto_universe,
+                maybe_write_universe_json,
+            )
+
+            instrument_type = "spot" if universe == "binance_spot_top100" else "perp"
+            tickers, snapshot = build_binance_crypto_universe(
+                constraints=BinanceCryptoUniverseConstraints(instrument_type=instrument_type)
+            )
+
+            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
+            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
+            return tickers
+
         cfg = self.get_universe(asset_type)
         return list(cfg.pairs)
 
@@ -211,6 +228,15 @@ class ScreenerController:
             request.assets.timeframes = settings.default_timeframes
         if request.assets.contract_type is None:
             request.assets.contract_type = settings.contract_type
+
+        if (
+            request.assets.asset_type == "crypto"
+            and request.assets.universe in {"binance_spot_top100", "binance_perp_top100"}
+            and getattr(request.assets, "instrument_type", None) is None
+        ):
+            request.assets.instrument_type = (
+                "spot" if request.assets.universe == "binance_spot_top100" else "perp"
+            )
 
         if request.assets.contract_type is not None:
             valid_contracts = ("spot", "cfd", "spreadbet", "all")

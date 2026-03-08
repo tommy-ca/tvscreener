@@ -434,20 +434,24 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             df["asset_type"] = self.asset_type
 
             # Instrument type is a first-class dimension for scalable table layouts.
-            if layout == "scalable":
-                raw_type = None
-                if "instrument_type" in df.columns:
-                    raw_type = None
-                elif "Type" in df.columns:
-                    raw_type = str(df["Type"].iloc[0]) if len(df) else None
-                elif "TYPE" in df.columns:
-                    raw_type = str(df["TYPE"].iloc[0]) if len(df) else None
+            if layout == "scalable" and "instrument_type" not in df.columns:
                 env_it = (os.getenv("TVSCREENER_INSTRUMENT_TYPE") or "").strip() or None
-                inferred = normalize_instrument_type(
-                    asset_type=self.asset_type, raw=env_it or raw_type
-                )
-                if "instrument_type" not in df.columns:
-                    df["instrument_type"] = inferred
+                if env_it:
+                    df["instrument_type"] = normalize_instrument_type(
+                        asset_type=self.asset_type, raw=env_it
+                    )
+                elif "Type" in df.columns:
+                    df["instrument_type"] = (
+                        df["Type"]
+                        .astype(str)
+                        .map(lambda v: normalize_instrument_type(asset_type=self.asset_type, raw=v))
+                    )
+                elif "TYPE" in df.columns:
+                    df["instrument_type"] = (
+                        df["TYPE"]
+                        .astype(str)
+                        .map(lambda v: normalize_instrument_type(asset_type=self.asset_type, raw=v))
+                    )
             df["timeframes"] = ",".join(sorted(self.timeframes))
             df["timeframe_set_id"] = timeframe_set_id(self.timeframes)
             df["scanner_family"] = "opportunity"
@@ -575,7 +579,10 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
                 if layout == "scalable" and "instrument_type" in df.columns:
                     for it_val in sorted({str(v) for v in df["instrument_type"].dropna().tolist()}):
-                        _persist_group(df[df["instrument_type"].astype(str) == it_val].copy())
+                        df_group: pd.DataFrame = df.loc[
+                            df["instrument_type"].astype(str) == it_val
+                        ].copy()  # type: ignore[assignment]
+                        _persist_group(df_group)
                 else:
                     _persist_group(df)
 
@@ -616,7 +623,9 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                         for it_val in sorted(
                             {str(v) for v in df["instrument_type"].dropna().tolist()}
                         ):
-                            df_g = df[df["instrument_type"].astype(str) == it_val].copy()
+                            df_g: pd.DataFrame = df.loc[
+                                df["instrument_type"].astype(str) == it_val
+                            ].copy()  # type: ignore[assignment]
                             _write_product(
                                 "signals_batch",
                                 df_g,
@@ -695,7 +704,9 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                         for it_val in sorted(
                             {str(v) for v in df["instrument_type"].dropna().tolist()}
                         ):
-                            df_g = df[df["instrument_type"].astype(str) == it_val].copy()
+                            df_g: pd.DataFrame = df.loc[
+                                df["instrument_type"].astype(str) == it_val
+                            ].copy()  # type: ignore[assignment]
                             _write_product(
                                 "signals_latest",
                                 df_g,
