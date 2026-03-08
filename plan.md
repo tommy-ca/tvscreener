@@ -134,6 +134,15 @@ Planned work (spec-driven):
 - Persist `universe.json` under `artifacts/runs/<params_hash>/` for reproducibility
 - Add Prefect batch template(s) for crypto spot/perps
 
+Build status:
+- Implemented TradingView-driven Binance crypto universe selection in orchestrator:
+  - `--asset-type crypto --universe binance_spot_top100`
+  - `--asset-type crypto --universe binance_perp_top100`
+- Added `instrument_type` to the run spec + CLI (`--instrument-type spot|perp`) and propagates to `TVSCREENER_INSTRUMENT_TYPE`.
+- Added Prefect batch templates:
+  - `workflows/prefect/batches/crypto_binance_spot_top100_both.json`
+  - `workflows/prefect/batches/crypto_binance_perp_top100_both.json`
+
 ## Research notes (TradingView crypto spot/perps)
 
 Empirical TradingView results:
