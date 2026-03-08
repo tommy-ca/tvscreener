@@ -118,6 +118,59 @@ Everything else is explicitly non-contract:
 3) Deprecation
 - Update docs/runbooks to reference `artifacts/runs/`
 - Remove stage-specific JSON writes in a later release window
+
+## Next: Binance crypto (spot + perps) scan plan
+
+Goal: scan Binance crypto markets (spot + perps) using the shared opportunity scanner.
+
+Constraints:
+- rank: top 100 by 24h quote volume (USD)
+- filters: quote volume >= 10,000,000 and 24h volatility >= 3%
+
+Planned work (spec-driven):
+- Add OpenSpec change: `docs/openspec/changes/add-binance-crypto-opportunity-scan/`
+- Use TradingView crypto `/scan` filtered to `Exchange=BINANCE` and `Type in {spot, swap}`
+- Implement deterministic universe selector (top 100 by `Volume 24h in USD`, min volume, min volatility)
+- Persist `universe.json` under `artifacts/runs/<params_hash>/` for reproducibility
+- Add Prefect batch template(s) for crypto spot/perps
+
+## Research notes (TradingView crypto spot/perps)
+
+Empirical TradingView results:
+- Spot tickers like `BINANCE:BTCUSDT` appear in `CryptoScreener` with:
+  - `Exchange=BINANCE`, `Type=spot`, `Subtype=crypto`
+- Perps are also accessible via `CryptoScreener` by searching `PERP`, and appear as symbols ending in `.P`:
+  - e.g. `BINANCE:BTCUSDT.P` with `Exchange=BINANCE`, `Type=swap`, `Subtype=crypto`
+
+Selection columns available in `CryptoField`:
+- `VOLUME_24H_IN_USD` (`Volume 24h in USD`)
+- `PRICE` (`Price` / `close`)
+- `HIGH`, `LOW`
+- `EXCHANGE`, `TYPE`, `SUBTYPE`
+
+Volatility proxy definition for filtering:
+- `volatility_24h_pct = (High - Low) / Price * 100`
+
+## Brainstorm: scalable table naming
+
+Problem: as we add asset types and dataset types, a single shared `tvscreener.bronze|silver|gold` table forces schema drift
+and nullable columns.
+
+Candidate namespace layout (logical):
+- `tvscreener.<asset_type>.<instrument_type>.<stage>.<dataset>`
+  - ex: `tvscreener.crypto.spot.bronze.screener_snapshot`
+  - ex: `tvscreener.crypto.perp.gold.screener_snapshot`
+
+Compatibility encoding (physical, single-level namespace):
+- `tvscreener_<asset_type>_<instrument_type>_<stage>.<dataset>`
+
+OpenSpec: `docs/openspec/changes/refactor-lakehouse-namespace-layout/`
+
+Build status:
+- Implemented a table-id resolver with `TVSCREENER_LAKEHOUSE_LAYOUT` (`legacy|scalable`).
+- Scalable physical encoding uses single-level namespaces:
+  - `tvscreener_<asset_type>_<instrument_type>_<stage>.<dataset>`
+  - product tables: `tvscreener_<asset_type>_<instrument_type>_product.<dataset>`
 - Data run (Prefect server): completed; wrote `tvscreener.bronze` append and overwrote `silver`, `gold`, `signals_batch`, `signals_latest`.
   - Log: `artifacts/matrix/forex_all_data_prefect_server.log`
 - Opportunity analytics matrix (Prefect server): rendered to logs and persisted as `matrix.txt`.

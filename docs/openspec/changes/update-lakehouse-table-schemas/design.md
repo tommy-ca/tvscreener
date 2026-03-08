@@ -49,6 +49,24 @@ but our current `LakehouseManager` namespace provisioning is **single-level** (i
 first identifier segment). Using `tvscreener_bronze` avoids nested namespace provisioning complexity
 while remaining Iceberg-native.
 
+### Alternative: nested namespace by asset + instrument + stage
+
+As the system expands to asset types whose `/scan` payload schemas are not identical (and to instruments like crypto perps),
+a nested namespace layout becomes attractive for isolation.
+
+Logical model:
+- `tvscreener.<asset_type>.<instrument_type>.<stage>.<dataset>`
+
+Example:
+- `tvscreener.crypto.spot.bronze.screener_snapshot`
+- `tvscreener.crypto.perp.gold.screener_snapshot`
+
+Compatibility note:
+- If the catalog/backend prefers single-level namespaces, use a flattened physical encoding:
+  - `tvscreener_<asset_type>_<instrument_type>_<stage>.<dataset>`
+
+See `docs/openspec/changes/refactor-lakehouse-namespace-layout/` for the proposed contract and migration plan.
+
 ### Current table names
 The base opportunity pipeline writes to:
 - `tvscreener.bronze` (append)

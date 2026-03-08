@@ -17,6 +17,13 @@ The system SHALL use Iceberg-native naming semantics: catalog (configured), name
   - `tvscreener_product` (analytics products)
 - **AND** table names are dataset names (e.g. `screener_snapshot`, `market_klines`) without stage prefixes
 
+### Requirement: Namespace layout scales by asset and instrument type
+The system SHOULD support a naming layout that isolates schemas by asset type and instrument type.
+
+#### Scenario: Crypto spot and perp schemas are isolated
+- **WHEN** the system persists screener snapshot rows for both crypto spot and crypto perps
+- **THEN** they are stored in separate Iceberg tables or namespaces so incompatible fields do not force nullable growth
+
 #### Scenario: SQL examples include catalog when required
 - **WHEN** SQL examples are provided for an engine that requires catalog qualification
 - **THEN** the examples use `catalog.namespace.table` (e.g. `local.tvscreener_gold.screener_snapshot`)
@@ -92,4 +99,3 @@ Gold schemas SHALL explicitly define the score/confluence/risk outputs produced 
 - **WHEN** Gold rows are written for opportunity screening
 - **THEN** they include `ENSEMBLE_SCORE` and `DIRECTION`
 - **AND** include the confluence outputs required for matrix rendering (`GRID_*`, `GRADE`, etc.)
-
