@@ -1,6 +1,7 @@
 import contextlib
 import logging
 import re
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -121,8 +122,22 @@ class LakehouseManager:
                 update.union_by_name(arrow_table.schema)
 
             if mode == "overwrite":
+
+                def _overwrite(*, overwrite_filter: Any | None = None) -> None:
+                    with warnings.catch_warnings():
+                        warnings.filterwarnings(
+                            "ignore",
+                            message=r"Delete operation did not match any records",
+                            category=UserWarning,
+                            module=r"pyiceberg\..*",
+                        )
+                        if overwrite_filter is None:
+                            table.overwrite(arrow_table)
+                        else:
+                            table.overwrite(arrow_table, overwrite_filter=overwrite_filter)
+
                 if overwrite_filter is not None:
-                    table.overwrite(arrow_table, overwrite_filter=overwrite_filter)
+                    _overwrite(overwrite_filter=overwrite_filter)
                 elif partition_by:
                     from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
 
@@ -147,13 +162,13 @@ class LakehouseManager:
 
                     if not filters:
                         # Empty data + partition_by: overwrite nothing
-                        table.overwrite(arrow_table, overwrite_filter=AlwaysFalse())
+                        _overwrite(overwrite_filter=AlwaysFalse())
                     else:
                         final_filter = filters[0] if len(filters) == 1 else And(*filters)
-                        table.overwrite(arrow_table, overwrite_filter=final_filter)
+                        _overwrite(overwrite_filter=final_filter)
 
                 else:
-                    table.overwrite(arrow_table)
+                    _overwrite()
                 logger.info("Overwrote Iceberg table '%s' (%d rows)", identifier, len(arrow_table))
             else:
                 table.append(arrow_table)
@@ -225,7 +240,7 @@ class LakehouseManager:
                 for col in list(native.columns):
                     s = native[col]
                     # datetime64[ns, tz]
-                    if _pd.api.types.is_datetime64tz_dtype(s):
+                    if isinstance(s.dtype, _pd.DatetimeTZDtype):
                         native[col] = s.dt.tz_convert("UTC").dt.tz_localize(None)
                         continue
                     # object series containing tz-aware datetimes
