@@ -214,6 +214,28 @@ class ScreenerController:
             _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
             return tickers
 
+        if asset_type == "crypto" and universe in {
+            "binance_spot_mcap_top100",
+            "binance_perp_mcap_top100",
+        }:
+            from tvscreener.lib.universe.binance_crypto import (
+                BinanceCryptoMarketCapUniverseConstraints,
+                build_binance_crypto_universe_market_cap,
+                maybe_write_universe_json,
+            )
+
+            instrument_type = "spot" if universe == "binance_spot_mcap_top100" else "perp"
+            tickers, snapshot = build_binance_crypto_universe_market_cap(
+                constraints=BinanceCryptoMarketCapUniverseConstraints(
+                    instrument_type=instrument_type,
+                    min_volatility_24h_pct=0.0,
+                )
+            )
+
+            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
+            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
+            return tickers
+
         cfg = self.get_universe(asset_type)
         return list(cfg.pairs)
 
@@ -231,11 +253,19 @@ class ScreenerController:
 
         if (
             request.assets.asset_type == "crypto"
-            and request.assets.universe in {"binance_spot_top100", "binance_perp_top100"}
+            and request.assets.universe
+            in {
+                "binance_spot_top100",
+                "binance_perp_top100",
+                "binance_spot_mcap_top100",
+                "binance_perp_mcap_top100",
+            }
             and getattr(request.assets, "instrument_type", None) is None
         ):
             request.assets.instrument_type = (
-                "spot" if request.assets.universe == "binance_spot_top100" else "perp"
+                "spot"
+                if request.assets.universe in {"binance_spot_top100", "binance_spot_mcap_top100"}
+                else "perp"
             )
 
         if request.assets.contract_type is not None:

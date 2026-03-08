@@ -1,0 +1,19 @@
+{
+  "batch_id": "crypto-binance-spot-mcap-top100",
+  "defaults": {
+    "asset_type": "crypto",
+    "universe": "binance_spot_mcap_top100",
+    "instrument_type": "spot",
+    "timeframes": ["15", "60", "240"],
+    "config_path": "tvscreener.yaml"
+  },
+  "sharding": { "enabled": false },
+  "runs": [
+    {
+      "scanner_family": "opportunity",
+      "pipeline_mode": "both",
+      "matrix": true,
+      "limit": 100
+    }
+  ]
+}

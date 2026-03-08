@@ -111,6 +111,8 @@ def main() -> int:
                 "all",
                 "binance_spot_top100",
                 "binance_perp_top100",
+                "binance_spot_mcap_top100",
+                "binance_perp_mcap_top100",
             ],
             default=None,
         )

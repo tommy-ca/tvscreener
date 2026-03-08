@@ -17,6 +17,15 @@ class BinanceCryptoUniverseConstraints:
     min_volatility_24h_pct: float = 3.0
 
 
+@dataclass(frozen=True, slots=True)
+class BinanceCryptoMarketCapUniverseConstraints:
+    instrument_type: str  # spot | perp
+    top_n_market_cap: int = 100
+    quote_asset: str = "USDT"
+    # Raw universe selection is market-cap-driven; filtering is done later in analytics.
+    min_volatility_24h_pct: float = 0.0
+
+
 def _tv_type_for_instrument(instrument_type: str) -> str:
     it = (instrument_type or "").strip().lower()
     if it == "spot":
@@ -128,6 +137,176 @@ def fetch_tradingview_binance_crypto_candidates(
     return df
 
 
+def fetch_tradingview_top_coins_by_market_cap(*, top_n: int = 100) -> pd.DataFrame:
+    """Fetch top coins by market cap using TradingView coin /scan.
+
+    Uses `CoinScreener` with `CoinField.MARKET_CAP_CALC` which is populated for
+    major coins.
+    """
+
+    import tvscreener as tvs
+    from tvscreener import CoinField
+
+    ss = tvs.CoinScreener()
+    ss.set_range(0, int(top_n))
+    ss.sort_by(CoinField.MARKET_CAP_CALC, ascending=False)
+    ss.select(CoinField.NAME, CoinField.MARKET_CAP_CALC)
+    df = ss.get()
+    return pd.DataFrame() if df is None else df
+
+
+def _base_from_coin_name(name: str) -> str | None:
+    raw = (name or "").strip().upper()
+    # CoinScreener returns names like BTCUSD.
+    if raw.endswith("USD") and len(raw) > 3:
+        return raw[: -len("USD")]
+    return None
+
+
+def _ticker_for_base(*, base: str, quote_asset: str, instrument_type: str) -> str:
+    base = (base or "").strip().upper()
+    quote_asset = (quote_asset or "").strip().upper()
+    if instrument_type == "spot":
+        return f"BINANCE:{base}{quote_asset}"
+    if instrument_type == "perp":
+        return f"BINANCE:{base}{quote_asset}.P"
+    raise ValueError(f"Unsupported instrument_type: {instrument_type}")
+
+
+def fetch_tradingview_crypto_tickers(tickers: list[str]) -> pd.DataFrame:
+    """Fetch TradingView crypto rows for an explicit ticker list."""
+
+    if not tickers:
+        return pd.DataFrame()
+
+    import tvscreener as tvs
+    from tvscreener import CryptoField
+
+    ss = tvs.CryptoScreener()
+    ss.set_tickers(*tickers)
+    ss.set_range(0, len(tickers))
+    ss.select(
+        CryptoField.NAME,
+        CryptoField.EXCHANGE,
+        CryptoField.TYPE,
+        CryptoField.SUBTYPE,
+        CryptoField.MARKET_CAPITALIZATION,
+        CryptoField.VOLATILITY,
+        CryptoField.PRICE,
+        CryptoField.HIGH,
+        CryptoField.LOW,
+        CryptoField.VOLUME_24H_IN_USD,
+    )
+    df = ss.get()
+    return pd.DataFrame() if df is None else df
+
+
+def symbol_from_ticker(ticker: str) -> str:
+    raw = (ticker or "").strip()
+    if ":" in raw:
+        raw = raw.split(":", 1)[1]
+    if raw.endswith(".P"):
+        raw = raw[: -len(".P")]
+    return raw
+
+
+def entity_id_for(*, ticker: str, instrument_type: str) -> str:
+    instrument_type = (instrument_type or "").strip().lower()
+    return f"binance:{instrument_type}:{symbol_from_ticker(ticker)}"
+
+
+def build_binance_crypto_universe_market_cap(
+    *, constraints: BinanceCryptoMarketCapUniverseConstraints
+) -> tuple[list[str], dict]:
+    coins = fetch_tradingview_top_coins_by_market_cap(top_n=constraints.top_n_market_cap)
+    bases: list[str] = []
+    if not coins.empty and "Name" in coins.columns:
+        for n in coins["Name"].dropna().astype(str).tolist():
+            b = _base_from_coin_name(n)
+            if b:
+                bases.append(b)
+    # Stable order (market cap rank order), de-duped.
+    bases = list(dict.fromkeys(bases))
+
+    tickers = [
+        _ticker_for_base(
+            base=b,
+            quote_asset=constraints.quote_asset,
+            instrument_type=constraints.instrument_type,
+        )
+        for b in bases
+    ]
+
+    candidates = fetch_tradingview_crypto_tickers(tickers)
+    if candidates.empty:
+        out_tickers: list[str] = []
+        ordered = candidates
+        missing = tickers
+    else:
+        returned = (
+            candidates["Symbol"].dropna().astype(str).tolist()
+            if "Symbol" in candidates.columns
+            else []
+        )
+        returned_set = set(returned)
+        out_tickers = [t for t in tickers if t in returned_set]
+        missing = [t for t in tickers if t not in returned_set]
+
+        # Preserve market-cap rank order; do not filter/sort here.
+        ordered = candidates.copy()
+        if "Symbol" in ordered.columns:
+            ordered["_order"] = (
+                ordered["Symbol"]
+                .astype(str)
+                .map(lambda s: out_tickers.index(s) if s in out_tickers else 10**9)
+            )
+            ordered = ordered.sort_values(["_order"]).drop(columns=["_order"])
+
+    # Best-effort metrics for later analytics filtering.
+    if "Volume 24h in USD" in ordered.columns:
+        ordered["quote_volume_usd"] = pd.to_numeric(ordered["Volume 24h in USD"], errors="coerce")
+    if "Volatility" in ordered.columns or "High" in ordered.columns:
+        ordered["volatility_24h_pct"] = compute_volatility_24h_pct(ordered)
+    snapshot = {
+        "generated_at_utc": datetime.now(tz=UTC).isoformat(),
+        "constraints": {
+            "venue": "binance",
+            "selection": "market_cap_top100",
+            "instrument_type": constraints.instrument_type,
+            "quote_asset": constraints.quote_asset,
+            "top_n_market_cap": constraints.top_n_market_cap,
+            "min_volatility_24h_pct": constraints.min_volatility_24h_pct,
+            "filters_applied": False,
+            "sort": "market_cap_rank",
+        },
+        "market_cap_bases": bases,
+        "requested_tickers": tickers,
+        "missing_tickers": missing,
+        "count": len(out_tickers),
+        "rows": (
+            [
+                {
+                    "ticker": str(row.get("Symbol")),
+                    "symbol": symbol_from_ticker(str(row.get("Symbol"))),
+                    "venue": "binance",
+                    "instrument_type": (constraints.instrument_type or "").strip().lower(),
+                    "entity_id": entity_id_for(
+                        ticker=str(row.get("Symbol")),
+                        instrument_type=(constraints.instrument_type or "").strip().lower(),
+                    ),
+                    "market_cap_usd": row.get("Market Capitalization"),
+                    "quote_volume_usd": row.get("quote_volume_usd"),
+                    "volatility_24h_pct": row.get("volatility_24h_pct"),
+                }
+                for row in cast(list[dict[str, Any]], ordered.to_dict(orient="records"))
+            ]
+            if not ordered.empty
+            else []
+        ),
+    }
+    return out_tickers, snapshot
+
+
 def build_binance_crypto_universe(
     *, constraints: BinanceCryptoUniverseConstraints
 ) -> tuple[list[str], dict]:
@@ -138,18 +317,7 @@ def build_binance_crypto_universe(
 
     tickers = ranked["Symbol"].astype(str).tolist() if not ranked.empty else []
 
-    def _symbol_from_ticker(ticker: str) -> str:
-        raw = (ticker or "").strip()
-        if ":" in raw:
-            raw = raw.split(":", 1)[1]
-        if raw.endswith(".P"):
-            raw = raw[: -len(".P")]
-        return raw
-
     instrument_type = (constraints.instrument_type or "").strip().lower()
-
-    def _entity_id(ticker: str) -> str:
-        return f"binance:{instrument_type}:{_symbol_from_ticker(ticker)}"
 
     snapshot = {
         "generated_at_utc": datetime.now(tz=UTC).isoformat(),
@@ -164,12 +332,14 @@ def build_binance_crypto_universe(
         "rows": (
             [
                 {
-                    "rank": int(row.get("rank")),
+                    "rank": int(row.get("rank") or 0),
                     "ticker": str(row.get("Symbol")),
-                    "symbol": _symbol_from_ticker(str(row.get("Symbol"))),
+                    "symbol": symbol_from_ticker(str(row.get("Symbol"))),
                     "venue": "binance",
                     "instrument_type": instrument_type,
-                    "entity_id": _entity_id(str(row.get("Symbol"))),
+                    "entity_id": entity_id_for(
+                        ticker=str(row.get("Symbol")), instrument_type=instrument_type
+                    ),
                     "Name": row.get("Name"),
                     "Type": row.get("Type"),
                     "Subtype": row.get("Subtype"),
