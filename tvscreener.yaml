@@ -2,7 +2,8 @@
 # Copy to .env for environment-specific overrides
 
 # Global defaults
-default_universe: "majors"
+# Default universe is set to `all` to match the Prefect-server parity rerun workflow.
+default_universe: "all"
 default_timeframes: "240,60,15"
 contract_type: "cfd"
 

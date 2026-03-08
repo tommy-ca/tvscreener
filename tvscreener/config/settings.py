@@ -152,7 +152,7 @@ class ScreenerSettings(BaseSettings):
     min_roc: float | None = Field(default=None, ge=0)
 
     # Universal Defaults
-    default_universe: str = Field(default="majors")
+    default_universe: str = Field(default="all")
     default_timeframes: str = Field(default="240,60,15")
     contract_type: Literal["spot", "cfd", "spreadbet", "all"] = Field(default="cfd")
 
