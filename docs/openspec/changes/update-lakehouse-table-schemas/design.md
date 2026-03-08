@@ -94,6 +94,18 @@ Overwrite scoping is done via Iceberg overwrite filters built from:
 - plus an entity key column (prefers `entity_id`, falls back to `PAIR`, `Symbol`, `Name`)
 - and ALWAYS includes `IS NULL` checks for partition columns and the selected key column (legacy cleanup)
 
+#### Note on Iceberg overwrite warnings
+
+Some Iceberg engines emit a warning when an overwrite operation internally issues a delete that matches no rows
+(e.g. rerunning a partition overwrite for a partition that does not exist yet).
+
+In this repo, this is expected during idempotent reruns and tests, so the lakehouse writer suppresses only the
+specific `pyiceberg` warning:
+
+- `UserWarning: Delete operation did not match any records`
+
+All other warnings and exceptions remain visible.
+
 ### Current shared “run envelope” columns
 Written on every stage row when non-empty:
 - `run_id` (uuid string)

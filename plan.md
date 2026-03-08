@@ -158,7 +158,8 @@ Selection columns available in `CryptoField`:
 - `EXCHANGE`, `TYPE`, `SUBTYPE`
 
 Volatility proxy definition for filtering:
-- `volatility_24h_pct = (High - Low) / Price * 100`
+- prefer TradingView native `Volatility` (`Volatility.D`)
+- fallback proxy: `volatility_24h_pct = (High - Low) / Price * 100`
 
 ## Brainstorm: scalable table naming
 

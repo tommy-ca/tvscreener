@@ -43,8 +43,8 @@ Universe selector produces a list of `entity_id` values given constraints:
 
 Definitions:
 - `quote_volume_usd`: TradingView `Volume 24h in USD`.
-- `volatility_24h_pct`: derived from TradingView high/low/price:
-  - `(High - Low) / Price * 100`
+- `volatility_24h_pct`: prefer TradingView native `Volatility` (`CryptoField.VOLATILITY` / `Volatility.D`).
+  - fallback: `(High - Low) / Price * 100`
 
 ### Artifacts and reproducibility
 

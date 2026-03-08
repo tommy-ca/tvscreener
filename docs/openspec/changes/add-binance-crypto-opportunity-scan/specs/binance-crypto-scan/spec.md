@@ -27,6 +27,12 @@ The system SHALL support selecting a Binance crypto universe by deterministic ra
 - **THEN** it returns at most 100 instruments ordered by `quote_volume_usd` descending
 - **AND** every instrument in the returned set meets the minimum thresholds
 
+#### Scenario: Volatility uses TradingView native field when available
+- **GIVEN** TradingView returns a `Volatility` column for a candidate instrument
+- **WHEN** the universe selector computes `volatility_24h_pct`
+- **THEN** it uses TradingView's `Volatility` value
+- **AND** does not rely on a derived `(High-Low)/Price` proxy
+
 ### Requirement: Opportunity scanner is shared across asset types
 The system SHALL run the same opportunity scanner family for forex and Binance crypto.
 

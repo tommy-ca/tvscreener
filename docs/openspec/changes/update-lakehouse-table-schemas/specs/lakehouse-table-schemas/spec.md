@@ -17,6 +17,14 @@ The system SHALL use Iceberg-native naming semantics: catalog (configured), name
   - `tvscreener_product` (analytics products)
 - **AND** table names are dataset names (e.g. `screener_snapshot`, `market_klines`) without stage prefixes
 
+### Requirement: Idempotent overwrites do not emit noise warnings
+The system SHOULD keep idempotent overwrite operations warning-clean.
+
+#### Scenario: No-op delete warning is suppressed
+- **GIVEN** an overwrite operation targets a partition that does not yet exist
+- **WHEN** the Iceberg engine emits a no-op delete warning
+- **THEN** the system suppresses only the specific warning and proceeds
+
 ### Requirement: Namespace layout scales by asset and instrument type
 The system SHOULD support a naming layout that isolates schemas by asset type and instrument type.
 
