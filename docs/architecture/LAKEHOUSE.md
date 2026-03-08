@@ -78,8 +78,10 @@ outside the core `tvscreener` library package so the core remains dependency-fre
 The repo supports deterministic reruns for **forex majors and minors** using Prefect batch fan-out:
 
 - Batch templates live under `workflows/prefect/batches/` (e.g. `forex_majors_minors_both.json`).
-- Artifacts are keyed by `params_hash` and written under `artifacts/prefect/<params_hash>/` so replays are stable and
+- Artifacts are keyed by `params_hash` and written under `artifacts/runs/<params_hash>/` so replays are stable and
   machine-discoverable.
+
+Legacy compatibility: `artifacts/prefect/<params_hash>/` remains supported during migration.
 - Expected behavior:
   - **Data** runs update canonical Iceberg tables (Bronze/Silver/Gold + product tables such as `signals_latest`).
   - **Analytics** runs are expected to be **read-only** w.r.t. Iceberg and only emit artifacts (e.g. results parquet).

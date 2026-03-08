@@ -20,16 +20,16 @@ uv run tvscreener-scan --scanner opportunity --pipeline data --asset-type forex 
 uv run tvscreener-scan --scanner opportunity --pipeline data --asset-type forex --universe minors --config tvscreener.yaml
 
 # 2) Analytics pipelines (query Iceberg + render the same matrix view)
-uv run tvscreener-scan --scanner opportunity --pipeline analytics --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
-uv run tvscreener-scan --scanner opportunity --pipeline analytics --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner opportunity --pipeline analytics --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner opportunity --pipeline analytics --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
 
 # Strategy is an analytics pipeline over Iceberg-backed Gold rows
-uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
-uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner strategy --pipeline analytics --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner strategy --pipeline analytics --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
 
 # (Optional) One-shot mode: data then analytics in one command
-uv run tvscreener-scan --scanner opportunity --pipeline both --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
-uv run tvscreener-scan --scanner opportunity --pipeline both --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner opportunity --pipeline both --asset-type forex --universe majors --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner opportunity --pipeline both --asset-type forex --universe minors --matrix --limit 100 --config tvscreener.yaml
 ```
 
 ### Forex all-universe (matrix view)
@@ -39,8 +39,8 @@ uv run tvscreener-scan --scanner opportunity --pipeline both --asset-type forex 
 uv run tvscreener-scan --scanner opportunity --pipeline data --asset-type forex --universe all --config tvscreener.yaml
 
 # Analytics replays (matrix view) from Iceberg
-uv run tvscreener-scan --scanner opportunity --pipeline analytics --asset-type forex --universe all --matrix --limit 100 --config tvscreener.yaml
-uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type forex --universe all --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner opportunity --pipeline analytics --asset-type forex --universe all --matrix --limit 100 --config tvscreener.yaml
+uv run tvscreener-scan --runner local --scanner strategy --pipeline analytics --asset-type forex --universe all --matrix --limit 100 --config tvscreener.yaml
 ```
 
 ## Commands (Prefect batch reruns)
@@ -48,11 +48,25 @@ uv run tvscreener-scan --scanner strategy --pipeline analytics --asset-type fore
 Use Prefect for deterministic artifacts keyed by `params_hash`, plus safe fan-out/sharding.
 
 ```bash
+cp .env.example .env
 uv sync --extra prefect
 
 # Prefect local runtime (recommended for stable local runs)
 export PREFECT_HOME="$PWD/.prefect-home"
 export PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=180
+
+# For parity with production (avoid ephemeral server), start a local Prefect server:
+#   uv run prefect server start --host 127.0.0.1 --port 4200 --background
+#   export PREFECT_API_URL="http://127.0.0.1:4200/api"
+
+# If you copy `.env.example` to `.env`, the CLI will best-effort load it and Prefect can read
+# `PREFECT_API_URL` and `PREFECT_HOME` without manual exports.
+
+# If Prefect fails to start with an Alembic error like:
+#   "Can't locate revision identified by ..."
+# reset local Prefect state and retry:
+#   mv .prefect-home .prefect-home.bak-$(date +%Y%m%d-%H%M%S)
+#   mkdir .prefect-home
 
 # Full refresh: data then analytics (majors+minors, opportunity+strategy)
 uv run --extra prefect python workflows/prefect/run_batch.py \
@@ -69,7 +83,9 @@ uv run --extra prefect python workflows/prefect/run_batch.py \
   --skip-existing
 ```
 
-Artifacts are written under `artifacts/prefect/<params_hash>/` (plus `artifacts/prefect/batch/<batch_id>/`).
+Artifacts are written under `artifacts/runs/<params_hash>/` (plus `artifacts/runs/batch/<batch_id>/`).
+
+Legacy compatibility: `--artifacts-dir artifacts/prefect` continues to work during migration.
 
 ### Prefect: forex all-universe
 

@@ -79,6 +79,5 @@ uv run --extra prefect python workflows/prefect/run_batch.py --batch /tmp/batch.
 ```
 
 Validation:
-- `artifacts/prefect/batch/tvscan-range-verify/batch_result.json` exists
-- each `artifacts/prefect/<params_hash>/opportunity_results.parquet` exists and has a non-zero row count
-
+- `artifacts/runs/batch/tvscan-range-verify/batch_result.json` exists
+- each `artifacts/runs/<params_hash>/opportunity_results.parquet` exists and has a non-zero row count

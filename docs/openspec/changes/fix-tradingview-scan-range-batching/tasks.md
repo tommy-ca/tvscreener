@@ -16,5 +16,4 @@
 - [x] 4.2 Rerun an analytics pipeline from Iceberg outputs and confirm artifacts/render parity
 - [ ] 4.3 Rerun via Prefect workflows:
   - use `--runner export` to create a `PipelineRunSpec`
-  - run with `workflows/prefect/run_flow.py` and confirm artifacts exist under `artifacts/prefect/<params_hash>/`
-
+  - run with `workflows/prefect/run_flow.py` and confirm artifacts exist under `artifacts/runs/<params_hash>/`

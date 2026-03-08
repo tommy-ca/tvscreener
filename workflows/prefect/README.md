@@ -9,15 +9,30 @@ This directory contains an **optional** Prefect wrapper that runs `tvscreener` p
 uv sync --extra prefect
 ```
 
+For the simplest local parity workflow, start from the repo-provided `.env` template:
+
+```bash
+cp .env.example .env
+```
+
 ### Runtime notes (uv-managed, no global Python)
 
 - This repo is intended to run under `uv` with an **uv-managed Python**.
-- If Prefect’s temporary server is slow to start on first run (migrations), increase the startup timeout:
+- For production parity, prefer running against a dedicated Prefect server via `PREFECT_API_URL`.
+- If you do use Prefect’s temporary (ephemeral) server and it is slow to start on first run (migrations), increase the startup timeout:
 
 ```bash
 PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=180 \
 uv run --extra prefect python workflows/prefect/run_batch.py --help
 ```
+
+### Dedicated Prefect server (recommended)
+
+```bash
+uv run prefect server start --host 127.0.0.1 --port 4200 --background
+```
+
+With `.env` configured, you can omit exports (CLI loads `.env` best-effort).
 
 ### Export a spec (engine-agnostic)
 
@@ -34,7 +49,7 @@ uv run --extra prefect python workflows/prefect/run_flow.py --spec run_spec.json
 ### Path semantics (important for reruns)
 
 - `python workflows/prefect/run_flow.py` and `python workflows/prefect/run_batch.py` run with the **repo root** as
-  the working directory, so a relative `--artifacts-dir` (default `artifacts/prefect`) is stable across reruns.
+  the working directory, so a relative `--artifacts-dir` (default `artifacts/runs`) is stable across reruns.
 - `tvscreener-scan --runner prefect` runs inside the current process and resolves a relative `--artifacts-dir`
   from the **invocation working directory**.
   - Recommendation: run the seamless CLI form from the repo root, or pass an absolute `--artifacts-dir`.
@@ -42,18 +57,19 @@ uv run --extra prefect python workflows/prefect/run_flow.py --spec run_spec.json
 ### Seamless CLI runner (no intermediate spec file)
 
 ```bash
-uv run --extra prefect tvscreener-scan --runner prefect --scanner opportunity --pipeline both --asset-type forex --universe majors --timeframes 15,60,240 --config tvscreener.yaml
+uv run --extra prefect tvscreener-scan --runner prefect --scanner opportunity --pipeline both --asset-type forex --config tvscreener.yaml
 ```
 
 ### Artifacts (analytics workflows)
 
-Artifacts are written under `artifacts/prefect/<params_hash>/` by default (or `--artifacts-dir`).
+Artifacts are written under `artifacts/runs/<params_hash>/` by default (or `--artifacts-dir`).
+
+Legacy compatibility: `--artifacts-dir artifacts/prefect` continues to work during migration.
 
 - **Always**:
   - `run_spec.json`
 - **Result JSON**:
-  - `run_result_analytics.json` for `--pipeline analytics`
-  - `run_result.json` for `--pipeline both` (includes `analytics.results_path`)
+  - `run_result.json` for any pipeline mode (includes `analytics.results_path` when analytics runs)
 - **Analytics output file**:
   - if `--output` is omitted, defaults to `<scanner_family>_results.parquet` under the run directory
   - the emitted path is recorded as `results_path` in the result JSON
@@ -126,7 +142,7 @@ uv run --extra prefect python workflows/prefect/run_batch.py \
 
 - **Data runs** (`pipeline_mode=data|both`) will update Iceberg tables for the selected universe/timeframe set.
 - **Analytics runs** (`pipeline_mode=analytics|both`) are expected to be **read-only w.r.t. Iceberg** and only emit
-  artifacts (result parquet + result JSON) under `artifacts/prefect/<params_hash>/`.
+  artifacts (result parquet + result JSON) under `artifacts/runs/<params_hash>/`.
 - Re-running the same batch will re-use the same `params_hash` directories, so outputs are deterministic; expect
   existing artifact files to be overwritten.
 
@@ -178,4 +194,3 @@ uv run --extra prefect python workflows/prefect/run_batch.py \
   --concurrency 12 \
   --skip-existing
 ```
-

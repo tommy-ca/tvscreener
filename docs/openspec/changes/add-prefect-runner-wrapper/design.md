@@ -10,10 +10,16 @@ Prefect integration is implemented as a **thin wrapper** around the existing run
 - **uv-only**: No `pip`, no `uv pip`, no reliance on global Python.
 - **Dependency isolation**: Prefect is enabled via an optional dependency extra; core `tvscreener` codepaths do not
   require Prefect imports.
+- **dotenv support**: CLI loads `.env` into `os.environ` (best-effort) so Prefect can read `PREFECT_*` settings without
+  manual exports.
+  - `.env` is a local-only file (gitignored); use `.env.example` as the template.
 - **Runtime compatibility**: Prefect runs under an **uv-managed Python** pinned by the repo (baseline: `3.12`).
   - For local temporary-server runs, first-time startup may require a higher
     `PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS` to complete migrations.
   - For predictable state (avoid mixing old Prefect DBs), prefer `PREFECT_HOME=$PWD/.prefect-home`.
+  - If Prefect fails to start with an Alembic resolution error (e.g. `Can't locate revision identified by ...`), the
+    local Prefect database under `PREFECT_HOME` is stale relative to the installed Prefect version; reset it by
+    renaming/removing the `PREFECT_HOME` directory and rerun.
 
 ### Packaging approach
 Prefer a single repo workspace managed by `uv`:
@@ -54,19 +60,20 @@ For scale, Prefect SHOULD execute runs via a batch driver that:
 - expands a higher-level batch definition into a list of `PipelineRunSpec` objects (matrix expansion)
 - optionally shards large universes into explicit `pairs` chunks (`max_pairs_per_run`)
 - fans out data and analytics tasks with bounded concurrency
-- writes artifacts for each run under `artifacts/prefect/<params_hash>/` and a batch summary under
-  `artifacts/prefect/batch/<batch_id>/`
+- writes artifacts for each run under `artifacts/runs/<params_hash>/` and a batch summary under
+  `artifacts/runs/batch/<batch_id>/`
 
 ### Artifact conventions (v1)
 The wrapper writes deterministic artifacts keyed by `params_hash`:
 - Always:
   - `run_spec.json`
 - Result JSON:
-  - `run_result_data.json` for `pipeline_mode == "data"`
-  - `run_result_analytics.json` for `pipeline_mode == "analytics"`
-  - `run_result.json` for `pipeline_mode == "both"` (includes `data` + `analytics` sub-results)
+  - `run_result.json` for any `pipeline_mode` (includes `data` and/or `analytics` sub-results)
 - Analytics output:
   - default `<scanner_family>_results.parquet` under the run directory when `PipelineRunSpec.output` is not set
+
+Note: the canonical base directory is `artifacts/runs/`. Legacy `artifacts/prefect/` remains supported via
+`--artifacts-dir` during migration.
 
 ### Artifacts audit checklist (analytics workflows)
 When reviewing Prefect analytics artifacts (`pipeline_mode=analytics` and analytics stage of `both`), verify:
@@ -79,7 +86,8 @@ When reviewing Prefect analytics artifacts (`pipeline_mode=analytics` and analyt
   - result JSON includes `artifacts_dir`
   - when analytics runs, result JSON includes `results_path` that points to the emitted parquet file
 - **Determinism**
-  - artifact directory is `artifacts/prefect/<params_hash>/` (or configured base dir)
+  - artifact directory is `artifacts/runs/<params_hash>/` (or configured base dir)
+  - (legacy) `artifacts/prefect/<params_hash>/` may exist from older runs
   - filenames do not include timestamps
   - analytics default file name is `<scanner_family>_results.parquet`
 - **Contract completeness**
@@ -95,6 +103,13 @@ To validate the Prefect wrapper wiring in CI without calling TradingView:
 When validating upstream API semantics (e.g., TradingView scan batching), prefer running both:
 - **direct CLI runs** (`--pipeline data|analytics`) to validate core behavior
 - **Prefect runs** (`run_flow.py` / `run_batch.py`) to validate workflow execution + artifact writing
+
+For interactive inspection of the matrix view, prefer forcing the local runner:
+- `uv run tvscreener-scan --runner local --pipeline analytics --matrix ...`
+
+When running under Prefect and requesting matrix output, the Prefect runner also writes a text capture to the run
+artifacts directory:
+- `artifacts/runs/<params_hash>/matrix.txt`
 
 #### Idempotency and naming
 - Use `spec.params_hash` as:
@@ -118,6 +133,18 @@ uv run tvscreener-scan --runner export --scanner opportunity --pipeline both --a
 ```bash
 uv run --extra prefect python workflows/prefect/run_flow.py --spec run_spec.json
 ```
+
+#### 4) Dedicated Prefect server for local parity
+
+For development environments that want to match production behavior, run a local Prefect server and point CLI runs at it:
+
+```bash
+export PREFECT_HOME="$PWD/.prefect-home"
+uv run prefect server start --host 127.0.0.1 --port 4200 --background
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+```
+
+Then run scans normally with `--runner prefect`.
 
 ### Known issues / improvement suggestions
 1) **Per-process rate limiting only**
@@ -164,6 +191,7 @@ uv run --extra prefect python workflows/prefect/run_flow.py --spec run_spec.json
 ### Default configuration baseline (post-flip)
 - `.env` template includes Prefect runtime defaults:
   - `PREFECT_HOME=.prefect-home`
+  - `PREFECT_API_URL=http://127.0.0.1:4200/api` (dedicated server parity)
   - `PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=180`
 - scanner settings defaults align for predictable quick runs:
   - default universe: `majors`

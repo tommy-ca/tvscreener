@@ -35,7 +35,7 @@
 - [x] 4.2 Prefect mapping/fan-out:
   - execute batch specs with concurrency controls
   - use `params_hash` for idempotent run IDs
-  - persist artifacts under `artifacts/prefect/<params_hash>/`
+  - persist artifacts under `artifacts/runs/<params_hash>/`
 - [x] 4.2.1 Universe sharding (pairs chunks) for fan-out parallelism
 - [x] 4.3 Add upstream rate-limit policy per source (TradingView):
   - per-worker throttling

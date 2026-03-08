@@ -65,7 +65,7 @@
 - [x] 8.2 Add a short runbook section showing the single-command usage
 
 ## 6. Scale readiness (next)
-- [x] 6.1 Always write deterministic artifacts under `artifacts/prefect/<params_hash>/`:
+- [x] 6.1 Always write deterministic artifacts under `artifacts/runs/<params_hash>/`:
   - `run_spec.json`
   - `run_result*.json`
   - default `*_results.parquet` for analytics when `output` is not provided

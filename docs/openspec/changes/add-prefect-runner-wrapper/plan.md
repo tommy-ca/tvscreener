@@ -18,7 +18,7 @@ uv run --extra prefect tvscreener-scan --runner prefect --scanner opportunity --
 ### Steps
 - Add `--runner prefect` to `tvscreener-scan`.
 - When selected, build `PipelineRunSpec` from CLI args and execute via Prefect flow in-process.
-- Ensure artifacts are always written under `artifacts/prefect/<params_hash>/`.
+- Ensure artifacts are always written under `artifacts/runs/<params_hash>/`.
 
 ### Acceptance criteria
 - The single Prefect command runs without an intermediate spec file.
@@ -31,4 +31,3 @@ uv run --extra prefect tvscreener-scan --runner prefect --scanner opportunity --
 ### CI validation (no upstream calls)
 - Add a unit smoke test that executes the Prefect flow with a stubbed local runner and asserts artifact naming.
 - Add a GitHub Actions workflow that installs `--extra prefect` and runs the smoke test on PRs.
-

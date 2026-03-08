@@ -14,7 +14,9 @@ or `pip`.
 - **GIVEN** Prefect support is installed via `uv sync --extra prefect`
 - **WHEN** the user runs `uv run --extra prefect tvscreener-scan --runner prefect ...`
 - **THEN** the system executes the run via Prefect without requiring an intermediate exported spec file
-- **AND** writes artifacts under `artifacts/prefect/<params_hash>/` (or the CLI-provided `--artifacts-dir`)
+- **AND** writes artifacts under `artifacts/runs/<params_hash>/` by default (or the CLI-provided `--artifacts-dir`)
+
+Legacy compatibility: `--artifacts-dir artifacts/prefect` continues to work during migration.
 
 #### Scenario: Prefect is the default workflow runner for scanner commands
 - **GIVEN** the repository is configured for workflow-managed execution
@@ -25,12 +27,26 @@ or `pip`.
 #### Scenario: Environment defaults simplify Prefect startup for CLI runs
 - **GIVEN** operators use the provided `.env` template defaults
 - **WHEN** they run scanner commands with implicit Prefect runner
-- **THEN** Prefect state is isolated (`PREFECT_HOME=.prefect-home`)
+- **THEN** the CLI loads `.env` into the environment for Prefect settings
+- **AND** Prefect state is isolated (`PREFECT_HOME=.prefect-home`)
+- **AND** runs can target a dedicated server via `PREFECT_API_URL=http://127.0.0.1:4200/api`
 - **AND** startup timeout default is sufficient for first-run migrations (`PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS=180`)
+
+#### Scenario: `.env` is local-only and gitignored
+- **GIVEN** the repo provides `.env.example`
+- **WHEN** an operator runs `cp .env.example .env` and customizes values
+- **THEN** the workflow defaults apply locally
+- **AND** `.env` is not committed to git
+
+#### Scenario: Dedicated Prefect server is supported for parity
+- **GIVEN** operators want local development to match production orchestration behavior
+- **WHEN** they start a Prefect server with `prefect server start --background`
+- **AND** set `PREFECT_API_URL=http://127.0.0.1:4200/api`
+- **THEN** runs execute against that server (no ephemeral server startup)
 
 #### Scenario: Wrapper scripts resolve artifacts under repo root
 - **GIVEN** the user executes `python workflows/prefect/run_flow.py` or `python workflows/prefect/run_batch.py`
-- **WHEN** the user supplies a relative `--artifacts-dir` (or uses the default `artifacts/prefect`)
+- **WHEN** the user supplies a relative `--artifacts-dir` (or uses the default `artifacts/runs`)
 - **THEN** the wrapper resolves that directory relative to the **repo root** so reruns are stable from any cwd
 
 #### Scenario: Prefect runtime is uv-managed and stable to start
@@ -41,10 +57,35 @@ or `pip`.
   - setting `PREFECT_SERVER_EPHEMERAL_STARTUP_TIMEOUT_SECONDS` high enough for first-run migrations (e.g. `180`)
   - optionally isolating Prefect state using `PREFECT_HOME=$PWD/.prefect-home`
 
+#### Scenario: Prefect local DB can be reset on migration mismatch
+- **GIVEN** the temporary Prefect server fails to start due to a migration resolution error
+  (e.g. `Can't locate revision identified by ...`)
+- **WHEN** the operator resets Prefect state by moving/removing the existing `PREFECT_HOME` directory
+  (e.g. renaming `.prefect-home` and creating a fresh one)
+- **THEN** a subsequent run starts successfully and applies migrations from a clean database
+
 #### Scenario: Base library remains engine-free
 - **WHEN** the user installs/runs the base library without the Prefect extra
 - **THEN** the system does not require Prefect dependencies
 - **AND** core import paths do not import Prefect
+
+### Requirement: Prefect runs can persist and emit matrix output
+When executing under Prefect, the system SHALL persist the matrix output as an artifact when `matrix` rendering is requested.
+
+#### Scenario: Prefect analytics writes results parquet
+- **WHEN** a run executes with `--runner prefect` and an effective analytics stage
+- **THEN** the wrapper writes an analytics results parquet under `artifacts/runs/<params_hash>/`
+
+#### Scenario: Prefect persists matrix output as an artifact
+- **GIVEN** a run is requested with `matrix=true`
+- **WHEN** the Prefect runner executes the run
+- **THEN** it writes `matrix.txt` under `artifacts/runs/<params_hash>/`
+- **AND** the text includes the snapshot label when available
+
+#### Scenario: Operator can still force local interactive output
+- **GIVEN** an operator wants the Rich-rendered matrix table in their local terminal
+- **WHEN** they execute the same run with `--runner local --matrix`
+- **THEN** the matrix is rendered to stdout using Iceberg-backed analytics inputs
 
 ### Requirement: Prefect wrapper executes data and analytics pipelines as distinct tasks
 The Prefect wrapper SHALL execute pipeline modes in a way that preserves the architecture boundary between data and
@@ -80,9 +121,9 @@ The wrapper SHOULD use `PipelineRunSpec.params_hash` to identify runs in the orc
 - **THEN** it uses `params_hash` in the flow run name and/or tags
 
 #### Scenario: Batch rerun can skip completed stages
-- **GIVEN** a previous batch run wrote artifacts under `artifacts/prefect/<params_hash>/`
+- **GIVEN** a previous batch run wrote artifacts under `artifacts/runs/<params_hash>/`
 - **WHEN** the user reruns the same batch with `--skip-existing`
-- **THEN** the wrapper skips stages where `run_result_data.json` and/or `run_result_analytics.json` already exist
+- **THEN** the wrapper skips runs where `run_result.json` already exists
 - **AND** it returns a batch result payload that includes `skipped` flags per run
 
 ### Requirement: Prefect wrapper writes deterministic artifacts by default
@@ -91,16 +132,13 @@ interactive console rendering.
 
 #### Scenario: Wrapper writes spec and run results
 - **WHEN** the wrapper executes any run
-- **THEN** it writes `run_spec.json` under `artifacts/prefect/<params_hash>/`
-- **AND** it writes a result JSON:
-  - `run_result_data.json` for `pipeline_mode == "data"`
-  - `run_result_analytics.json` for `pipeline_mode == "analytics"`
-  - `run_result.json` for `pipeline_mode == "both"` (includes `data` + `analytics` sub-results)
+- **THEN** it writes `run_spec.json` under `artifacts/runs/<params_hash>/`
+- **AND** it writes `run_result.json` under `artifacts/runs/<params_hash>/`
 
 #### Scenario: Analytics produces a default results file when output is not provided
 - **WHEN** the wrapper executes a run whose effective pipeline includes analytics (`analytics` or `both`)
 - **AND** `PipelineRunSpec.output` is not provided
-- **THEN** it writes a default results file under `artifacts/prefect/<params_hash>/` (e.g., `<scanner_family>_results.parquet`)
+- **THEN** it writes a default results file under `artifacts/runs/<params_hash>/` (e.g., `<scanner_family>_results.parquet`)
 
 ### Requirement: Default-runner transition is safety-gated
 Switching CLI default runner to Prefect SHALL be gated by readiness checks.
@@ -118,7 +156,7 @@ When analytics runs under Prefect, the resulting artifacts SHALL be discoverable
 #### Scenario: Analytics result JSON includes results path
 - **WHEN** the wrapper executes `pipeline_mode == "analytics"`
 - **THEN** the returned payload includes a `results_path`
-- **AND** `run_result_analytics.json` includes the same `results_path`
+- **AND** `run_result.json` includes the same `results_path`
 
 #### Scenario: Both mode embeds analytics results path
 - **WHEN** the wrapper executes `pipeline_mode == "both"`
