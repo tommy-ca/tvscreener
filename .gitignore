@@ -1,7 +1,9 @@
 # Data exports
 exports/
 artifacts/
+.env
 .prefect-home/
+.prefect-home.bak*/
 *.parquet
 *.meta.json
 .tmp/
