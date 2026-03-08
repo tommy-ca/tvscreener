@@ -46,6 +46,12 @@ Definitions:
 - `volatility_24h_pct`: prefer TradingView native `Volatility` (`CryptoField.VOLATILITY` / `Volatility.D`).
   - fallback: `(High - Low) / Price * 100`
 
+Alternative selection mode (planned):
+- select coins by market cap top 100 (TradingView `CoinScreener` `Market Cap Calc`)
+- map to Binance markets for `quote_asset=USDT` (spot or perp)
+- emit the raw universe (no filters) and persist `universe.json` with `quote_volume_usd` and `volatility_24h_pct`
+- filter/sort in analytics using DuckDB (EdgeQueryClient)
+
 ### Artifacts and reproducibility
 
 The run MUST persist, at minimum:

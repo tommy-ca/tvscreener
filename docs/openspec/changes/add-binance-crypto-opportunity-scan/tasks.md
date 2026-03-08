@@ -1,6 +1,9 @@
 # Tasks: Binance crypto opportunity scan (TradingView /scan)
 
 - [x] Add deterministic universe selector using TradingView crypto /scan (top 100, volume >= 10M, vol >= 3%)
+- [ ] Add market cap top100 selector (CoinScreener Market Cap Calc -> Binance USDT markets)
+- [x] Add market cap top100 selector (CoinScreener Market Cap Calc -> Binance USDT markets)
+- [ ] Add DuckDB analytics query templates to filter by volume/volatility and render matrix
 - [x] Define `instrument_type` for crypto (`spot|perp`) derived from TradingView `Type` (`spot|swap`)
 - [x] Extend `PipelineRunSpec` to carry `instrument_type` without overloading `contract_type`
 - [ ] Update opportunity data pipeline to ingest Binance (TradingView-filtered) crypto snapshot rows to Bronze/Silver/Gold

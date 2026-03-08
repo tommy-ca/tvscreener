@@ -27,6 +27,17 @@ The system SHALL support selecting a Binance crypto universe by deterministic ra
 - **THEN** it returns at most 100 instruments ordered by `quote_volume_usd` descending
 - **AND** every instrument in the returned set meets the minimum thresholds
 
+### Requirement: Universe selection supports market cap top-100
+The system SHALL support selecting Binance spot/perp markets derived from the top 100 coins by market cap.
+
+#### Scenario: Market cap top 100 then rank by trading value
+- **GIVEN** the operator requests `universe=binance_spot_mcap_top100` (or perp variant)
+- **WHEN** the universe selector runs
+- **THEN** it derives a base-asset list from the top 100 coins by market cap
+- **AND** maps those bases to Binance `USDT` markets for the requested instrument type
+- **AND** it does not apply volume/volatility filters at selection time
+- **AND** it persists `universe.json` with `quote_volume_usd` and `volatility_24h_pct` for later analytics filtering
+
 #### Scenario: Volatility uses TradingView native field when available
 - **GIVEN** TradingView returns a `Volatility` column for a candidate instrument
 - **WHEN** the universe selector computes `volatility_24h_pct`

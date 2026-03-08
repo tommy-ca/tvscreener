@@ -165,6 +165,27 @@ PREFECT_API_URL=http://127.0.0.1:4200/api uv run tvscreener-scan \
   --pairs BINANCE:BTCUSDT BINANCE:BTCUSDT.P --timeframes 15,60,240 --matrix --limit 50
 ```
 
+## Next build: crypto market cap top100 (spot + perps)
+
+Universes:
+- `binance_spot_mcap_top100`
+- `binance_perp_mcap_top100`
+
+Selection:
+- take top 100 coins by market cap (TradingView coin `/scan` `Market Cap Calc`)
+- map to Binance `USDT` markets (spot or perp)
+- emit the raw universe (no filters)
+- filter/sort later with DuckDB analytics queries (volume + volatility)
+
+Artifacts:
+- `universe.json` includes the market-cap-derived base list (`market_cap_bases`) and per-market rows (`entity_id`, `symbol`, `quote_volume_usd`, `volatility_24h_pct`).
+
+## Results: Binance mcap top100 universes
+
+Built and wrote universe snapshots (market cap top100 -> map to Binance tickers; no filters applied):
+- spot: `artifacts/runs/a5dd40eb07523521a0313dbcce59f387527382c57da57844debd5f4c63c522ea/universe.json` (count=38, missing=62)
+- perp: `artifacts/runs/2e7987cd48b99786c87773582b6a04b68bc23f928f06d3b96dceaf12dbe6b295/universe.json` (count=33, missing=67)
+
 ## Research notes (TradingView crypto spot/perps)
 
 Empirical TradingView results:
