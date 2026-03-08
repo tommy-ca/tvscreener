@@ -123,5 +123,5 @@ def test_cli_defaults_to_prefect_runner(monkeypatch):
         "scanner_family": "opportunity",
         "pipeline_mode": "analytics",
         "asset_type": "forex",
-        "artifacts_dir": "artifacts/prefect",
+        "artifacts_dir": "artifacts/runs",
     }

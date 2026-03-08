@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     from prefect import flow, tags, task
@@ -18,6 +18,17 @@ except Exception:  # pragma: no cover
 from tvscreener.lib.pipeline_runner import LocalRunner, PipelineRunSpec, RunResult
 
 
+def _console_for_spec(spec: PipelineRunSpec):
+    if not bool(spec.matrix):
+        return None
+
+    # Record console output so matrix rendering can be persisted as an artifact
+    # and mirrored into Prefect logs.
+    from rich.console import Console
+
+    return Console(record=True)
+
+
 def _ensure_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
@@ -29,6 +40,11 @@ def _default_results_path(run_dir: Path, spec: PipelineRunSpec) -> Path:
 def _write_json(path: Path, payload: object) -> None:
     _ensure_dir(path.parent)
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _write_matrix_artifact(run_dir: Path, matrix_text: str) -> None:
+    # Keep it ASCII-friendly and stable for diffs.
+    (run_dir / "matrix.txt").write_text(matrix_text, encoding="utf-8")
 
 
 def _resolve_base_dir(artifacts_dir: str) -> Path:
@@ -45,32 +61,43 @@ def _prefect_required() -> None:
         )
 
 
-def run_prefect(spec: PipelineRunSpec, *, artifacts_dir: str = "artifacts/prefect") -> dict:
+def run_prefect(spec: PipelineRunSpec, *, artifacts_dir: str = "artifacts/runs") -> dict:
     """Execute a PipelineRunSpec via Prefect in-process.
 
     This is the seamless entrypoint used by `tvscreener-scan --runner prefect`.
     """
     _prefect_required()
-    return prefect_run_flow(
-        spec_payload=spec.model_dump(), params_hash=spec.params_hash, artifacts_dir=artifacts_dir
+    spec = spec.normalized()
+    params_hash: str = spec.params_hash or spec.compute_params_hash()
+    prefect_flow = cast(Any, prefect_run_flow)
+    return prefect_flow(
+        spec_payload=spec.model_dump(),
+        params_hash=params_hash,
+        artifacts_dir=artifacts_dir,
     )
 
 
 @task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
-def _run_data_task(spec: PipelineRunSpec) -> RunResult:
+def _run_data_task(spec: PipelineRunSpec) -> tuple[RunResult, str | None]:
     data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
-    return LocalRunner(console=None).run(data_spec)
+    console = _console_for_spec(data_spec)
+    res = LocalRunner(console=console).run(data_spec)
+    matrix_text = console.export_text() if console is not None else None
+    return res, matrix_text
 
 
 @task(retries=0)  # type: ignore[misc]
-def _run_analytics_task(spec: PipelineRunSpec) -> RunResult:
+def _run_analytics_task(spec: PipelineRunSpec) -> tuple[RunResult, str | None]:
     analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
-    return LocalRunner(console=None).run(analytics_spec)
+    console = _console_for_spec(analytics_spec)
+    res = LocalRunner(console=console).run(analytics_spec)
+    matrix_text = console.export_text() if console is not None else None
+    return res, matrix_text
 
 
 @flow(name="tvscreener-run", flow_run_name="tvscreener-{params_hash}")  # type: ignore[misc]
 def prefect_run_flow(
-    spec_payload: dict[str, Any], params_hash: str, artifacts_dir: str = "artifacts/prefect"
+    spec_payload: dict[str, Any], params_hash: str, artifacts_dir: str = "artifacts/runs"
 ) -> dict:
     spec = PipelineRunSpec.model_validate(spec_payload).normalized()
 
@@ -91,31 +118,72 @@ def prefect_run_flow(
         f"asset_type:{spec.asset_type}",
     ):
         if spec.pipeline_mode == "data":
-            res = _run_data_task(spec)
-            payload = {**res.model_dump(), "artifacts_dir": str(run_dir)}
-            _write_json(run_dir / "run_result_data.json", payload)
+            res, matrix_text = _run_data_task(spec)
+            matrix_path = None
+            if matrix_text:
+                _write_matrix_artifact(run_dir, matrix_text)
+                matrix_path = str(run_dir / "matrix.txt")
+            payload = {
+                "spec_version": spec.spec_version,
+                "params_hash": params_hash,
+                "scanner_family": spec.scanner_family,
+                "pipeline_mode_requested": spec.pipeline_mode,
+                "pipeline_mode_executed": "data",
+                "artifacts_dir": str(run_dir),
+                "run_spec_path": str(run_dir / "run_spec.json"),
+                "run_result_path": str(run_dir / "run_result.json"),
+                "matrix_path": matrix_path,
+                "data": res.model_dump(),
+                "success": bool(res.success),
+            }
+            _write_json(run_dir / "run_result.json", payload)
             return payload
 
         if spec.pipeline_mode == "analytics":
-            res = _run_analytics_task(spec)
+            res, matrix_text = _run_analytics_task(spec)
+            matrix_path = None
+            if matrix_text:
+                _write_matrix_artifact(run_dir, matrix_text)
+                matrix_path = str(run_dir / "matrix.txt")
             payload = {
-                **res.model_dump(),
+                "spec_version": spec.spec_version,
+                "params_hash": params_hash,
+                "scanner_family": spec.scanner_family,
+                "pipeline_mode_requested": spec.pipeline_mode,
+                "pipeline_mode_executed": "analytics",
                 "artifacts_dir": str(run_dir),
+                "run_spec_path": str(run_dir / "run_spec.json"),
+                "run_result_path": str(run_dir / "run_result.json"),
                 "results_path": analytics_output,
+                "matrix_path": matrix_path,
+                "analytics": {**res.model_dump(), "results_path": analytics_output},
+                "success": bool(res.success),
             }
-            _write_json(run_dir / "run_result_analytics.json", payload)
+            _write_json(run_dir / "run_result.json", payload)
             return payload
 
-        data_res = _run_data_task(spec)
-        analytics_res = _run_analytics_task(spec)
+        data_res, data_matrix_text = _run_data_task(spec)
+        analytics_res, analytics_matrix_text = _run_analytics_task(spec)
+
+        matrix_path = None
+        matrix_text = analytics_matrix_text or data_matrix_text
+        if matrix_text:
+            _write_matrix_artifact(run_dir, matrix_text)
+            matrix_path = str(run_dir / "matrix.txt")
+
         payload = {
             "spec_version": spec.spec_version,
             "params_hash": spec.params_hash,
             "scanner_family": spec.scanner_family,
+            "pipeline_mode_requested": spec.pipeline_mode,
             "pipeline_mode_executed": "both",
+            "artifacts_dir": str(run_dir),
+            "run_spec_path": str(run_dir / "run_spec.json"),
+            "run_result_path": str(run_dir / "run_result.json"),
+            "results_path": analytics_output,
+            "matrix_path": matrix_path,
             "data": data_res.model_dump(),
             "analytics": {**analytics_res.model_dump(), "results_path": analytics_output},
-            "artifacts_dir": str(run_dir),
             "success": bool(data_res.success and analytics_res.success),
         }
         _write_json(run_dir / "run_result.json", payload)

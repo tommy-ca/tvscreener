@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import sys
 
 from rich.console import Console
 
 from tvscreener.lib.orchestrator import ScreenerController
+from tvscreener.util import load_dotenv_file
 
 console = Console()
 logger = logging.getLogger(__name__)
@@ -21,6 +23,11 @@ def setup_logging(verbose: bool = False) -> None:
 
 
 def main() -> int:
+    # Best-effort load `.env` so Prefect and other libs
+    # see their config without requiring manual exports.
+    with contextlib.suppress(Exception):
+        load_dotenv_file(".env")
+
     # Handle maintenance subcommand separately to preserve top-level compatibility for scans
     if len(sys.argv) > 1 and sys.argv[1] == "maintenance":
         parser = argparse.ArgumentParser(description="Lakehouse maintenance tools")
@@ -87,7 +94,7 @@ def main() -> int:
         )
         parser.add_argument(
             "--artifacts-dir",
-            default="artifacts/prefect",
+            default="artifacts/runs",
             help="Artifacts directory (used by --runner prefect)",
         )
         parser.add_argument(
@@ -322,7 +329,7 @@ def main() -> int:
         try:
             from tvscreener.lib.prefect_runner import run_prefect
 
-            _ = run_prefect(spec, artifacts_dir=getattr(args, "artifacts_dir", "artifacts/prefect"))
+            _ = run_prefect(spec, artifacts_dir=getattr(args, "artifacts_dir", "artifacts/runs"))
             return 0
         except Exception as e:
             console.print(f"[red]Prefect runner failed: {e}[/red]")

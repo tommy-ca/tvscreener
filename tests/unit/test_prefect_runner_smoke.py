@@ -45,13 +45,13 @@ def test_prefect_flow_writes_expected_artifacts(tmp_path, monkeypatch):
 
     # Avoid Prefect orchestration entirely (no ephemeral server):
     # - replace Prefect-decorated tasks with plain functions
-    def _data_fn(spec: PipelineRunSpec) -> RunResult:
+    def _data_fn(spec: PipelineRunSpec):
         data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
-        return DummyRunner(console=None).run(data_spec)
+        return DummyRunner(console=None).run(data_spec), None
 
-    def _analytics_fn(spec: PipelineRunSpec) -> RunResult:
+    def _analytics_fn(spec: PipelineRunSpec):
         analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
-        return DummyRunner(console=None).run(analytics_spec)
+        return DummyRunner(console=None).run(analytics_spec), None
 
     monkeypatch.setattr(pr, "_run_data_task", _data_fn)
     monkeypatch.setattr(pr, "_run_analytics_task", _analytics_fn)

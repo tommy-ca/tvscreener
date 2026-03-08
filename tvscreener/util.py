@@ -62,6 +62,38 @@ def validate_path(
     return resolved_path
 
 
+def load_dotenv_file(path: str = ".env", *, override: bool = False) -> None:
+    """Best-effort loader for simple KEY=VALUE pairs.
+
+    This is intentionally lightweight (no dependency on python-dotenv) and is
+    used so `.env` can also configure third-party libraries like Prefect.
+    """
+    env_path = Path(path)
+    if not env_path.exists() or not env_path.is_file():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        if "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+
+        if not override and key in os.environ:
+            continue
+        os.environ[key] = value
+
+
 def format_historical_field(field_, historical=1):
     """
     Format the technical field to include historical offset

@@ -17,7 +17,7 @@ def main() -> int:
     parser.add_argument("--spec", required=True, help="Path to PipelineRunSpec JSON")
     parser.add_argument(
         "--artifacts-dir",
-        default="artifacts/prefect",
+        default="artifacts/runs",
         help="Directory to write artifacts under (relative to repo root recommended)",
     )
     args = parser.parse_args()

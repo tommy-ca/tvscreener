@@ -15,6 +15,17 @@ from prefect.task_runners import ConcurrentTaskRunner
 
 from tvscreener.lib.pipeline_runner import LocalRunner, PipelineRunSpec, RunResult
 
+_ARTIFACTS_BASE_DIR: Path | None = None
+
+
+def _console_for_spec(spec: PipelineRunSpec):
+    if not bool(spec.matrix):
+        return None
+
+    from rich.console import Console
+
+    return Console(record=True)
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -250,19 +261,41 @@ def run_data(spec: PipelineRunSpec) -> RunResult:
     # Best-effort per-worker throttling to protect upstream fetchers.
     if _RATE_LIMITER is not None:
         _RATE_LIMITER.wait()
-    return LocalRunner(console=None).run(data_spec)
+
+    console = _console_for_spec(data_spec)
+    res = LocalRunner(console=console).run(data_spec)
+    if console is not None and _ARTIFACTS_BASE_DIR is not None:
+        text = console.export_text()
+        if text.strip():
+            run_dir = _ARTIFACTS_BASE_DIR / (
+                data_spec.params_hash or data_spec.compute_params_hash()
+            )
+            _ensure_dir(run_dir)
+            (run_dir / "matrix.txt").write_text(text, encoding="utf-8")
+    return res
 
 
 @task(retries=0)
 def run_analytics(spec: PipelineRunSpec) -> RunResult:
     analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
-    return LocalRunner(console=None).run(analytics_spec)
+
+    console = _console_for_spec(analytics_spec)
+    res = LocalRunner(console=console).run(analytics_spec)
+    if console is not None and _ARTIFACTS_BASE_DIR is not None:
+        text = console.export_text()
+        if text.strip():
+            run_dir = _ARTIFACTS_BASE_DIR / (
+                analytics_spec.params_hash or analytics_spec.compute_params_hash()
+            )
+            _ensure_dir(run_dir)
+            (run_dir / "matrix.txt").write_text(text, encoding="utf-8")
+    return res
 
 
 @flow(name="tvscreener-batch", task_runner=ConcurrentTaskRunner())
 def run_batch(
     batch_path: str,
-    artifacts_dir: str = "artifacts/prefect",
+    artifacts_dir: str = "artifacts/runs",
     *,
     data_concurrency: int | None = None,
     analytics_concurrency: int | None = None,
@@ -283,6 +316,9 @@ def run_batch(
     base_dir = Path(artifacts_dir)
     if not base_dir.is_absolute():
         base_dir = _repo_root() / base_dir
+
+    global _ARTIFACTS_BASE_DIR
+    _ARTIFACTS_BASE_DIR = base_dir
 
     batch_dir = base_dir / "batch" / batch_id
     _ensure_dir(batch_dir)
@@ -320,31 +356,41 @@ def run_batch(
         except Exception:
             return None
 
-    def _maybe_synthesize_both_result(
+    def _maybe_synthesize_run_result(
         params_hash: str, spec: PipelineRunSpec, run_dir: Path
     ) -> bool:
-        """If stage result JSONs exist but run_result.json doesn't, synthesize it for idempotent skip."""
-        both_path = run_dir / "run_result.json"
-        if both_path.exists():
+        """Back-compat: synthesize run_result.json from legacy stage JSONs."""
+        run_result_path = run_dir / "run_result.json"
+        if run_result_path.exists():
             return True
+
         data_payload = _read_json_if_exists(run_dir / "run_result_data.json")
         analytics_payload = _read_json_if_exists(run_dir / "run_result_analytics.json")
-        if not (data_payload and analytics_payload):
+        if not (data_payload or analytics_payload):
             return False
+
         payload: dict[str, Any] = {
             "spec_version": spec.spec_version,
             "params_hash": params_hash,
             "scanner_family": spec.scanner_family,
-            "pipeline_mode_executed": "both",
+            "pipeline_mode_requested": spec.pipeline_mode,
+            "pipeline_mode_executed": spec.pipeline_mode,
             "artifacts_dir": str(run_dir),
-            "data": {k: v for k, v in data_payload.items() if k != "artifacts_dir"},
-            "analytics": {k: v for k, v in analytics_payload.items() if k != "artifacts_dir"},
         }
+        if data_payload is not None:
+            payload["data"] = {k: v for k, v in data_payload.items() if k != "artifacts_dir"}
+        if analytics_payload is not None:
+            payload["analytics"] = {
+                k: v for k, v in analytics_payload.items() if k != "artifacts_dir"
+            }
+        if spec.pipeline_mode == "both" and data_payload and analytics_payload:
+            payload["pipeline_mode_executed"] = "both"
+
         payload["success"] = bool(
             payload.get("data", {}).get("success", True)
             and payload.get("analytics", {}).get("success", True)
         )
-        _write_json(both_path, payload)
+        _write_json(run_result_path, payload)
         return True
 
     def _data_tags(spec: PipelineRunSpec, params_hash: str) -> list[str]:
@@ -373,20 +419,21 @@ def run_batch(
         stage_skipped = {"data": False, "analytics": False, "both": False}
 
         if skip_existing:
-            if spec.pipeline_mode == "data":
-                if (run_dir / "run_result_data.json").exists():
-                    stage_skipped["data"] = True
-            elif spec.pipeline_mode == "analytics":
-                if (run_dir / "run_result_analytics.json").exists():
-                    stage_skipped["analytics"] = True
-            elif spec.pipeline_mode == "both":
-                if (run_dir / "run_result.json").exists():
-                    stage_skipped["both"] = True
-                    stage_skipped["data"] = True
-                    stage_skipped["analytics"] = True
-                else:
-                    # Back-compat: allow skipping "both" when stage artifacts exist.
-                    if _maybe_synthesize_both_result(params_hash, spec, run_dir):
+            # New contract: a single run_result.json is sufficient for idempotent skip.
+            if (run_dir / "run_result.json").exists():
+                stage_skipped["both"] = True
+                stage_skipped["data"] = True
+                stage_skipped["analytics"] = True
+            else:
+                if spec.pipeline_mode == "data":
+                    if (run_dir / "run_result_data.json").exists():
+                        stage_skipped["data"] = True
+                elif spec.pipeline_mode == "analytics":
+                    if (run_dir / "run_result_analytics.json").exists():
+                        stage_skipped["analytics"] = True
+                elif spec.pipeline_mode == "both":
+                    # Back-compat: allow skipping "both" when legacy stage artifacts exist.
+                    if _maybe_synthesize_run_result(params_hash, spec, run_dir):
                         stage_skipped["both"] = True
                         stage_skipped["data"] = True
                         stage_skipped["analytics"] = True
@@ -442,18 +489,17 @@ def run_batch(
             "spec_version": spec.spec_version,
             "params_hash": params_hash,
             "scanner_family": spec.scanner_family,
+            "pipeline_mode_requested": spec.pipeline_mode,
             "pipeline_mode_executed": spec.pipeline_mode,
             "artifacts_dir": str(run_dir),
+            "run_spec_path": str(run_dir / "run_spec.json"),
+            "run_result_path": str(run_dir / "run_result.json"),
         }
         if params_hash in skipped:
             payload["skipped"] = skipped[params_hash]
         if params_hash in data_futures:
             data_res = data_futures[params_hash].result()
             payload["data"] = data_res.model_dump()
-            _write_json(
-                run_dir / "run_result_data.json",
-                {**data_res.model_dump(), "artifacts_dir": str(run_dir)},
-            )
         elif skip_existing and spec.pipeline_mode in ("data", "both"):
             data_payload = _read_json_if_exists(run_dir / "run_result_data.json")
             if data_payload is not None:
@@ -464,27 +510,32 @@ def run_batch(
                 **analytics_res.model_dump(),
                 "results_path": spec.output,
             }
-            _write_json(
-                run_dir / "run_result_analytics.json",
-                {
-                    **analytics_res.model_dump(),
-                    "artifacts_dir": str(run_dir),
-                    "results_path": spec.output,
-                },
-            )
+            payload["results_path"] = spec.output
         elif skip_existing and spec.pipeline_mode in ("analytics", "both"):
             analytics_payload = _read_json_if_exists(run_dir / "run_result_analytics.json")
             if analytics_payload is not None:
                 payload["analytics"] = {
                     k: v for k, v in analytics_payload.items() if k != "artifacts_dir"
                 }
+                payload["results_path"] = payload["analytics"].get("results_path")
         if spec.pipeline_mode == "both":
             payload["success"] = bool(
                 payload.get("data", {}).get("success", True)
                 and payload.get("analytics", {}).get("success", True)
             )
-            _write_json(run_dir / "run_result.json", payload)
 
+        if spec.pipeline_mode != "both":
+            payload["success"] = bool(payload.get("data", {}).get("success", True))
+            if "analytics" in payload:
+                payload["success"] = bool(
+                    payload["success"] and payload["analytics"].get("success", True)
+                )
+
+        matrix_path = run_dir / "matrix.txt"
+        if matrix_path.exists():
+            payload["matrix_path"] = str(matrix_path)
+
+        _write_json(run_dir / "run_result.json", payload)
         results[params_hash] = payload
 
     summary = {
@@ -507,7 +558,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--artifacts-dir",
-        default="artifacts/prefect",
+        default="artifacts/runs",
         help="Directory to write artifacts under (relative to repo root recommended)",
     )
     parser.add_argument(

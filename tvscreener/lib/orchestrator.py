@@ -517,6 +517,7 @@ class ScreenerController:
                     limit=request.output.limit,
                     show_risk=request.output.show_risk,
                     snapshot_label=snapshot_label,
+                    console=self.console,
                 )
 
         if request.output.save_config:
@@ -638,6 +639,7 @@ class ScreenerController:
                     limit=request.output.limit,
                     show_risk=request.output.show_risk,
                     snapshot_label=snapshot_label,
+                    console=self.console,
                 )
 
         return len(results)

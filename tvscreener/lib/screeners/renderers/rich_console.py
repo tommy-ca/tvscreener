@@ -38,6 +38,10 @@ class RichConsoleRenderer(BaseRenderer):
         """Render the screener results using Rich."""
         from tvscreener.lib.screeners.export_helpers import print_summary
 
+        # Optional console override for callers that want to capture or redirect output.
+        # Avoid forwarding this kwarg into render methods (it would conflict with the positional `console` arg).
+        console_override = kwargs.pop("console", None)
+
         class_name = screener.__class__.__name__
         config = self._registry.get(class_name)
 
@@ -87,6 +91,7 @@ class RichConsoleRenderer(BaseRenderer):
                     get_data,
                     empty_rich_message=config.get("empty_rich_message", "No results found"),
                     render_rich=safe_render,
+                    console=console_override,
                 )
                 return
 
@@ -97,6 +102,7 @@ class RichConsoleRenderer(BaseRenderer):
             render_rich=lambda df, console, table: self._render_generic(
                 screener, df, console, table, **kwargs
             ),
+            console=console_override,
         )
 
     def _render_generic(

@@ -57,6 +57,7 @@ def print_summary(
     *,
     empty_rich_message: str,
     render_rich: Callable[[pd.DataFrame, Any, Any], None],
+    console: Any | None = None,
 ) -> None:
     try:
         from rich.console import Console
@@ -66,7 +67,7 @@ def print_summary(
         print(df.to_string())
         return
 
-    console = Console()
+    console = console or Console()
     df = df_getter()
 
     if df.empty:
