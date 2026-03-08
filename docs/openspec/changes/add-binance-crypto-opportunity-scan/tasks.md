@@ -7,4 +7,6 @@
 - [ ] Update opportunity analytics pipeline to rank + render matrix for the Binance universe
 - [ ] Persist `universe.json` artifact under `artifacts/runs/<params_hash>/`
 - [x] Add batch template(s) under `workflows/prefect/batches/` for crypto spot/perps
+- [x] Freeze universe selection into `run_spec.json` for deterministic analytics reruns
+- [x] Persist `universe.json` under `artifacts/runs/<params_hash>/` with `entity_id` + `symbol`
 - [ ] Add tests for universe determinism and artifacts contract

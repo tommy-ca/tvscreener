@@ -143,6 +143,28 @@ Build status:
   - `workflows/prefect/batches/crypto_binance_spot_top100_both.json`
   - `workflows/prefect/batches/crypto_binance_perp_top100_both.json`
 
+## Review plan: crypto opportunity pipelines
+
+Goal: review the current crypto opportunity data + analytics pipelines (spot + perps) for correctness, determinism, and table isolation.
+
+Checklist:
+- Data pipeline (Bronze->Silver->Gold)
+  - Verify selected columns exist for crypto (volume, volatility/ATR, RECOMMEND*, ROC*)
+  - Verify `entity_id` and `instrument_type` are present and correct in Silver/Gold
+  - Verify scalable layout writes to isolated tables when `TVSCREENER_LAKEHOUSE_LAYOUT=scalable`
+- Analytics pipeline
+  - Verify reads `signals_latest` from the correct product table id (layout-aware)
+  - Verify matrix rendering works for crypto spot and perp
+- Universe determinism
+  - Universe selector runs once per Prefect flow, writes `universe.json`, and freezes `pairs` into `run_spec.json`
+
+Suggested commands (small smoke before top100):
+```bash
+PREFECT_API_URL=http://127.0.0.1:4200/api uv run tvscreener-scan \
+  --runner prefect --scanner opportunity --pipeline both --asset-type crypto \
+  --pairs BINANCE:BTCUSDT BINANCE:BTCUSDT.P --timeframes 15,60,240 --matrix --limit 50
+```
+
 ## Research notes (TradingView crypto spot/perps)
 
 Empirical TradingView results:
