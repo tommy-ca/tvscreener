@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -930,6 +931,18 @@ class ScreenerController:
         at = canonicalize_asset_type(asset_type)
         tfsid = timeframe_set_id(timeframes)
 
+        from tvscreener.lib.lakehouse.table_ids import (
+            default_instrument_type,
+            normalize_instrument_type,
+            product_table_id,
+        )
+
+        it_env = (os.getenv("TVSCREENER_INSTRUMENT_TYPE") or "").strip() or None
+        it = normalize_instrument_type(asset_type=at, raw=it_env or default_instrument_type(at))
+        signals_latest_table = product_table_id(
+            dataset="signals_latest", asset_type=at, instrument_type=it
+        )
+
         def _in_list(vals: list[str]) -> str:
             safe = [v.replace("'", "''") for v in vals]
             inner = ", ".join(f"'{v}'" for v in safe)
@@ -946,9 +959,9 @@ class ScreenerController:
 
         with EdgeQueryClient() as edge_client:
             try:
-                return edge_client.query_sql("tvscreener.signals_latest", sql_pair, params=params)
+                return edge_client.query_sql(signals_latest_table, sql_pair, params=params)
             except Exception:
-                return edge_client.query_sql("tvscreener.signals_latest", sql_symbol, params=params)
+                return edge_client.query_sql(signals_latest_table, sql_symbol, params=params)
 
     def _snapshot_label_from_df(self, df: Any) -> str | None:
         """Best-effort snapshot label for matrix view headers.

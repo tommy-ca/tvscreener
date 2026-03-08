@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
 from uuid import uuid4
 
 import narwhals as nw
@@ -17,6 +17,12 @@ from pyiceberg.exceptions import NoSuchTableError
 
 from tvscreener.lib.data_sources import build_data_source
 from tvscreener.lib.lakehouse import get_catalog, write_iceberg
+from tvscreener.lib.lakehouse.table_ids import (
+    lakehouse_layout,
+    normalize_instrument_type,
+    product_table_id,
+    stage_table_id,
+)
 from tvscreener.lib.screeners.metadata_utils import MetadataCollector
 from tvscreener.lib.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
 from tvscreener.score import DEFAULT_SCORING_CONFIG, ScoringConfig, ScoringEngine
@@ -356,9 +362,9 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             "rsi": "Rsi|{tf}",
         }
 
-        frames: list[pd.DataFrame] = []
+        frames: list[Any] = []
         for tf in self.timeframes:
-            tf_df = df[base_cols].copy()
+            tf_df: pd.DataFrame = df.loc[:, base_cols].copy()  # type: ignore[assignment]
             tf_df["timeframe"] = tf
             has_factor = False
 
@@ -375,7 +381,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
         if not frames:
             return pd.DataFrame()
-        return pd.concat(frames, ignore_index=True)
+        return pd.concat(cast(list[pd.DataFrame], frames), ignore_index=True)
 
     def _resume_or_run(
         self,
@@ -386,7 +392,20 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
     ) -> pd.DataFrame:
         """Centralized helper for Medallion stage execution and Iceberg persistence (Todo 167)."""
         replay = self.config.extra_options.get("replay")
-        table_name = f"tvscreener.{stage}"
+        layout = lakehouse_layout()
+        dataset_name = "screener_snapshot"
+
+        # For legacy layout, this remains `tvscreener.{stage}`.
+        table_name = stage_table_id(
+            stage=stage,
+            dataset=dataset_name,
+            asset_type=self.asset_type,
+            instrument_type=normalize_instrument_type(
+                asset_type=self.asset_type,
+                raw=(os.getenv("TVSCREENER_INSTRUMENT_TYPE") or ""),
+            ),
+            layout=layout,
+        )
 
         if mode is None:
             # Default to overwrite for Gold and Silver to ensure idempotency
@@ -413,6 +432,22 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             if "fetched_at_utc" not in df.columns and self._fetched_at_utc:
                 df["fetched_at_utc"] = self._fetched_at_utc
             df["asset_type"] = self.asset_type
+
+            # Instrument type is a first-class dimension for scalable table layouts.
+            if layout == "scalable":
+                raw_type = None
+                if "instrument_type" in df.columns:
+                    raw_type = None
+                elif "Type" in df.columns:
+                    raw_type = str(df["Type"].iloc[0]) if len(df) else None
+                elif "TYPE" in df.columns:
+                    raw_type = str(df["TYPE"].iloc[0]) if len(df) else None
+                env_it = (os.getenv("TVSCREENER_INSTRUMENT_TYPE") or "").strip() or None
+                inferred = normalize_instrument_type(
+                    asset_type=self.asset_type, raw=env_it or raw_type
+                )
+                if "instrument_type" not in df.columns:
+                    df["instrument_type"] = inferred
             df["timeframes"] = ",".join(sorted(self.timeframes))
             df["timeframe_set_id"] = timeframe_set_id(self.timeframes)
             df["scanner_family"] = "opportunity"
@@ -439,6 +474,8 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                     if "ingest_date" not in df.columns:
                         df["ingest_date"] = now_utc.strftime("%Y-%m-%d")
                     partition_by = ["asset_type", "ingest_date", "timeframe_set_id"]
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        partition_by.insert(1, "instrument_type")
                 elif stage == "silver":
                     # Use both asset_type and any available date column to prevent historical loss (Todo 183)
                     if "signal_date" in df.columns:
@@ -447,11 +484,15 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                         partition_by = ["asset_type", "ingest_date", "timeframe_set_id"]
                     else:
                         partition_by = ["asset_type", "timeframe_set_id"]
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        partition_by.insert(1, "instrument_type")
                 elif stage == "gold":
                     if "signal_date" not in df.columns:
                         df["signal_date"] = now_utc.strftime("%Y-%m-%d")
 
                     partition_by = ["asset_type", "signal_date", "timeframe_set_id"]
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        partition_by.insert(1, "instrument_type")
 
                 overwrite_filter = None
                 if mode == "overwrite" and stage in {"silver", "gold"} and partition_by:
@@ -507,13 +548,36 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                         else (filters[0] if len(filters) == 1 else And(*filters))
                     )
 
-                write_iceberg(
-                    df,
-                    table_name,
-                    mode=mode,
-                    partition_by=partition_by,
-                    overwrite_filter=overwrite_filter,
-                )
+                def _persist_group(df_group: pd.DataFrame) -> None:
+                    it = normalize_instrument_type(
+                        asset_type=self.asset_type,
+                        raw=(
+                            df_group["instrument_type"].iloc[0]
+                            if "instrument_type" in df_group.columns and len(df_group)
+                            else os.getenv("TVSCREENER_INSTRUMENT_TYPE")
+                        ),
+                    )
+
+                    group_table = stage_table_id(
+                        stage=stage,
+                        dataset=dataset_name,
+                        asset_type=self.asset_type,
+                        instrument_type=it,
+                        layout=layout,
+                    )
+                    write_iceberg(
+                        df_group,
+                        group_table,
+                        mode=mode,
+                        partition_by=partition_by,
+                        overwrite_filter=overwrite_filter,
+                    )
+
+                if layout == "scalable" and "instrument_type" in df.columns:
+                    for it_val in sorted({str(v) for v in df["instrument_type"].dropna().tolist()}):
+                        _persist_group(df[df["instrument_type"].astype(str) == it_val].copy())
+                else:
+                    _persist_group(df)
 
                 # Fast "latest" table for intraday queries
                 if stage == "gold" and not df.empty:
@@ -528,12 +592,44 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                         ]
                         if c in df.columns
                     ]
-                    write_iceberg(
-                        df,
-                        "tvscreener.signals_batch",
-                        mode="overwrite",
-                        partition_by=batch_partition_by,
-                    )
+
+                    def _product_table(name: str, df_group: pd.DataFrame) -> str:
+                        it = normalize_instrument_type(
+                            asset_type=self.asset_type,
+                            raw=(
+                                df_group["instrument_type"].iloc[0]
+                                if "instrument_type" in df_group.columns and len(df_group)
+                                else os.getenv("TVSCREENER_INSTRUMENT_TYPE")
+                            ),
+                        )
+                        return product_table_id(
+                            dataset=name,
+                            asset_type=self.asset_type,
+                            instrument_type=it,
+                            layout=layout,
+                        )
+
+                    def _write_product(name: str, df_group: pd.DataFrame, **kwargs: Any) -> None:
+                        write_iceberg(df_group, _product_table(name, df_group), **kwargs)
+
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        for it_val in sorted(
+                            {str(v) for v in df["instrument_type"].dropna().tolist()}
+                        ):
+                            df_g = df[df["instrument_type"].astype(str) == it_val].copy()
+                            _write_product(
+                                "signals_batch",
+                                df_g,
+                                mode="overwrite",
+                                partition_by=batch_partition_by,
+                            )
+                    else:
+                        _write_product(
+                            "signals_batch",
+                            df,
+                            mode="overwrite",
+                            partition_by=batch_partition_by,
+                        )
 
                     if bool(self.config.extra_options.get("long_form_output", False)):
                         long_df = self._to_long_form(df)
@@ -550,9 +646,9 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                                 ]
                                 if c in long_df.columns
                             ]
-                            write_iceberg(
+                            _write_product(
+                                "signals_long",
                                 long_df,
-                                "tvscreener.signals_long",
                                 mode="overwrite",
                                 partition_by=long_partition_by,
                             )
@@ -595,13 +691,26 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                             else (filters[0] if len(filters) == 1 else And(*filters))
                         )
 
-                    write_iceberg(
-                        df,
-                        "tvscreener.signals_latest",
-                        mode="overwrite",
-                        partition_by=latest_partition_by,
-                        overwrite_filter=latest_overwrite_filter,
-                    )
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        for it_val in sorted(
+                            {str(v) for v in df["instrument_type"].dropna().tolist()}
+                        ):
+                            df_g = df[df["instrument_type"].astype(str) == it_val].copy()
+                            _write_product(
+                                "signals_latest",
+                                df_g,
+                                mode="overwrite",
+                                partition_by=latest_partition_by,
+                                overwrite_filter=latest_overwrite_filter,
+                            )
+                    else:
+                        _write_product(
+                            "signals_latest",
+                            df,
+                            mode="overwrite",
+                            partition_by=latest_partition_by,
+                            overwrite_filter=latest_overwrite_filter,
+                        )
             except Exception as e:
                 logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
 
