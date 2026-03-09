@@ -216,12 +216,16 @@ Audit checklist for each universe:
 - Eligibility vs ranking: selection-time filtering kept minimal for “base” universes.
 
 Audit snapshot (current):
-- `binance_spot_top100`: 36
-- `binance_perp_top100`: 36
+Audit snapshot (current):
+- `binance_spot_top100`: 38
+- `binance_perp_top100`: 40
 - `binance_spot_mcap_top100`: 39
 - `binance_perp_mcap_top100`: 34
 - `binance_spot_cs_momentum`: 47
 - `binance_perp_cs_momentum`: 48
+
+Audit artifacts:
+- `artifacts/audits/binance-universes/report.json`
 
 Tuning applied (spot-only):
 - `binance_spot_top100` min volume: `2_500_000`
