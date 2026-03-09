@@ -15,14 +15,20 @@ def test_cs_momentum_universe_excludes_stables_and_sorts_by_volume(monkeypatch):
     def _fetch(tickers: list[str]) -> pd.DataFrame:
         # USDC should never be requested (excluded); BTC volume < ETH volume.
         assert "BINANCE:USDCUSDT" not in tickers
+        volumes = []
+        for t in tickers:
+            if t.startswith("BINANCE:ETH"):
+                volumes.append(120_000_000)
+            else:
+                volumes.append(50_000_000)
         return pd.DataFrame(
             {
                 "Symbol": tickers,
-                "Volume 24h in USD": [50_000_000, 120_000_000],
-                "Volatility": [5.0, 4.0],
-                "Price": [1.0, 1.0],
-                "High": [1.0, 1.0],
-                "Low": [1.0, 1.0],
+                "Volume 24h in USD": volumes,
+                "Volatility": [5.0] * len(tickers),
+                "Price": [1.0] * len(tickers),
+                "High": [1.0] * len(tickers),
+                "Low": [1.0] * len(tickers),
             }
         )
 

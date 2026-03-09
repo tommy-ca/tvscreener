@@ -21,7 +21,7 @@ class BinanceCryptoUniverseConstraints:
 class BinanceCryptoMarketCapUniverseConstraints:
     instrument_type: str  # spot | perp
     top_n_market_cap: int = 100
-    quote_asset: str = "USDT"
+    quote_assets: tuple[str, ...] = ("USDT", "USDC")
     # Raw universe selection is market-cap-driven; filtering is done later in analytics.
     min_volatility_24h_pct: float = 0.0
 
@@ -29,7 +29,7 @@ class BinanceCryptoMarketCapUniverseConstraints:
 @dataclass(frozen=True, slots=True)
 class BinanceCryptoCSMomentumUniverseConstraints:
     instrument_type: str  # spot | perp
-    quote_asset: str = "USDT"
+    quote_assets: tuple[str, ...] = ("USDT", "USDC")
     seed_top_n_market_cap: int = 200
     min_quote_volume_usd: float = 10_000_000
     # Intentionally exclude these bases from the candidate universe
@@ -245,6 +245,32 @@ def fetch_tradingview_crypto_tickers(tickers: list[str]) -> pd.DataFrame:
     return pd.DataFrame() if df is None else df
 
 
+def _pick_ticker_for_base(
+    *,
+    base: str,
+    instrument_type: str,
+    quote_assets: tuple[str, ...],
+    returned: set[str],
+    prefer_quote_asset: str | None = None,
+) -> str | None:
+    quote_assets_norm = tuple((q or "").strip().upper() for q in quote_assets if (q or "").strip())
+    if not quote_assets_norm:
+        return None
+
+    prefer = (prefer_quote_asset or "").strip().upper() or None
+    ordered = (
+        (prefer,) + tuple(q for q in quote_assets_norm if q != prefer)
+        if prefer
+        else quote_assets_norm
+    )
+
+    for q in ordered:
+        t = _ticker_for_base(base=base, quote_asset=q, instrument_type=instrument_type)
+        if t in returned:
+            return t
+    return None
+
+
 def symbol_from_ticker(ticker: str) -> str:
     raw = (ticker or "").strip()
     if ":" in raw:
@@ -272,20 +298,26 @@ def build_binance_crypto_universe_market_cap(
     # Stable order (market cap rank order), de-duped.
     bases = list(dict.fromkeys(bases))
 
-    tickers = [
-        _ticker_for_base(
-            base=b,
-            quote_asset=constraints.quote_asset,
-            instrument_type=constraints.instrument_type,
-        )
-        for b in bases
-    ]
+    included_bases: list[str] = []
+    missing_bases: list[str] = []
 
-    candidates = fetch_tradingview_crypto_tickers(tickers)
+    requested_tickers: list[str] = []
+    for b in bases:
+        for q in constraints.quote_assets:
+            requested_tickers.append(
+                _ticker_for_base(
+                    base=b,
+                    quote_asset=q,
+                    instrument_type=constraints.instrument_type,
+                )
+            )
+
+    candidates = fetch_tradingview_crypto_tickers(requested_tickers)
     if candidates.empty:
         out_tickers: list[str] = []
         ordered = candidates
-        missing = tickers
+        missing = requested_tickers
+        missing_bases = bases
     else:
         returned = (
             candidates["Symbol"].dropna().astype(str).tolist()
@@ -293,12 +325,28 @@ def build_binance_crypto_universe_market_cap(
             else []
         )
         returned_set = set(returned)
-        out_tickers = [t for t in tickers if t in returned_set]
-        missing = [t for t in tickers if t not in returned_set]
+        missing = [t for t in requested_tickers if t not in returned_set]
 
-        # Preserve market-cap rank order; do not filter/sort here.
+        # Preserve market-cap rank order by picking one ticker per base.
+        out_tickers = []
+        prefer_q = constraints.quote_assets[0] if constraints.quote_assets else None
+        for b in bases:
+            picked = _pick_ticker_for_base(
+                base=b,
+                instrument_type=constraints.instrument_type,
+                quote_assets=constraints.quote_assets,
+                returned=returned_set,
+                prefer_quote_asset=prefer_q,
+            )
+            if picked:
+                out_tickers.append(picked)
+                included_bases.append(b)
+            else:
+                missing_bases.append(b)
+
         ordered = candidates.copy()
         if "Symbol" in ordered.columns:
+            ordered = ordered.loc[ordered["Symbol"].astype(str).isin(out_tickers)].copy()  # type: ignore[assignment]
             ordered["_order"] = (
                 ordered["Symbol"]
                 .astype(str)
@@ -317,14 +365,16 @@ def build_binance_crypto_universe_market_cap(
             "venue": "binance",
             "selection": "market_cap_top100",
             "instrument_type": constraints.instrument_type,
-            "quote_asset": constraints.quote_asset,
+            "quote_assets": list(constraints.quote_assets),
             "top_n_market_cap": constraints.top_n_market_cap,
             "min_volatility_24h_pct": constraints.min_volatility_24h_pct,
             "filters_applied": False,
             "sort": "market_cap_rank",
         },
         "market_cap_bases": bases,
-        "requested_tickers": tickers,
+        "included_bases": included_bases,
+        "missing_bases": missing_bases,
+        "requested_tickers": requested_tickers,
         "missing_tickers": missing,
         "count": len(out_tickers),
         "rows": (
@@ -373,20 +423,25 @@ def build_binance_crypto_universe_cs_momentum(
     excluded_bases = {b.strip().upper() for b in constraints.exclude_bases}
     bases_filtered = [b for b in bases if b not in excluded_bases]
 
-    requested = [
-        _ticker_for_base(
-            base=b,
-            quote_asset=constraints.quote_asset,
-            instrument_type=constraints.instrument_type,
-        )
-        for b in bases_filtered
-    ]
+    requested: list[str] = []
+    for b in bases_filtered:
+        for q in constraints.quote_assets:
+            requested.append(
+                _ticker_for_base(
+                    base=b,
+                    quote_asset=q,
+                    instrument_type=constraints.instrument_type,
+                )
+            )
 
     candidates = fetch_tradingview_crypto_tickers(requested)
+    included_bases: list[str] = []
+    missing_bases: list[str] = []
     if candidates.empty:
         tickers: list[str] = []
         missing = requested
         ordered = candidates
+        missing_bases = bases_filtered
     else:
         returned = (
             candidates["Symbol"].dropna().astype(str).tolist()
@@ -411,7 +466,28 @@ def build_binance_crypto_universe_cs_momentum(
             ordered["quote_volume_usd"] >= float(constraints.min_quote_volume_usd)
         ].copy()
 
-        # Sort by trading value (USD) so downstream analytics starts from the most liquid.
+        available_set = set(
+            ordered["Symbol"].dropna().astype(str).tolist() if "Symbol" in ordered.columns else []
+        )
+
+        # Pick one ticker per base (prefer primary quote asset), then order by volume.
+        chosen: list[str] = []
+        prefer_q = constraints.quote_assets[0] if constraints.quote_assets else None
+        for b in bases_filtered:
+            picked = _pick_ticker_for_base(
+                base=b,
+                instrument_type=constraints.instrument_type,
+                quote_assets=constraints.quote_assets,
+                returned=available_set,
+                prefer_quote_asset=prefer_q,
+            )
+            if picked:
+                chosen.append(picked)
+                included_bases.append(b)
+            else:
+                missing_bases.append(b)
+
+        ordered = ordered.loc[ordered["Symbol"].astype(str).isin(chosen)].copy()  # type: ignore[assignment]
         ordered = ordered.sort_values(["quote_volume_usd"], ascending=[False])
         tickers = (
             ordered["Symbol"].dropna().astype(str).tolist() if "Symbol" in ordered.columns else []
@@ -424,7 +500,7 @@ def build_binance_crypto_universe_cs_momentum(
             "venue": "binance",
             "selection": "cs_momentum_candidates",
             "instrument_type": instrument_type,
-            "quote_asset": constraints.quote_asset,
+            "quote_assets": list(constraints.quote_assets),
             "seed_top_n_market_cap": constraints.seed_top_n_market_cap,
             "min_quote_volume_usd": constraints.min_quote_volume_usd,
             "exclude_bases": list(constraints.exclude_bases),
@@ -432,6 +508,8 @@ def build_binance_crypto_universe_cs_momentum(
         },
         "market_cap_bases": bases,
         "bases_after_exclusions": bases_filtered,
+        "included_bases": included_bases,
+        "missing_bases": missing_bases,
         "requested_tickers": requested,
         "missing_tickers": missing,
         "count": len(tickers),
@@ -442,7 +520,9 @@ def build_binance_crypto_universe_cs_momentum(
                     "symbol": symbol_from_ticker(str(row.get("Symbol"))),
                     "base": base_from_symbol(
                         symbol=symbol_from_ticker(str(row.get("Symbol"))),
-                        quote_asset=constraints.quote_asset,
+                        quote_asset=(
+                            constraints.quote_assets[0] if constraints.quote_assets else "USDT"
+                        ),
                     ),
                     "venue": "binance",
                     "instrument_type": instrument_type,
@@ -513,5 +593,6 @@ def maybe_write_universe_json(snapshot: dict, *, run_dir: str | None) -> str | N
     if not run_dir:
         return None
     path = Path(run_dir) / "universe.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
     return str(path)
