@@ -65,6 +65,14 @@ As we add multiple Binance universes, it helps to distinguish:
 
 Guideline: keep base universes raw and do ranking/thresholding in DuckDB analytics unless there is a clear upstream limit.
 
+### Audit tooling
+
+Use the built-in audit command to generate a structured report of universe health:
+
+```bash
+uv run tvscreener-scan audit binance-universes --out-dir artifacts/audits/binance-universes
+```
+
 ### Artifacts and reproducibility
 
 The run MUST persist, at minimum:

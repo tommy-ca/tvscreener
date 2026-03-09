@@ -67,6 +67,13 @@ uv run tvscreener-scan --runner prefect --scanner strategy --pipeline analytics 
     - Artifacts: `artifacts/runs/2609f3a93d1ecdceab2312c110626d48d9d8d576e39e2da1753578377365135d/run_result.json`
     - Matrix: `artifacts/runs/2609f3a93d1ecdceab2312c110626d48d9d8d576e39e2da1753578377365135d/matrix.txt`
 
+- Reran forex `all` again on 2026-03-09 (Prefect server parity):
+  - Data log: `artifacts/matrix/forex_all_data_prefect_server_2026-03-09.log`
+  - Opportunity analytics log: `artifacts/matrix/forex_all_opportunity_analytics_prefect_server_2026-03-09.log`
+    - Matrix: `artifacts/runs/4dee96c25388f26a512b785ccc7388c58f73388b5446704f332e5d483b7428d5/matrix.txt`
+  - Strategy analytics log: `artifacts/matrix/forex_all_strategy_analytics_prefect_server_2026-03-09.log`
+    - Matrix: `artifacts/runs/2609f3a93d1ecdceab2312c110626d48d9d8d576e39e2da1753578377365135d/matrix.txt`
+
 ## Artifacts audit (current)
 
 Current observed directories:
@@ -226,6 +233,11 @@ Audit snapshot (current):
 
 Audit artifacts:
 - `artifacts/audits/binance-universes/report.json`
+
+Audit command:
+```bash
+uv run tvscreener-scan audit binance-universes --out-dir artifacts/audits/binance-universes
+```
 
 Issues spotted:
 - High base->market mapping loss for market-cap and CS-momentum universes when using only `USDT`.
