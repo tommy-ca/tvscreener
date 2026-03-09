@@ -52,6 +52,19 @@ Alternative selection mode (planned):
 - emit the raw universe (no filters) and persist `universe.json` with `quote_volume_usd` and `volatility_24h_pct`
 - filter/sort in analytics using DuckDB (EdgeQueryClient)
 
+### Universe taxonomy (base vs derived)
+
+As we add multiple Binance universes, it helps to distinguish:
+
+- **Base universes** (broad membership; minimal selection-time filters)
+  - e.g. market-cap-seeded universes that persist `requested_tickers` and `missing_tickers`
+- **Derived universes** (eligibility gates for a specific strategy)
+  - e.g. liquidity-gated CS momentum candidates
+- **Pre-filtered universes** (selection-time thresholds)
+  - e.g. top-N by volume with min volume + min volatility
+
+Guideline: keep base universes raw and do ranking/thresholding in DuckDB analytics unless there is a clear upstream limit.
+
 ### Artifacts and reproducibility
 
 The run MUST persist, at minimum:

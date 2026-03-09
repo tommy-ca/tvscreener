@@ -186,6 +186,43 @@ Built and wrote universe snapshots (market cap top100 -> map to Binance tickers;
 - spot: `artifacts/runs/a5dd40eb07523521a0313dbcce59f387527382c57da57844debd5f4c63c522ea/universe.json` (count=38, missing=62)
 - perp: `artifacts/runs/2e7987cd48b99786c87773582b6a04b68bc23f928f06d3b96dceaf12dbe6b295/universe.json` (count=33, missing=67)
 
+## Next: CS momentum candidate universes
+
+Goal: build Binance spot/perp universes tuned for cross-sectional momentum trading (before ROC/momentum ranking).
+
+Universes:
+- `binance_spot_cs_momentum`
+- `binance_perp_cs_momentum`
+
+Idea: seed from market cap top 200, exclude stable/wrapped bases, apply only liquidity eligibility gate, then rank by USD trading value.
+OpenSpec: `docs/openspec/changes/add-binance-cs-momentum-universe/`
+
+## Review plan: Binance crypto universes (6)
+
+Current universes (spot + perp variants):
+- `binance_{spot,perp}_top100`: TradingView crypto /scan rank by `Volume 24h in USD`, selection-time filters (min volume + min volatility).
+- `binance_{spot,perp}_mcap_top100`: TradingView coin /scan market-cap seed -> map to Binance tickers; no filters at selection time.
+- `binance_{spot,perp}_cs_momentum`: market-cap seed -> exclude stables/wrapped -> liquidity gate; ordered by USD trading value.
+
+Base-universe recommendation:
+- Use `binance_{spot,perp}_mcap_top100` as the broad, reproducible **base universe** (raw membership + requested/missing auditing).
+- Derive strategy-specific candidates from the base:
+  - momentum: `binance_{spot,perp}_cs_momentum` (eligibility gate only)
+  - short-term opportunity: `binance_{spot,perp}_top100` (selection-time gates)
+
+Audit checklist for each universe:
+- Determinism: `universe.json` written, includes `requested_tickers` and `missing_tickers`.
+- Instrument isolation: `instrument_type` is correct (`spot` vs `perp`).
+- Eligibility vs ranking: selection-time filtering kept minimal for “base” universes.
+
+Audit snapshot (current):
+- `binance_spot_top100`: 12
+- `binance_perp_top100`: 35
+- `binance_spot_mcap_top100`: 39
+- `binance_perp_mcap_top100`: 34
+- `binance_spot_cs_momentum`: 16
+- `binance_perp_cs_momentum`: 48
+
 ## Research notes (TradingView crypto spot/perps)
 
 Empirical TradingView results:
