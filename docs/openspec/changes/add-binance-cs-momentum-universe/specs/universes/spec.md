@@ -38,3 +38,12 @@ The system SHALL persist `universe.json` for CS momentum universes.
 #### Scenario: universe.json contains eligibility metadata
 - **WHEN** a CS momentum universe is built
 - **THEN** `universe.json` includes `requested_tickers`, `missing_tickers`, and per-ticker metrics
+
+#### Scenario: universe.json reports base coverage
+- **WHEN** a CS momentum universe is built
+- **THEN** `universe.json` includes `included_bases` and `missing_bases`
+
+#### Scenario: Universe mapping supports a quote-asset fallback
+- **GIVEN** a base asset does not have a `USDT` market but does have a `USDC` market
+- **WHEN** the universe is built with default `quote_assets`
+- **THEN** the system MAY include the `USDC` market as a fallback

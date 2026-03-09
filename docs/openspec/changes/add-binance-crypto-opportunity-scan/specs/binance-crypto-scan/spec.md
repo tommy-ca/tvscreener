@@ -36,7 +36,7 @@ The system SHALL support selecting Binance spot/perp markets derived from the to
 - **GIVEN** the operator requests `universe=binance_spot_mcap_top100` (or perp variant)
 - **WHEN** the universe selector runs
 - **THEN** it derives a base-asset list from the top 100 coins by market cap
-- **AND** maps those bases to Binance `USDT` markets for the requested instrument type
+- **AND** maps those bases to Binance markets using `quote_assets` (default `USDT`, fallback `USDC`)
 - **AND** it does not apply volume/volatility filters at selection time
 - **AND** it persists `universe.json` with `quote_volume_usd` and `volatility_24h_pct` for later analytics filtering
 
@@ -62,6 +62,11 @@ The system SHALL persist the selected universe snapshot as an artifact.
 - **WHEN** the universe selector completes
 - **THEN** it writes `universe.json` under `artifacts/runs/<params_hash>/`
 - **AND** it includes `entity_id`, `symbol`, `instrument_type`, `quote_volume_usd`, and `volatility_24h_pct`
+
+#### Scenario: Universe snapshot reports missing bases
+- **GIVEN** the universe selector maps from a base list (e.g. market cap bases)
+- **WHEN** it writes `universe.json`
+- **THEN** it includes `included_bases` and `missing_bases` to quantify mapping coverage
 
 ## MODIFIED Requirements
 

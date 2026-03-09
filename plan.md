@@ -227,6 +227,13 @@ Audit snapshot (current):
 Audit artifacts:
 - `artifacts/audits/binance-universes/report.json`
 
+Issues spotted:
+- High base->market mapping loss for market-cap and CS-momentum universes when using only `USDT`.
+
+Fixes applied:
+- Added `quote_assets` mapping with fallback (`USDT` then `USDC`) for `*_mcap_top100` and `*_cs_momentum`.
+- Added `included_bases` and `missing_bases` to `universe.json` to audit mapping coverage at the base-asset level.
+
 Tuning applied (spot-only):
 - `binance_spot_top100` min volume: `2_500_000`
 - `binance_spot_cs_momentum` min volume: `1_700_000`

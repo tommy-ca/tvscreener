@@ -48,7 +48,7 @@ Definitions:
 
 Alternative selection mode (planned):
 - select coins by market cap top 100 (TradingView `CoinScreener` `Market Cap Calc`)
-- map to Binance markets for `quote_asset=USDT` (spot or perp)
+- map to Binance markets for `quote_assets` (default `USDT`, fallback `USDC`) (spot or perp)
 - emit the raw universe (no filters) and persist `universe.json` with `quote_volume_usd` and `volatility_24h_pct`
 - filter/sort in analytics using DuckDB (EdgeQueryClient)
 

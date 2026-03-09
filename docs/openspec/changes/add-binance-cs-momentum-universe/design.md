@@ -12,7 +12,7 @@ So we build a candidate universe that is already "tradeable" before ranking.
 
 Per instrument type (spot/perp):
 1) Seed bases from TradingView top coins by market cap (`CoinScreener` `Market Cap Calc`, top 200).
-2) Map to Binance `USDT` tickers (`BINANCE:<BASE>USDT` or `BINANCE:<BASE>USDT.P`).
+2) Map to Binance tickers using `quote_assets` (default `USDT`, fallback `USDC`).
 3) Drop missing tickers (not listed on Binance / not returned by TradingView).
 4) Exclude bases in an explicit list (stablecoins, wrapped/synthetic).
 5) Apply a liquidity gate (`Volume 24h in USD`):
