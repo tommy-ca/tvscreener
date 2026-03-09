@@ -57,6 +57,22 @@ def main() -> int:
         parser.add_argument("--config", help="Path to YAML config")
 
         args = parser.parse_args()
+    elif len(sys.argv) > 1 and sys.argv[1] == "audit":
+        parser = argparse.ArgumentParser(description="Audit universe selection and artifacts")
+        parser.add_argument("command", choices=["audit"])
+        parser.add_argument(
+            "target",
+            choices=["binance-universes"],
+            help="Audit target",
+        )
+        parser.add_argument(
+            "--out-dir",
+            default="artifacts/audits/binance-universes",
+            help="Directory to write audit report(s)",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+        args = parser.parse_args()
     else:
         parser = argparse.ArgumentParser(
             description="Run TradingView scanners",

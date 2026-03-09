@@ -473,6 +473,8 @@ class ScreenerController:
             return self.run_maintenance(args)
         if command == "query":
             return self.run_query(args)
+        if command == "audit":
+            return self.run_audit(args)
 
         matrix_mode = args.matrix
         detailed_mode = args.detailed
@@ -489,6 +491,7 @@ class ScreenerController:
                 pairs=args.pairs,
                 timeframes=args.timeframes,
                 contract_type=args.contract_type,
+                instrument_type=getattr(args, "instrument_type", None),
                 min_volume=args.min_volume,
                 max_atr=args.max_atr,
                 min_ma_score=args.min_ma_score,
@@ -540,6 +543,105 @@ class ScreenerController:
         )
 
         return self.run_scan(request)
+
+    def run_audit(self, args: argparse.Namespace) -> int:
+        """Run audits and write structured reports."""
+        target = getattr(args, "target", None)
+        out_dir = getattr(args, "out_dir", None)
+        if not target:
+            return 2
+
+        if target != "binance-universes":
+            if self.console:
+                self.console.print(f"[red]Unknown audit target: {target}[/red]")
+            return 2
+
+        import json
+        import os
+        from pathlib import Path
+
+        out_base = Path(out_dir or "artifacts/audits/binance-universes")
+        out_base.mkdir(parents=True, exist_ok=True)
+
+        universes = [
+            "binance_spot_top100",
+            "binance_perp_top100",
+            "binance_spot_mcap_top100",
+            "binance_perp_mcap_top100",
+            "binance_spot_cs_momentum",
+            "binance_perp_cs_momentum",
+        ]
+
+        report: dict[str, dict] = {}
+        sets: dict[str, set[str]] = {}
+
+        for u in universes:
+            run_dir = out_base / u
+            run_dir.mkdir(parents=True, exist_ok=True)
+
+            os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
+            pairs = self.get_pairs("crypto", u, specific=None)
+            sets[u] = set(pairs)
+
+            uni_path = run_dir / "universe.json"
+            uni = None
+            if uni_path.exists():
+                try:
+                    uni = json.loads(uni_path.read_text(encoding="utf-8"))
+                except Exception:
+                    uni = None
+
+            errors: list[str] = []
+            if len(pairs) != len(set(pairs)):
+                errors.append("duplicates")
+            if u.startswith("binance_perp") and any(not p.endswith(".P") for p in pairs):
+                errors.append("perp_missing_dotP")
+            if u.startswith("binance_spot") and any(p.endswith(".P") for p in pairs):
+                errors.append("spot_has_dotP")
+            if any(not p.startswith("BINANCE:") for p in pairs):
+                errors.append("non_binance_ticker")
+
+            report[u] = {
+                "count": len(pairs),
+                "sample": pairs[:10],
+                "universe_json": str(uni_path) if uni_path.exists() else None,
+                "selection": (
+                    uni.get("constraints", {}).get("selection") if isinstance(uni, dict) else None
+                ),
+                "requested_tickers": (
+                    len(uni.get("requested_tickers", [])) if isinstance(uni, dict) else None
+                ),
+                "missing_tickers": (
+                    len(uni.get("missing_tickers", [])) if isinstance(uni, dict) else None
+                ),
+                "included_bases": (
+                    len(uni.get("included_bases", [])) if isinstance(uni, dict) else None
+                ),
+                "missing_bases": (
+                    len(uni.get("missing_bases", [])) if isinstance(uni, dict) else None
+                ),
+                "errors": errors,
+            }
+
+        overlap: dict[str, dict[str, int]] = {}
+        for a in universes:
+            overlap[a] = {}
+            for b in universes:
+                overlap[a][b] = len(sets[a] & sets[b])
+
+        payload = {"universes": report, "overlap": overlap}
+        report_path = out_base / "report.json"
+        report_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+        if self.console:
+            self.console.print(f"[green]Wrote {report_path}[/green]")
+            for u in universes:
+                info = report[u]
+                self.console.print(
+                    f"- {u}: {info['count']} (missing_tickers={info['missing_tickers']}, missing_bases={info['missing_bases']})"
+                )
+
+        return 0
 
     def run_opportunity_scan(self, request: ScanRequest) -> int:
         """Run opportunity screener and handle output."""
