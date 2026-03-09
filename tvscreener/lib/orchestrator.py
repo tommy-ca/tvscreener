@@ -236,6 +236,27 @@ class ScreenerController:
             _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
             return tickers
 
+        if asset_type == "crypto" and universe in {
+            "binance_spot_cs_momentum",
+            "binance_perp_cs_momentum",
+        }:
+            from tvscreener.lib.universe.binance_crypto import (
+                BinanceCryptoCSMomentumUniverseConstraints,
+                build_binance_crypto_universe_cs_momentum,
+                maybe_write_universe_json,
+            )
+
+            instrument_type = "spot" if universe == "binance_spot_cs_momentum" else "perp"
+            tickers, snapshot = build_binance_crypto_universe_cs_momentum(
+                constraints=BinanceCryptoCSMomentumUniverseConstraints(
+                    instrument_type=instrument_type,
+                )
+            )
+
+            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
+            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
+            return tickers
+
         cfg = self.get_universe(asset_type)
         return list(cfg.pairs)
 
@@ -264,7 +285,12 @@ class ScreenerController:
         ):
             request.assets.instrument_type = (
                 "spot"
-                if request.assets.universe in {"binance_spot_top100", "binance_spot_mcap_top100"}
+                if request.assets.universe
+                in {
+                    "binance_spot_top100",
+                    "binance_spot_mcap_top100",
+                    "binance_spot_cs_momentum",
+                }
                 else "perp"
             )
 

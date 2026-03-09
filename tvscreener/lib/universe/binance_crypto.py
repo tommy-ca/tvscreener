@@ -26,6 +26,39 @@ class BinanceCryptoMarketCapUniverseConstraints:
     min_volatility_24h_pct: float = 0.0
 
 
+@dataclass(frozen=True, slots=True)
+class BinanceCryptoCSMomentumUniverseConstraints:
+    instrument_type: str  # spot | perp
+    quote_asset: str = "USDT"
+    seed_top_n_market_cap: int = 200
+    min_quote_volume_usd: float = 10_000_000
+    # Intentionally exclude these bases from the candidate universe
+    # before momentum/ROC ranking.
+    exclude_bases: tuple[str, ...] = (
+        # Stablecoins
+        "USDT",
+        "USDC",
+        "DAI",
+        "FDUSD",
+        "PYUSD",
+        "TUSD",
+        "USDP",
+        "BUSD",
+        "USDE",
+        "SUSDE",
+        "RLUSD",
+        "PAX",
+        "PAXG",
+        # Wrapped / liquid staking / synthetic bases
+        "WBTC",
+        "WETH",
+        "STETH",
+        "WSTETH",
+        "WEETH",
+        "SDAI",
+    )
+
+
 def _tv_type_for_instrument(instrument_type: str) -> str:
     it = (instrument_type or "").strip().lower()
     if it == "spot":
@@ -161,6 +194,17 @@ def _base_from_coin_name(name: str) -> str | None:
     if raw.endswith("USD") and len(raw) > 3:
         return raw[: -len("USD")]
     return None
+
+
+def base_from_symbol(*, symbol: str, quote_asset: str) -> str | None:
+    sym = (symbol or "").strip().upper()
+    quote_asset = (quote_asset or "").strip().upper()
+    if not sym or not quote_asset:
+        return None
+    if not sym.endswith(quote_asset):
+        return None
+    base = sym[: -len(quote_asset)]
+    return base or None
 
 
 def _ticker_for_base(*, base: str, quote_asset: str, instrument_type: str) -> str:
@@ -305,6 +349,116 @@ def build_binance_crypto_universe_market_cap(
         ),
     }
     return out_tickers, snapshot
+
+
+def build_binance_crypto_universe_cs_momentum(
+    *, constraints: BinanceCryptoCSMomentumUniverseConstraints
+) -> tuple[list[str], dict]:
+    """Build a candidate universe for cross-sectional momentum trading.
+
+    This universe is meant to be *tradeable* and *liquid* before applying
+    momentum/ROC ranking in analytics.
+    """
+
+    coins = fetch_tradingview_top_coins_by_market_cap(top_n=constraints.seed_top_n_market_cap)
+    bases: list[str] = []
+    if not coins.empty and "Name" in coins.columns:
+        for n in coins["Name"].dropna().astype(str).tolist():
+            b = _base_from_coin_name(n)
+            if b:
+                bases.append(b)
+    bases = list(dict.fromkeys(bases))
+
+    # Exclude stable/wrapped bases early.
+    excluded_bases = {b.strip().upper() for b in constraints.exclude_bases}
+    bases_filtered = [b for b in bases if b not in excluded_bases]
+
+    requested = [
+        _ticker_for_base(
+            base=b,
+            quote_asset=constraints.quote_asset,
+            instrument_type=constraints.instrument_type,
+        )
+        for b in bases_filtered
+    ]
+
+    candidates = fetch_tradingview_crypto_tickers(requested)
+    if candidates.empty:
+        tickers: list[str] = []
+        missing = requested
+        ordered = candidates
+    else:
+        returned = (
+            candidates["Symbol"].dropna().astype(str).tolist()
+            if "Symbol" in candidates.columns
+            else []
+        )
+        returned_set = set(returned)
+        missing = [t for t in requested if t not in returned_set]
+
+        ordered = candidates.copy()
+        if "Volume 24h in USD" in ordered.columns:
+            ordered["quote_volume_usd"] = pd.to_numeric(
+                ordered["Volume 24h in USD"], errors="coerce"
+            )
+        else:
+            ordered["quote_volume_usd"] = pd.NA
+        ordered["volatility_24h_pct"] = compute_volatility_24h_pct(ordered)
+
+        # Liquidity gate only (not a momentum filter).
+        ordered = ordered.dropna(subset=["Symbol", "quote_volume_usd"]).copy()
+        ordered = ordered.loc[
+            ordered["quote_volume_usd"] >= float(constraints.min_quote_volume_usd)
+        ].copy()
+
+        # Sort by trading value (USD) so downstream analytics starts from the most liquid.
+        ordered = ordered.sort_values(["quote_volume_usd"], ascending=[False])
+        tickers = (
+            ordered["Symbol"].dropna().astype(str).tolist() if "Symbol" in ordered.columns else []
+        )
+
+    instrument_type = (constraints.instrument_type or "").strip().lower()
+    snapshot = {
+        "generated_at_utc": datetime.now(tz=UTC).isoformat(),
+        "constraints": {
+            "venue": "binance",
+            "selection": "cs_momentum_candidates",
+            "instrument_type": instrument_type,
+            "quote_asset": constraints.quote_asset,
+            "seed_top_n_market_cap": constraints.seed_top_n_market_cap,
+            "min_quote_volume_usd": constraints.min_quote_volume_usd,
+            "exclude_bases": list(constraints.exclude_bases),
+            "sort": "quote_volume_usd_desc",
+        },
+        "market_cap_bases": bases,
+        "bases_after_exclusions": bases_filtered,
+        "requested_tickers": requested,
+        "missing_tickers": missing,
+        "count": len(tickers),
+        "rows": (
+            [
+                {
+                    "ticker": str(row.get("Symbol")),
+                    "symbol": symbol_from_ticker(str(row.get("Symbol"))),
+                    "base": base_from_symbol(
+                        symbol=symbol_from_ticker(str(row.get("Symbol"))),
+                        quote_asset=constraints.quote_asset,
+                    ),
+                    "venue": "binance",
+                    "instrument_type": instrument_type,
+                    "entity_id": entity_id_for(
+                        ticker=str(row.get("Symbol")), instrument_type=instrument_type
+                    ),
+                    "quote_volume_usd": row.get("quote_volume_usd"),
+                    "volatility_24h_pct": row.get("volatility_24h_pct"),
+                }
+                for row in cast(list[dict[str, Any]], ordered.to_dict(orient="records"))
+            ]
+            if not ordered.empty
+            else []
+        ),
+    }
+    return tickers, snapshot
 
 
 def build_binance_crypto_universe(
