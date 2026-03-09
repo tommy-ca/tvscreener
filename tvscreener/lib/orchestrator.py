@@ -207,7 +207,11 @@ class ScreenerController:
 
             instrument_type = "spot" if universe == "binance_spot_top100" else "perp"
             tickers, snapshot = build_binance_crypto_universe(
-                constraints=BinanceCryptoUniverseConstraints(instrument_type=instrument_type)
+                constraints=BinanceCryptoUniverseConstraints(
+                    instrument_type=instrument_type,
+                    # Tune spot floor down to keep spot/perp universe sizes comparable.
+                    min_quote_volume_usd=(2_500_000 if instrument_type == "spot" else 10_000_000),
+                )
             )
 
             run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
@@ -250,6 +254,8 @@ class ScreenerController:
             tickers, snapshot = build_binance_crypto_universe_cs_momentum(
                 constraints=BinanceCryptoCSMomentumUniverseConstraints(
                     instrument_type=instrument_type,
+                    # Tune spot floor down to keep spot/perp universe sizes comparable.
+                    min_quote_volume_usd=(1_700_000 if instrument_type == "spot" else 10_000_000),
                 )
             )
 
