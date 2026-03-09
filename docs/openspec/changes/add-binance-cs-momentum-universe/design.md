@@ -15,7 +15,9 @@ Per instrument type (spot/perp):
 2) Map to Binance `USDT` tickers (`BINANCE:<BASE>USDT` or `BINANCE:<BASE>USDT.P`).
 3) Drop missing tickers (not listed on Binance / not returned by TradingView).
 4) Exclude bases in an explicit list (stablecoins, wrapped/synthetic).
-5) Apply a liquidity gate: `Volume 24h in USD >= 10_000_000`.
+5) Apply a liquidity gate (`Volume 24h in USD`):
+   - spot default: `>= 1_700_000`
+   - perp default: `>= 10_000_000`
 6) Sort final list by `Volume 24h in USD` desc.
 
 ### Artifacts

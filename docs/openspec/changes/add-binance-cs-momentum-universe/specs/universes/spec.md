@@ -26,6 +26,12 @@ The system SHALL only apply eligibility filters during universe selection.
 - **WHEN** `universe.json` is written
 - **THEN** tickers are ordered by `quote_volume_usd` descending
 
+#### Scenario: Spot liquidity floor is lower than perps
+- **GIVEN** spot and perp CS momentum universes use default settings
+- **WHEN** candidates are selected
+- **THEN** the spot universe MAY use a lower `min_quote_volume_usd` than perps
+- **AND** the goal is to keep spot/perp candidate set sizes comparable
+
 ### Requirement: Universe snapshot artifact is written
 The system SHALL persist `universe.json` for CS momentum universes.
 

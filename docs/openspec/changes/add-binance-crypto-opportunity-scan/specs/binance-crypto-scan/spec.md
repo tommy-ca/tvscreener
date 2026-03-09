@@ -20,7 +20,9 @@ The system SHALL support selecting a Binance crypto universe by deterministic ra
 - **GIVEN** the operator requests a Binance crypto scan
 - **AND** the selection constraints are:
   - `market_types = [spot, perp]`
-  - `min_quote_volume_usd = 10_000_000`
+  - `min_quote_volume_usd` is configurable; defaults:
+    - spot: `2_500_000`
+    - perp: `10_000_000`
   - `min_volatility_24h_pct = 3.0`
   - `top_n = 100`
 - **WHEN** the universe selector runs
