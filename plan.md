@@ -204,7 +204,7 @@ Universes:
 Idea: seed from market cap top 200, exclude stable/wrapped bases, apply only liquidity eligibility gate, then rank by USD trading value.
 OpenSpec: `docs/openspec/changes/add-binance-cs-momentum-universe/`
 
-## Review plan: Binance crypto universes (6)
+## Review plan: Binance crypto universes
 
 Current universes (spot + perp variants):
 - `binance_{spot,perp}_top100`: TradingView crypto /scan rank by `Volume 24h in USD`, selection-time filters (min volume + min volatility).
@@ -231,13 +231,16 @@ Audit checklist for each universe:
 - Eligibility vs ranking: selection-time filtering kept minimal for “base” universes.
 
 Audit snapshot (current):
-Audit snapshot (current):
-- `binance_spot_top100`: 38
-- `binance_perp_top100`: 40
+- `binance_spot_top100`: 100
+- `binance_perp_top100`: 100
 - `binance_spot_mcap_top100`: 39
 - `binance_perp_mcap_top100`: 34
-- `binance_spot_cs_momentum`: 47
-- `binance_perp_cs_momentum`: 48
+- `binance_spot_cs_momentum`: 52
+- `binance_perp_cs_momentum`: 52
+- `binance_spot_tradeable_base`: 100
+- `binance_perp_tradeable_base`: 103
+- `binance_spot_tradeable_mcap_cs`: 31
+- `binance_perp_tradeable_mcap_cs`: 27
 
 Audit artifacts:
 - `artifacts/audits/binance-universes/report.json`
@@ -248,7 +251,9 @@ uv run tvscreener-scan audit binance-universes --out-dir artifacts/audits/binanc
 ```
 
 Issues spotted:
-- High base->market mapping loss for market-cap and CS-momentum universes when using only `USDT`.
+- Market-cap-seeded universes still show high base->market mapping loss (`missing_bases`) even with `quote_assets` fallback.
+- CS momentum universes intentionally add eligibility gates; `missing_bases` is expected to be large.
+- Tradeable base universes are stable and strategy-ready, but not market-cap anchored.
 
 Fixes applied:
 - Added `quote_assets` mapping with fallback (`USDT` then `USDC`) for `*_mcap_top100` and `*_cs_momentum`.
@@ -265,6 +270,15 @@ And add datasets required for ICT/SMC + volume profile:
 - derived `smc_features` and `volume_profile`
 
 OpenSpec: `docs/openspec/changes/add-crypto-strategy-layering-ict-smc-volume-profile/`
+
+## Next: tradeable market-cap CS universes
+
+Plan: build `binance_{spot,perp}_tradeable_mcap_cs` as the 2nd-tier cross-sectional universe:
+- seed from market-cap top 100
+- restrict to tradeable-base gates
+- use for CSMOM/CSMR
+
+OpenSpec: `docs/openspec/changes/add-binance-tradeable-mcap-cross-section-universe/`
 
 Tuning applied (spot-only):
 - `binance_spot_top100` min volume: `2_500_000`
