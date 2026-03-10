@@ -59,6 +59,38 @@ class BinanceCryptoCSMomentumUniverseConstraints:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class BinanceCryptoTradeableBaseUniverseConstraints:
+    instrument_type: str  # spot | perp
+    top_n: int = 200
+    quote_assets: tuple[str, ...] = ("USDT", "USDC")
+    min_quote_volume_usd: float = 10_000_000
+    # Exclude stablecoin bases and wrappers to focus on tradeable underlyings.
+    exclude_bases: tuple[str, ...] = (
+        # Stablecoins
+        "USDT",
+        "USDC",
+        "DAI",
+        "FDUSD",
+        "PYUSD",
+        "TUSD",
+        "USDP",
+        "BUSD",
+        "USDE",
+        "SUSDE",
+        "RLUSD",
+        "PAX",
+        "PAXG",
+        # Wrapped / liquid staking / synthetic bases
+        "WBTC",
+        "WETH",
+        "STETH",
+        "WSTETH",
+        "WEETH",
+        "SDAI",
+    )
+
+
 def _tv_type_for_instrument(instrument_type: str) -> str:
     it = (instrument_type or "").strip().lower()
     if it == "spot":
@@ -129,6 +161,151 @@ def filter_and_rank_candidates(
     out["instrument_type"] = (constraints.instrument_type or "").strip().lower()
     out["venue"] = "binance"
     return out
+
+
+def build_binance_crypto_universe_tradeable_base(
+    *, constraints: BinanceCryptoTradeableBaseUniverseConstraints
+) -> tuple[list[str], dict]:
+    """Tradeable-first base universe.
+
+    Goal: produce a liquid, strategy-ready ticker set with minimal surprises.
+    - Binance only
+    - Spot or perp
+    - Quote assets limited to a small allowlist (default USDT/USDC)
+    - Exclude stable/wrapped bases
+    - Liquidity gate only
+    """
+
+    candidates = fetch_tradingview_binance_crypto_candidates(
+        instrument_type=constraints.instrument_type
+    )
+    if candidates.empty:
+        snapshot = {
+            "generated_at_utc": datetime.now(tz=UTC).isoformat(),
+            "constraints": {
+                "venue": "binance",
+                "selection": "tradeable_base",
+                "instrument_type": constraints.instrument_type,
+                "top_n": constraints.top_n,
+                "quote_assets": list(constraints.quote_assets),
+                "min_quote_volume_usd": constraints.min_quote_volume_usd,
+                "exclude_bases": list(constraints.exclude_bases),
+            },
+            "count": 0,
+            "requested_tickers": [],
+            "missing_tickers": [],
+            "included_bases": [],
+            "missing_bases": [],
+            "rows": [],
+        }
+        return [], snapshot
+
+    df = candidates.copy()
+
+    # Restrict to quote assets. Compute base and drop excluded bases.
+    quote_assets = tuple(
+        (q or "").strip().upper() for q in constraints.quote_assets if (q or "").strip()
+    )
+    if not quote_assets:
+        quote_assets = ("USDT",)
+
+    sym = df["Symbol"].astype(str)
+    sym_clean = sym.str.replace(".P", "", regex=False)
+    sym_clean = sym_clean.str.split(":", n=1).str[-1]
+    df["_symbol_clean"] = sym_clean
+
+    def _match_quote(s: str) -> str | None:
+        for q in quote_assets:
+            if s.endswith(q):
+                return q
+        return None
+
+    df["quote_asset"] = df["_symbol_clean"].map(_match_quote)
+    df = df.dropna(subset=["quote_asset"]).copy()
+
+    df["base"] = df["_symbol_clean"].astype(str)
+    df["base"] = df["base"].combine(
+        df["quote_asset"].astype(str),
+        lambda s, q: base_from_symbol(symbol=str(s), quote_asset=str(q)),
+    )
+    df = df.dropna(subset=["base"]).copy()
+
+    excluded_bases = {b.strip().upper() for b in constraints.exclude_bases}
+    df = df.loc[~df["base"].astype(str).str.upper().isin(excluded_bases)].copy()
+
+    df["quote_volume_usd"] = pd.to_numeric(df.get("Volume 24h in USD"), errors="coerce")
+    df["volatility_24h_pct"] = compute_volatility_24h_pct(df)
+    df = df.dropna(subset=["Symbol", "quote_volume_usd"]).copy()
+    df = df.loc[df["quote_volume_usd"] >= float(constraints.min_quote_volume_usd)].copy()
+
+    returned_set = set(df["Symbol"].dropna().astype(str).tolist())
+
+    # Pick one ticker per base, preferring first quote asset.
+    picked: list[str] = []
+    included_bases: list[str] = []
+    missing_bases: list[str] = []
+    prefer_q = quote_assets[0] if quote_assets else None
+
+    for base in df["base"].astype(str).str.upper().drop_duplicates().tolist():
+        ticker = _pick_ticker_for_base(
+            base=base,
+            instrument_type=constraints.instrument_type,
+            quote_assets=quote_assets,
+            returned=returned_set,
+            prefer_quote_asset=prefer_q,
+        )
+        if ticker:
+            picked.append(ticker)
+            included_bases.append(base)
+        else:
+            missing_bases.append(base)
+
+    df = df.loc[df["Symbol"].astype(str).isin(picked)].copy()
+    df = df.sort_values(["quote_volume_usd"], ascending=[False]).head(int(constraints.top_n))
+
+    tickers = df["Symbol"].astype(str).tolist()
+    instrument_type = (constraints.instrument_type or "").strip().lower()
+
+    snapshot = {
+        "generated_at_utc": datetime.now(tz=UTC).isoformat(),
+        "constraints": {
+            "venue": "binance",
+            "selection": "tradeable_base",
+            "instrument_type": instrument_type,
+            "top_n": constraints.top_n,
+            "quote_assets": list(quote_assets),
+            "min_quote_volume_usd": constraints.min_quote_volume_usd,
+            "exclude_bases": list(constraints.exclude_bases),
+            "sort": "quote_volume_usd_desc",
+        },
+        "requested_tickers": sorted(returned_set),
+        "missing_tickers": [],
+        "included_bases": included_bases,
+        "missing_bases": missing_bases,
+        "count": len(tickers),
+        "rows": (
+            [
+                {
+                    "ticker": str(row.get("Symbol")),
+                    "symbol": symbol_from_ticker(str(row.get("Symbol"))),
+                    "base": str(row.get("base")),
+                    "quote_asset": str(row.get("quote_asset")),
+                    "venue": "binance",
+                    "instrument_type": instrument_type,
+                    "entity_id": entity_id_for(
+                        ticker=str(row.get("Symbol")), instrument_type=instrument_type
+                    ),
+                    "quote_volume_usd": row.get("quote_volume_usd"),
+                    "volatility_24h_pct": row.get("volatility_24h_pct"),
+                }
+                for row in cast(list[dict[str, Any]], df.to_dict(orient="records"))
+            ]
+            if not df.empty
+            else []
+        ),
+    }
+
+    return tickers, snapshot
 
 
 def fetch_tradingview_binance_crypto_candidates(
@@ -557,6 +734,7 @@ def build_binance_crypto_universe(
         "generated_at_utc": datetime.now(tz=UTC).isoformat(),
         "constraints": {
             "venue": "binance",
+            "selection": "top_by_volume_filtered",
             "instrument_type": constraints.instrument_type,
             "top_n": constraints.top_n,
             "min_quote_volume_usd": constraints.min_quote_volume_usd,

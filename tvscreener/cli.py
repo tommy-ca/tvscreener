@@ -131,6 +131,8 @@ def main() -> int:
                 "binance_perp_mcap_top100",
                 "binance_spot_cs_momentum",
                 "binance_perp_cs_momentum",
+                "binance_spot_tradeable_base",
+                "binance_perp_tradeable_base",
             ],
             default=None,
         )

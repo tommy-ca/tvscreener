@@ -263,6 +263,30 @@ class ScreenerController:
             _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
             return tickers
 
+        if asset_type == "crypto" and universe in {
+            "binance_spot_tradeable_base",
+            "binance_perp_tradeable_base",
+        }:
+            from tvscreener.lib.universe.binance_crypto import (
+                BinanceCryptoTradeableBaseUniverseConstraints,
+                build_binance_crypto_universe_tradeable_base,
+                maybe_write_universe_json,
+            )
+
+            instrument_type = "spot" if universe == "binance_spot_tradeable_base" else "perp"
+            tickers, snapshot = build_binance_crypto_universe_tradeable_base(
+                constraints=BinanceCryptoTradeableBaseUniverseConstraints(
+                    instrument_type=instrument_type,
+                    # Tune defaults to keep spot/perp sizes comparable (~100).
+                    min_quote_volume_usd=(2_500_000 if instrument_type == "spot" else 20_000_000),
+                    top_n=200,
+                )
+            )
+
+            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
+            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
+            return tickers
+
         cfg = self.get_universe(asset_type)
         return list(cfg.pairs)
 
@@ -286,6 +310,10 @@ class ScreenerController:
                 "binance_perp_top100",
                 "binance_spot_mcap_top100",
                 "binance_perp_mcap_top100",
+                "binance_spot_cs_momentum",
+                "binance_perp_cs_momentum",
+                "binance_spot_tradeable_base",
+                "binance_perp_tradeable_base",
             }
             and getattr(request.assets, "instrument_type", None) is None
         ):
@@ -296,6 +324,7 @@ class ScreenerController:
                     "binance_spot_top100",
                     "binance_spot_mcap_top100",
                     "binance_spot_cs_momentum",
+                    "binance_spot_tradeable_base",
                 }
                 else "perp"
             )
@@ -570,11 +599,14 @@ class ScreenerController:
             "binance_perp_mcap_top100",
             "binance_spot_cs_momentum",
             "binance_perp_cs_momentum",
+            "binance_spot_tradeable_base",
+            "binance_perp_tradeable_base",
         ]
 
         report: dict[str, dict] = {}
         sets: dict[str, set[str]] = {}
 
+        previous_run_dir = os.environ.get("TVSCREENER_RUN_DIR")
         for u in universes:
             run_dir = out_base / u
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -640,6 +672,11 @@ class ScreenerController:
                 self.console.print(
                     f"- {u}: {info['count']} (missing_tickers={info['missing_tickers']}, missing_bases={info['missing_bases']})"
                 )
+
+        if previous_run_dir is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous_run_dir
 
         return 0
 
