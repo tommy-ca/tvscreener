@@ -211,8 +211,16 @@ Current universes (spot + perp variants):
 - `binance_{spot,perp}_mcap_top100`: TradingView coin /scan market-cap seed -> map to Binance tickers; no filters at selection time.
 - `binance_{spot,perp}_cs_momentum`: market-cap seed -> exclude stables/wrapped -> liquidity gate; ordered by USD trading value.
 
+New base universes (tradeable-first):
+- `binance_{spot,perp}_tradeable_base`: Binance-first, liquid, USDT/USDC-quoted, stable/wrapped bases excluded.
+
+Defaults (tuned for parity):
+- spot min volume: `2_500_000`
+- perp min volume: `20_000_000`
+
 Base-universe recommendation:
-- Use `binance_{spot,perp}_mcap_top100` as the broad, reproducible **base universe** (raw membership + requested/missing auditing).
+- Use `binance_{spot,perp}_tradeable_base` as the default **base universe** for strategy research (tradeable-first).
+- Keep `binance_{spot,perp}_mcap_top100` as a reference universe for market-cap coverage audits.
 - Derive strategy-specific candidates from the base:
   - momentum: `binance_{spot,perp}_cs_momentum` (eligibility gate only)
   - short-term opportunity: `binance_{spot,perp}_top100` (selection-time gates)
@@ -245,6 +253,18 @@ Issues spotted:
 Fixes applied:
 - Added `quote_assets` mapping with fallback (`USDT` then `USDC`) for `*_mcap_top100` and `*_cs_momentum`.
 - Added `included_bases` and `missing_bases` to `universe.json` to audit mapping coverage at the base-asset level.
+
+## Next: strategy layering on Binance universes
+
+Plan: add strategy analytics layers for:
+- TSMOM, TSMR
+- CSMOM, CSMR
+
+And add datasets required for ICT/SMC + volume profile:
+- `market_bars` (OHLCV)
+- derived `smc_features` and `volume_profile`
+
+OpenSpec: `docs/openspec/changes/add-crypto-strategy-layering-ict-smc-volume-profile/`
 
 Tuning applied (spot-only):
 - `binance_spot_top100` min volume: `2_500_000`

@@ -29,6 +29,10 @@ The system SHALL support selecting a Binance crypto universe by deterministic ra
 - **THEN** it returns at most 100 instruments ordered by `quote_volume_usd` descending
 - **AND** every instrument in the returned set meets the minimum thresholds
 
+#### Scenario: Selection type is recorded
+- **WHEN** the universe selector writes `universe.json`
+- **THEN** it includes a `constraints.selection` label (e.g. `top_by_volume_filtered`)
+
 ### Requirement: Universe selection supports market cap top-100
 The system SHALL support selecting Binance spot/perp markets derived from the top 100 coins by market cap.
 
@@ -67,6 +71,13 @@ The system SHALL persist the selected universe snapshot as an artifact.
 - **GIVEN** the universe selector maps from a base list (e.g. market cap bases)
 - **WHEN** it writes `universe.json`
 - **THEN** it includes `included_bases` and `missing_bases` to quantify mapping coverage
+
+### Requirement: Tradeable base universes exist
+The system SHOULD provide Binance-first tradeable base universes for strategy development.
+
+#### Scenario: Tradeable base uses liquidity floors
+- **WHEN** the tradeable base universe is built with defaults
+- **THEN** it applies a liquidity floor tuned per instrument type
 
 ## MODIFIED Requirements
 
