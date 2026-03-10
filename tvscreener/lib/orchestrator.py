@@ -641,6 +641,20 @@ class ScreenerController:
             pairs = self.get_pairs("crypto", u, specific=None)
             sets[u] = set(pairs)
 
+            def _quote_asset(ticker: str) -> str:
+                sym = ticker.split(":", 1)[-1]
+                if sym.endswith(".P"):
+                    sym = sym[: -len(".P")]
+                for q in ("USDT", "USDC", "BTC", "ETH", "TRY", "BRL", "EUR", "JPY", "GBP"):
+                    if sym.endswith(q):
+                        return q
+                return "OTHER"
+
+            quote_dist: dict[str, int] = {}
+            for p in pairs:
+                q = _quote_asset(p)
+                quote_dist[q] = quote_dist.get(q, 0) + 1
+
             uni_path = run_dir / "universe.json"
             uni = None
             if uni_path.exists():
@@ -662,6 +676,9 @@ class ScreenerController:
             report[u] = {
                 "count": len(pairs),
                 "sample": pairs[:10],
+                "quote_asset_dist": dict(
+                    sorted(quote_dist.items(), key=lambda kv: (-kv[1], kv[0]))
+                ),
                 "universe_json": str(uni_path) if uni_path.exists() else None,
                 "selection": (
                     uni.get("constraints", {}).get("selection") if isinstance(uni, dict) else None
