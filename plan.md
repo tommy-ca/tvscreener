@@ -255,6 +255,10 @@ Issues spotted:
 - CS momentum universes intentionally add eligibility gates; `missing_bases` is expected to be large.
 - Tradeable base universes are stable and strategy-ready, but not market-cap anchored.
 
+Additional issue spotted:
+- `binance_spot_top100` includes many non-USD quote assets (e.g. `TRY`, `JPY`, `BRL`, `EUR`) while perps are almost entirely `USDT/USDC`.
+  - Recommendation: use `*_tradeable_base` / `*_tradeable_mcap_cs` for strategy work; treat `*_top100` as an opportunity-only universe unless we add a USD-only variant.
+
 Fixes applied:
 - Added `quote_assets` mapping with fallback (`USDT` then `USDC`) for `*_mcap_top100` and `*_cs_momentum`.
 - Added `included_bases` and `missing_bases` to `universe.json` to audit mapping coverage at the base-asset level.

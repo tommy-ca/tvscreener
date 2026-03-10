@@ -73,6 +73,8 @@ Use the built-in audit command to generate a structured report of universe healt
 uv run tvscreener-scan audit binance-universes --out-dir artifacts/audits/binance-universes
 ```
 
+The audit report includes `quote_asset_dist` so we can spot non-USD quote markets (common in spot top-N lists).
+
 ### Artifacts and reproducibility
 
 The run MUST persist, at minimum:

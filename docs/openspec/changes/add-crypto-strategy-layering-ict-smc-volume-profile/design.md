@@ -5,6 +5,13 @@
 Each strategy family is an analytics layer over a **base universe** + derived features.
 
 - **Base universe**: one of the existing Binance universes (`*_mcap_top100`, `*_cs_momentum`, `*_top100`).
+
+Recommended mapping:
+- TS strategies (TSMOM/TSMR): `binance_{spot,perp}_tradeable_base`
+- CS strategies (CSMOM/CSMR): `binance_{spot,perp}_tradeable_mcap_cs`
+
+Avoid using `binance_spot_top100` as a strategy base because it includes non-USD quote assets (TRY/JPY/BRL/EUR),
+which breaks comparability to perps.
 - **Eligibility gates**: applied in universe selection (liquidity, exclusions).
 - **Ranking/filtering**: applied in analytics (DuckDB) and persisted as results parquet.
 
