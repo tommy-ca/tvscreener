@@ -287,6 +287,27 @@ class ScreenerController:
             _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
             return tickers
 
+        if asset_type == "crypto" and universe in {
+            "binance_spot_tradeable_mcap_cs",
+            "binance_perp_tradeable_mcap_cs",
+        }:
+            from tvscreener.lib.universe.binance_crypto import (
+                BinanceCryptoTradeableMcapOverlapUniverseConstraints,
+                build_binance_crypto_universe_tradeable_mcap_overlap,
+                maybe_write_universe_json,
+            )
+
+            instrument_type = "spot" if universe == "binance_spot_tradeable_mcap_cs" else "perp"
+            tickers, snapshot = build_binance_crypto_universe_tradeable_mcap_overlap(
+                constraints=BinanceCryptoTradeableMcapOverlapUniverseConstraints(
+                    instrument_type=instrument_type,
+                )
+            )
+
+            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
+            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
+            return tickers
+
         cfg = self.get_universe(asset_type)
         return list(cfg.pairs)
 
@@ -314,6 +335,8 @@ class ScreenerController:
                 "binance_perp_cs_momentum",
                 "binance_spot_tradeable_base",
                 "binance_perp_tradeable_base",
+                "binance_spot_tradeable_mcap_cs",
+                "binance_perp_tradeable_mcap_cs",
             }
             and getattr(request.assets, "instrument_type", None) is None
         ):
@@ -325,6 +348,7 @@ class ScreenerController:
                     "binance_spot_mcap_top100",
                     "binance_spot_cs_momentum",
                     "binance_spot_tradeable_base",
+                    "binance_spot_tradeable_mcap_cs",
                 }
                 else "perp"
             )
@@ -601,6 +625,8 @@ class ScreenerController:
             "binance_perp_cs_momentum",
             "binance_spot_tradeable_base",
             "binance_perp_tradeable_base",
+            "binance_spot_tradeable_mcap_cs",
+            "binance_perp_tradeable_mcap_cs",
         ]
 
         report: dict[str, dict] = {}
