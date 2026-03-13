@@ -454,6 +454,23 @@ Latest Prefect parity run artifacts (matrix):
 - `artifacts/runs/e91580cb1c2c036c2c8805da1b839e6d1f8b712281611ee0101a17db1b8b7912/matrix.txt` (spot minors)
 - `artifacts/runs/8d52ec36b3e601a0f4b88509f19e528d536f1d804d31509109460d9abd3021f2/matrix.txt` (perp minors)
 
+## Forex universe audit (majors/minors)
+
+Universe resolution (pre-network):
+- Majors: `EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD, NZDUSD`
+- Minors: a curated set of liquid crosses that exclude `USD`
+
+Pre-analytics filtering (forex scans):
+- Expands each pair across preferred exchanges into tickers like `OANDA:EURUSD`.
+- Filters scan rows by `contract_type` (default `cfd`).
+- Normalizes/deduplicates to one best row per `PAIR` using canonical name, `EXCHANGE_PRIORITY`, and volume.
+
+Smoke validation (matrix view):
+```bash
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 20
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 20
+```
+
 ### Sanity queries
 ```bash
 uv run tvscreener-scan query tvscreener.runs \
