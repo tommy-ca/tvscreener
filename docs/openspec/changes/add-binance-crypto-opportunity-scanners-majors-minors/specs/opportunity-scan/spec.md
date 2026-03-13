@@ -34,6 +34,11 @@ The system SHOULD persist `instrument_type` for each run in `tvscreener.runs`.
 - **WHEN** the scan completes
 - **THEN** a row is appended to `tvscreener.runs`
 
+#### Scenario: Prefect runner writes run metadata
+- **GIVEN** the operator runs with `--runner prefect`
+- **WHEN** the scan completes
+- **THEN** a row is appended to `tvscreener.runs`
+
 #### Scenario: Matrix view can be rendered for majors/minors
 - **GIVEN** `scanner=opportunity`, `asset_type=crypto`, and `universe=majors` (or `minors`)
 - **WHEN** the operator runs with `--matrix`

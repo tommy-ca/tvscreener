@@ -385,6 +385,9 @@ Latest strict review report:
 Latest strict review report (post majors/minors rerun):
 - `artifacts/reports/binance-universes/20260313-160901/report.md`
 
+Latest strict review report (post Prefect parity rerun):
+- `artifacts/reports/binance-universes/20260313-163456/report.md`
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
@@ -403,23 +406,51 @@ Goal: rerun end-to-end `data` then `analytics --matrix` for Binance crypto major
 - Analytics-only rerenders (`--pipeline analytics`) produce ranked results
 - Matrix view matches forex confluence format and uses venue-stripped `PAIR` labels
 
-Commands (run sequentially in local/dev when using legacy Iceberg tables):
+Default runner: Prefect (server + runner). Use `--runner local` explicitly only for fallback/debug.
+
+Start a local Prefect server (local/dev):
+```bash
+export PREFECT_HOME="$PWD/.prefect-home"
+uv run prefect server start --host 127.0.0.1 --port 4200 --background
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+```
+
+Commands (run sequentially when using legacy Iceberg tables):
 
 ### Data (Bronze/Silver/Gold publish)
+```bash
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline data
+```
+
+### Analytics (matrix rerender from Iceberg)
+```bash
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+```
+
+### Local fallback (explicit)
 ```bash
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline data
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline data
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline data
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline data
-```
 
-### Analytics (matrix rerender from Iceberg)
-```bash
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
 uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
 ```
+
+Latest Prefect parity run artifacts (matrix):
+- `artifacts/runs/a7455dfbf0cbcdf5f29e5066f51a848e55fd369a1201082d7cf1aeabf22dcb25/matrix.txt` (spot majors)
+- `artifacts/runs/bd825bc7b6dfbd8329bba79db08114288c33dbf5941f046382653d96b29e3473/matrix.txt` (perp majors)
+- `artifacts/runs/e91580cb1c2c036c2c8805da1b839e6d1f8b712281611ee0101a17db1b8b7912/matrix.txt` (spot minors)
+- `artifacts/runs/8d52ec36b3e601a0f4b88509f19e528d536f1d804d31509109460d9abd3021f2/matrix.txt` (perp minors)
 
 ### Sanity queries
 ```bash

@@ -141,6 +141,6 @@ Compatibility rules:
 - MUST NOT write Iceberg tables (read-only), unless explicitly modeled as an analytics product.
 
 ### Backward compatibility
-- CLI defaults: `--runner local`, `--pipeline both` (existing behavior)
+- CLI defaults: `--runner prefect`, `--pipeline both`
+- `--runner local` remains supported as an explicit fallback for debugging/offline runs.
 - Existing API surfaces remain; the runner abstraction is additive.
-

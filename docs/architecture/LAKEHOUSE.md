@@ -68,7 +68,11 @@ Execution is delegated to a runner:
 
 - **Local runner**: executes in-process (current default CLI behavior)
 - **Export runner**: emits `PipelineRunSpec` JSON for external orchestration systems to submit as run config/parameters
-- **Prefect runner (optional)**: executes the spec via a Prefect flow (`--runner prefect`, install via `uv sync --extra prefect`)
+- **Prefect runner**: executes the spec via a Prefect flow (default CLI runner; requires a Prefect API endpoint)
+
+Operational defaults:
+- Default: run with Prefect (`--runner prefect`) and a configured `PREFECT_API_URL`
+- Explicit fallback: `--runner local` for debugging/offline execution
 
 Workflow engines (Dagster/Prefect/Temporal/Airflow/Argo/etc.) are integrated via lightweight adapters/wrappers that live
 outside the core `tvscreener` library package so the core remains dependency-free.

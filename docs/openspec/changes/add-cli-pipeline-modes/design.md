@@ -16,7 +16,8 @@ Add `--pipeline` to `tvscreener-scan`:
 - `--pipeline both` (default): run data pipeline then analytics pipeline on the persisted outputs.
 
 Runner notes:
-- `--runner local` executes via the `PipelineRunSpec` contract and persists `tvscreener.runs` metadata.
+- Default runner is Prefect (`--runner prefect`), backed by a Prefect server (`PREFECT_API_URL`).
+- `--runner local` is an explicit fallback; it executes via the `PipelineRunSpec` contract and persists `tvscreener.runs` metadata.
 
 ### Source of truth for analytics
 - Opportunity matrix view reads from: `tvscreener.signals_latest`

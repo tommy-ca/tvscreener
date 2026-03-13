@@ -22,7 +22,7 @@ without the core library importing or depending on those engines.
 - Introduce a **`PipelineRunner` interface**:
   - `run(spec) -> RunResult` for synchronous execution (local)
   - (future) adapters MAY add non-blocking submission/status APIs, but the baseline contract is synchronous `run(spec)`
-- Keep the default CLI behavior using a **LocalRunner** (backward compatible).
+- Keep the default CLI behavior using a **PrefectRunner** (post-flip), with explicit `--runner local` fallback.
 - Add a **lightweight opt-in** hook to integrate workflow engines without adding core dependencies:
   - `--runner local` (default)
   - `--runner export` (emit `PipelineRunSpec` JSON to stdout/file for external submission)
@@ -41,4 +41,3 @@ so installing the base library does not pull in workflow-engine dependencies.
 - Library becomes more reusable: external orchestration systems can call `tvscreener` as a pure “task library”.
 - CLI becomes an adapter: it builds `PipelineRunSpec` and delegates to a runner.
 - No hard dependency on any workflow engine is introduced.
-

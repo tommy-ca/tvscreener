@@ -54,9 +54,16 @@ Opportunity scans should prefer universes that are:
 
 ### Validation notes
 
-`--runner prefect` requires a Prefect API endpoint; in local/dev environments without a Prefect server use `--runner local`.
+Default workflow uses Prefect (`--runner prefect`) backed by a local Prefect server.
 
-`--runner local` executes through `PipelineRunSpec` and persists run metadata to `tvscreener.runs`.
+Local runner (`--runner local`) is an explicit fallback for debugging/offline runs; it executes through `PipelineRunSpec` and persists run metadata to `tvscreener.runs`.
+
+Prefect server (local/dev):
+```bash
+export PREFECT_HOME="$PWD/.prefect-home"
+uv run prefect server start --host 127.0.0.1 --port 4200 --background
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+```
 
 Validate pipeline modes:
 - Run `--pipeline data` then `--pipeline analytics` for the same universe.
@@ -75,10 +82,10 @@ uv run tvscreener-scan query tvscreener.signals_latest \
 
 1) Run data pipeline sequentially (legacy tables):
 ```bash
-uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline data --runner local
-uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline data --runner local
-uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline data --runner local
-uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline data --runner local
+uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline data --runner prefect
+uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline data --runner prefect
+uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline data --runner prefect
+uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline data --runner prefect
 ```
 
 2) Verify Iceberg rows exist:
@@ -89,10 +96,10 @@ uv run tvscreener-scan query tvscreener.signals_latest \
 
 3) Rerender matrix from Iceberg:
 ```bash
-uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline analytics --runner local --matrix --limit 50
+uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline analytics --runner prefect --matrix --limit 50
 ```
 
-Recommended full rerun order (sequential on legacy tables):
+Local fallback (same commands, explicit `--runner local`):
 ```bash
 uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline data --runner local
 uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline data --runner local
@@ -120,8 +127,8 @@ Matrix format:
 
 Forex full-loop validation (data + analytics):
 ```bash
-uv run tvscreener-scan --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline data --runner local
-uv run tvscreener-scan --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline analytics --runner local --matrix
+uv run tvscreener-scan --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline data --runner prefect
+uv run tvscreener-scan --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline analytics --runner prefect --matrix
 ```
 
 4) Audit universe readiness:
