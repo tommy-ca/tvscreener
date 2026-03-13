@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import random
@@ -38,6 +39,43 @@ if TYPE_CHECKING:
     from tvscreener.lib.screeners.filters import DataFrameFilter
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_iceberg_count_like_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize count-like columns to integer-compatible pandas dtypes.
+
+    Iceberg schemas are shared across runs in legacy layout; some sources can
+    return float-like values for columns that are semantically counts.
+    """
+
+    if df is None or df.empty:
+        return df
+
+    cols = [
+        "Volume",
+        "VOLUME",
+        "GRID_ALIGNED",
+        "GRID_TOTAL",
+        "GRID_PCT",
+        "TOTAL_CONFLUENCE",
+        "TF_CONFLUENCE_LONG",
+        "TF_CONFLUENCE_SHORT",
+        "FACTOR_BULLISH_COUNT",
+        "FACTOR_BEARISH_COUNT",
+    ]
+
+    out = df
+    for col in cols:
+        if col not in out.columns:
+            continue
+        with contextlib.suppress(Exception):
+            import numpy as np
+
+            raw = pd.to_numeric(out[col], errors="coerce")
+            arr = np.asarray(raw, dtype="float64")
+            out[col] = pd.Series(np.rint(arr), index=out.index).astype("Int64")
+    return out
+
 
 T = TypeVar("T", bound="Screener")
 
@@ -97,6 +135,34 @@ class ExportMixin(ABC):
             return df
 
         from tvscreener.lib.screeners.transformer import DataTransformer
+
+        # Matrix view expects a `PAIR` column. Forex pipelines populate it explicitly,
+        # but crypto uses fully-qualified TradingView symbols. Use `symbol` (or
+        # `Symbol` stripped of venue prefix) as a readable fallback.
+        fallback_pair = None
+        if "symbol" in df.columns:
+            fallback_pair = (
+                nw.col("symbol")
+                .fill_null("")
+                .cast(nw.String)
+                .str.replace(r"^.*:", "", literal=False)
+            )
+        elif "Symbol" in df.columns:
+            fallback_pair = (
+                nw.col("Symbol")
+                .fill_null("")
+                .cast(nw.String)
+                .str.replace(r"^.*:", "", literal=False)
+            )
+
+        if fallback_pair is not None:
+            if "PAIR" in df.columns:
+                pair = nw.col("PAIR").fill_null("").cast(nw.String)
+                df = df.with_columns(
+                    PAIR=nw.when(pair == "").then(fallback_pair).otherwise(nw.col("PAIR"))
+                )
+            else:
+                df = df.with_columns(PAIR=fallback_pair)
 
         # Ensure PAIR is at the front
         if "PAIR" in df.columns:
@@ -553,6 +619,8 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                     )
 
                 def _persist_group(df_group: pd.DataFrame) -> None:
+                    df_group = normalize_iceberg_count_like_columns(df_group)
+
                     it = normalize_instrument_type(
                         asset_type=self.asset_type,
                         raw=(
@@ -617,6 +685,7 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                         )
 
                     def _write_product(name: str, df_group: pd.DataFrame, **kwargs: Any) -> None:
+                        df_group = normalize_iceberg_count_like_columns(df_group)
                         write_iceberg(df_group, _product_table(name, df_group), **kwargs)
 
                     if layout == "scalable" and "instrument_type" in df.columns:
