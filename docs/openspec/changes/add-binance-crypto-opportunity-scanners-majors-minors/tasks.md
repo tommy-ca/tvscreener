@@ -4,3 +4,4 @@
 - [x] Ensure `--universe majors|minors` maps correctly for crypto
 - [x] Document recommended opportunity scanning presets
 - [x] Document audit/readiness checks via DuckDB report
+- [x] Validate sequential `--pipeline data` then `--pipeline analytics --matrix` rerenders for spot/perp majors/minors

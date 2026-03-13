@@ -382,6 +382,9 @@ Latest screeners-only review report:
 Latest strict review report:
 - `artifacts/reports/binance-universes/20260313-153326/report.md`
 
+Latest strict review report (post majors/minors rerun):
+- `artifacts/reports/binance-universes/20260313-160901/report.md`
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
