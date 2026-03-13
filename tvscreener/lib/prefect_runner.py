@@ -137,7 +137,10 @@ def prefect_run_flow(
         try:
             req = controller.resolve_defaults(spec.to_scan_request())
             pairs = controller.get_pairs(
-                req.assets.asset_type, req.assets.universe, req.assets.pairs
+                req.assets.asset_type,
+                req.assets.universe,
+                req.assets.pairs,
+                instrument_type=getattr(req.assets, "instrument_type", None),
             )
             spec = spec.model_copy(
                 update={"pairs": pairs, "universe": req.assets.universe}

@@ -4,6 +4,7 @@ from tvscreener.lib.universe.binance_crypto import (
     BinanceCryptoMarketCapUniverseConstraints,
     BinanceCryptoUniverseConstraints,
     build_binance_crypto_universe_market_cap,
+    compute_volatility_24h_pct,
     filter_and_rank_candidates,
 )
 
@@ -11,16 +12,15 @@ from tvscreener.lib.universe.binance_crypto import (
 def test_filter_and_rank_candidates_applies_thresholds_and_sorts():
     df = pd.DataFrame(
         {
-            "Symbol": ["BINANCE:A", "BINANCE:B", "BINANCE:C"],
-            "Name": ["A", "B", "C"],
+            "Symbol": ["BINANCE:AAAUSDC", "BINANCE:AAAUSDT", "BINANCE:BBBUSD"],
             "Type": ["spot", "spot", "spot"],
             "Subtype": ["crypto", "crypto", "crypto"],
             "Price": [100.0, 100.0, 100.0],
-            "High": [104.0, 103.0, 120.0],
-            "Low": [100.0, 101.0, 119.0],
-            # When present, TradingView's volatility column should be used.
-            "Volatility": [4.0, 2.0, 50.0],
-            "Volume 24h in USD": [20_000_000, 50_000_000, 9_000_000],
+            "High": [104.0, 104.0, 120.0],
+            "Low": [100.0, 100.0, 119.0],
+            "Volatility": [4.0, 4.0, 50.0],
+            # USDC has higher volume but should lose to USDT for the same base.
+            "Volume 24h in USD": [50_000_000, 20_000_000, 20_000_000],
         }
     )
 
@@ -29,15 +29,30 @@ def test_filter_and_rank_candidates_applies_thresholds_and_sorts():
         constraints=BinanceCryptoUniverseConstraints(
             instrument_type="spot",
             top_n=100,
+            quote_assets=("USDT", "USDC"),
             min_quote_volume_usd=10_000_000,
-            min_volatility_24h_pct=3.0,
         ),
     )
 
-    # C fails min volume; B fails min volatility; only A remains.
-    assert out["Symbol"].tolist() == ["BINANCE:A"]
+    # BBBUSD fails quote_assets; AAA is deduped and prefers USDT over USDC.
+    assert out["Symbol"].tolist() == ["BINANCE:AAAUSDT"]
     assert out["rank"].tolist() == [1]
     assert out["instrument_type"].tolist() == ["spot"]
+
+
+def test_compute_volatility_falls_back_to_proxy_when_native_missing():
+    df = pd.DataFrame(
+        {
+            "Price": [100.0, 100.0],
+            "High": [104.0, 110.0],
+            "Low": [100.0, 100.0],
+            "Volatility": [4.0, None],
+        }
+    )
+
+    vol = compute_volatility_24h_pct(df)
+    assert float(vol.iloc[0]) == 4.0
+    assert float(vol.iloc[1]) == 10.0
 
 
 def test_market_cap_universe_filters_volatility_and_sorts_by_volume(monkeypatch):

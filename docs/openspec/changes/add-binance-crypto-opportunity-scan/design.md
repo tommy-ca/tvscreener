@@ -39,12 +39,18 @@ Universe selector produces a list of `entity_id` values given constraints:
 - rank: top 100 by 24h quote volume (USD)
 - filters:
   - quote volume USD >= 10,000,000
-  - 24h volatility >= 3%
+  - exclude stable/wrapped bases
+  - de-dupe to one ticker per base (prefer primary quote)
 
 Definitions:
 - `quote_volume_usd`: TradingView `Volume 24h in USD`.
 - `volatility_24h_pct`: prefer TradingView native `Volatility` (`CryptoField.VOLATILITY` / `Volatility.D`).
-  - fallback: `(High - Low) / Price * 100`
+  - fallback (per-row): `(High - Low) / Price * 100` when native is missing
+
+Volatility is persisted for later analytics filtering/ranking; it is not used as a base-universe selection gate.
+
+Underfill analysis:
+- top-by-volume universes persist a `diagnostics` object in `universe.json` with candidate counts per filter step
 
 Alternative selection mode (planned):
 - select coins by market cap top 100 (TradingView `CoinScreener` `Market Cap Calc`)
@@ -65,6 +71,8 @@ As we add multiple Binance universes, it helps to distinguish:
 
 Guideline: keep base universes raw and do ranking/thresholding in DuckDB analytics unless there is a clear upstream limit.
 
+For `binance_{spot,perp}_top100`, restrict quotes to `USDT`/`USDC` so the universe is USD-quote-aligned.
+
 ### Audit tooling
 
 Use the built-in audit command to generate a structured report of universe health:
@@ -74,6 +82,19 @@ uv run tvscreener-scan audit binance-universes --out-dir artifacts/audits/binanc
 ```
 
 The audit report includes `quote_asset_dist` so we can spot non-USD quote markets (common in spot top-N lists).
+
+Generate richer distributions and overlap comparisons via DuckDB:
+
+```bash
+uv run tvscreener-scan report binance-universes \
+  --in-dir artifacts/audits/binance-universes \
+  --out-dir artifacts/reports/binance-universes
+```
+
+Use `## binance_spot_top100 Quote Overview` in the report to see
+how much of spot top100 is non-USD-quoted (TRY/JPY/EUR/BRL/etc).
+
+Use `## Spot vs Perp Parity` in the report to compare spot/perp universes by family.
 
 ### Artifacts and reproducibility
 
@@ -95,6 +116,9 @@ Any Binance-specific differences are constrained to:
 
 The analytics and rendering contracts remain stable (matrix view columns derived from Gold).
 
+Recommended operator workflow:
+- Use `majors`/`minors` universes for crypto opportunity scans (forex-like), and validate via `review binance-universes`.
+
 ### Lakehouse table isolation (asset-type schema differences)
 
 TradingView field availability differs across asset types.
@@ -108,3 +132,17 @@ To keep Iceberg schemas stable while preserving multi-asset capability:
 
 This aligns with `docs/openspec/changes/update-lakehouse-table-schemas/` which emphasizes dataset-aware tables and
 explicit derivative datasets.
+
+### Data-pipeline validation
+
+If `--pipeline analytics` returns empty unexpectedly, validate that the data pipeline published Iceberg rows:
+
+```bash
+uv run tvscreener-scan query tvscreener.signals_latest \
+  --sql "SELECT asset_type, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"
+```
+
+Note: some TradingView sources return float-like volume fields; the data pipeline normalizes common count-like columns
+to integer types before persisting to keep shared Iceberg schemas stable.
+
+When using shared (legacy) Iceberg tables, avoid concurrent local data scans that write to the same tables.

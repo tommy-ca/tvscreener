@@ -250,6 +250,332 @@ Audit command:
 uv run tvscreener-scan audit binance-universes --out-dir artifacts/audits/binance-universes
 ```
 
+DuckDB report command:
+```bash
+uv run tvscreener-scan report binance-universes --in-dir artifacts/audits/binance-universes --out-dir artifacts/reports/binance-universes
+```
+
+One-shot review command:
+```bash
+uv run tvscreener-scan review binance-universes --audit-out-dir artifacts/audits/binance-universes --report-out-dir artifacts/reports/binance-universes
+```
+
+Strict mode:
+```bash
+uv run tvscreener-scan review binance-universes --strict
+```
+
+Extended diagnostics:
+```bash
+uv run tvscreener-scan review binance-universes --include-all
+```
+
+Universe aliases (ergonomic CLI names):
+- `binance_spot_base` / `binance_perp_base` -> tradeable base universes
+- `binance_spot_largecap` / `binance_perp_largecap` -> tradeable market-cap cross-section
+- `binance_spot_snapshot` / `binance_perp_snapshot` -> top100 volume snapshot
+
+Majors/minors universes:
+- `binance_{spot,perp}_majors`: mcap ranks 1..20 intersect tradeable gates
+- `binance_{spot,perp}_minors`: mcap ranks 21..200 intersect tradeable gates
+
+Forex-style usage for crypto:
+- `--universe majors|minors` maps to crypto majors/minors when `asset_type=crypto` and `--instrument-type spot|perp` is set.
+
+Recommended scanner defaults:
+- Opportunity scanner: `--universe majors` (add `minors` for breadth)
+- Strategy research: `binance_{spot,perp}_tradeable_base` (TS) and `binance_{spot,perp}_tradeable_mcap_cs` (CS)
+
+Crypto opportunity scanner presets:
+- Spot majors: `uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline both`
+- Perp majors: `uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline both`
+
+Validation run outputs (local runner):
+- `artifacts/validation/opportunity_crypto_spot_majors_both.parquet`
+- `artifacts/validation/opportunity_crypto_spot_majors_analytics.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_both.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_analytics.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_both.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_both.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_analytics.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_analytics.parquet`
+
+Matrix view validation outputs:
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix.parquet`
+
+Matrix view after Iceberg publish:
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_after_iceberg.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_after_iceberg.parquet`
+
+Matrix view after Iceberg persistence fix:
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_after_persist_fix.parquet`
+
+Matrix view after minors data publish:
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_post_minors_publish.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_post_minors_publish.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix_post_publish.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix_post_publish.parquet`
+
+Matrix view after TDD rerun (data+analytics):
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_tdd.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_tdd.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix_tdd.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix_tdd.parquet`
+
+Latest matrix view outputs (analytics-only):
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_final.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_final.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix_final.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix_final.parquet`
+
+Matrix view outputs (after `entity_id` analytics fix):
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_after_entityid_fix.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_after_entityid_fix.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix_after_entityid_fix.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix_after_entityid_fix.parquet`
+
+Matrix view readability:
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_pairfix2.parquet` (PAIR filled from symbol)
+
+Forex parity matrix outputs:
+- `artifacts/validation/opportunity_forex_majors_matrix_parity.parquet`
+- `artifacts/validation/opportunity_forex_minors_matrix_parity.parquet`
+
+Forex full-loop (data then analytics) outputs:
+- `artifacts/validation/opportunity_forex_majors_data.parquet`
+- `artifacts/validation/opportunity_forex_minors_data.parquet`
+- `artifacts/validation/opportunity_forex_majors_matrix_data_analytics.parquet`
+- `artifacts/validation/opportunity_forex_minors_matrix_data_analytics.parquet`
+
+Recent full-loop outputs (data then analytics):
+- `artifacts/validation/opportunity_forex_majors_data_recent.parquet`
+- `artifacts/validation/opportunity_forex_minors_data_recent.parquet`
+- `artifacts/validation/opportunity_forex_majors_matrix_recent.parquet`
+- `artifacts/validation/opportunity_forex_minors_matrix_recent.parquet`
+- `artifacts/validation/opportunity_crypto_spot_majors_data_recent.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_data_recent.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_data_recent.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_data_recent.parquet`
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_recent.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_recent.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix_recent.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix_recent.parquet`
+
+Crypto parity matrix outputs:
+- `artifacts/validation/opportunity_crypto_spot_majors_matrix_parity.parquet`
+- `artifacts/validation/opportunity_crypto_perp_majors_matrix_parity.parquet`
+- `artifacts/validation/opportunity_crypto_spot_minors_matrix_parity.parquet`
+- `artifacts/validation/opportunity_crypto_perp_minors_matrix_parity.parquet`
+
+Matrix renderer parity:
+- Crypto opportunity screeners now render the same Confluence Matrix format as forex (not the generic table).
+- Crypto `PAIR` labels are venue-stripped (e.g. `BINANCE:BTCUSDT` -> `BTCUSDT`) for spot/perp majors/minors.
+
+Note: run spot/perp `--pipeline data` sequentially in local/dev when using shared Iceberg tables.
+
+Latest screeners-only review report:
+- `artifacts/reports/binance-universes/20260313-004142/report.md`
+
+Latest strict review report:
+- `artifacts/reports/binance-universes/20260313-153326/report.md`
+
+Iceberg validation queries:
+- `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
+- `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
+
+Runs table audit query:
+- `uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe, instrument_type, pipeline_mode_executed, success, result_count, started_at_utc FROM df ORDER BY started_at_utc DESC LIMIT 20"`
+
+Next: crypto screeners
+- Treat base/largecap/snapshot as the crypto equivalents of forex majors/minors-style selectors.
+- Keep volatility and strategy logic in analytics rankers/filters.
+
+## Validation plan: Binance majors/minors matrix rerun (spot + perp)
+
+Goal: rerun end-to-end `data` then `analytics --matrix` for Binance crypto majors/minors (spot + perp) and confirm:
+- Iceberg `signals_latest` is populated for each instrument type
+- Analytics-only rerenders (`--pipeline analytics`) produce ranked results
+- Matrix view matches forex confluence format and uses venue-stripped `PAIR` labels
+
+Commands (run sequentially in local/dev when using legacy Iceberg tables):
+
+### Data (Bronze/Silver/Gold publish)
+```bash
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline data
+```
+
+### Analytics (matrix rerender from Iceberg)
+```bash
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+uv run tvscreener-scan --runner local --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline analytics --matrix --limit 50
+```
+
+### Sanity queries
+```bash
+uv run tvscreener-scan query tvscreener.runs \
+  --sql "SELECT asset_type, universe, instrument_type, pipeline_mode_executed, success, result_count, started_at_utc FROM df WHERE asset_type='crypto' ORDER BY started_at_utc DESC LIMIT 20"
+```
+
+Spot top100 quote overview:
+- Use the DuckDB report and read the `binance_spot_top100` quote breakdown in `report.md`.
+- This summarizes which quote assets dominate membership and how many duplicate bases exist due to multi-quote listings.
+
+Latest report artifacts:
+- `artifacts/reports/binance-universes/20260310-201334/report.json`
+- `artifacts/reports/binance-universes/20260310-201334/report.md`
+
+Latest report artifacts (with spot top100 quote overview):
+- `artifacts/reports/binance-universes/20260310-205526/report.json`
+- `artifacts/reports/binance-universes/20260310-205526/report.md`
+
+Latest report artifacts (spot/perp top100 now USDT/USDC only):
+- `artifacts/reports/binance-universes/20260310-221631/report.json`
+- `artifacts/reports/binance-universes/20260310-221631/report.md`
+
+Latest report artifacts (includes spot vs perp parity table):
+- `artifacts/reports/binance-universes/20260310-223139/report.json`
+- `artifacts/reports/binance-universes/20260310-223139/report.md`
+
+Latest report artifacts (includes volume distributions + top-assets tables):
+- `artifacts/reports/binance-universes/20260310-224626/report.json`
+- `artifacts/reports/binance-universes/20260310-224626/report.md`
+
+Latest report artifacts (includes full per-asset volume parquet tables):
+- `artifacts/reports/binance-universes/20260311-003025/report.json`
+- `artifacts/reports/binance-universes/20260311-003025/report.md`
+
+Latest report artifacts (includes risky-assets view + history_days):
+- `artifacts/reports/binance-universes/20260311-011802/report.json`
+- `artifacts/reports/binance-universes/20260311-011802/report.md`
+
+Latest report artifacts (post strategy-base review refresh):
+- `artifacts/reports/binance-universes/20260311-013632/report.json`
+- `artifacts/reports/binance-universes/20260311-013632/report.md`
+
+Latest report artifacts (generated via `review` pipeline):
+- `artifacts/reports/binance-universes/20260311-014745/report.json`
+- `artifacts/reports/binance-universes/20260311-014745/report.md`
+
+Latest report artifacts (includes spot quote/volume breakdown):
+- `artifacts/reports/binance-universes/20260311-083244/report.json`
+- `artifacts/reports/binance-universes/20260311-083244/report.md`
+
+Latest report artifacts (top100 underfill fix + diagnostics):
+- `artifacts/reports/binance-universes/20260311-150122/report.json`
+- `artifacts/reports/binance-universes/20260311-150122/report.md`
+
+Latest report artifacts (strict review run):
+- `artifacts/reports/binance-universes/20260311-150549/report.json`
+- `artifacts/reports/binance-universes/20260311-150549/report.md`
+
+Latest report artifacts (base-universe focus: volume + exclusions + dedup):
+- `artifacts/reports/binance-universes/20260311-160716/report.json`
+- `artifacts/reports/binance-universes/20260311-160716/report.md`
+
+Latest report artifacts (readiness refresh):
+- `artifacts/reports/binance-universes/20260312-104708/report.json`
+- `artifacts/reports/binance-universes/20260312-104708/report.md`
+
+Latest report artifacts (includes `Strategy Readiness` table):
+- `artifacts/reports/binance-universes/20260312-151844/report.json`
+- `artifacts/reports/binance-universes/20260312-151844/report.md`
+
+Latest report artifacts (post universe-aliases update):
+- `artifacts/reports/binance-universes/20260312-154232/report.json`
+- `artifacts/reports/binance-universes/20260312-154232/report.md`
+
+Latest report artifacts (includes majors/minors universes):
+- `artifacts/reports/binance-universes/20260312-162057/report.json`
+- `artifacts/reports/binance-universes/20260312-162057/report.md`
+
+Latest report artifacts (majors readiness threshold updated):
+- `artifacts/reports/binance-universes/20260312-162451/report.json`
+- `artifacts/reports/binance-universes/20260312-162451/report.md`
+
+Latest report artifacts (includes `Scanner Readiness` table):
+- `artifacts/reports/binance-universes/20260312-163451/report.json`
+- `artifacts/reports/binance-universes/20260312-163451/report.md`
+
+Latest report artifacts (crypto majors now opportunity-ready heuristic):
+- `artifacts/reports/binance-universes/20260312-165245/report.json`
+- `artifacts/reports/binance-universes/20260312-165245/report.md`
+
+Latest report artifacts (review defaults to screeners-only):
+- `artifacts/reports/binance-universes/20260312-215701/report.json`
+- `artifacts/reports/binance-universes/20260312-215701/report.md`
+
+Latest report artifacts (review with `--include-all`):
+- `artifacts/reports/binance-universes/20260312-215703/report.json`
+- `artifacts/reports/binance-universes/20260312-215703/report.md`
+
+Current base universes (recommended for strategy inputs):
+- `binance_{spot,perp}_tradeable_base`: liquid + quote-restricted + excluded bases + base de-dup + short-history non-mcap exclusion.
+- `binance_{spot,perp}_tradeable_mcap_cs`: market-cap anchored cross-section (mcap top100 bases intersected with tradeable gates).
+
+Readiness snapshot (from latest report):
+- `tradeable_base`: spot=90 bases (excluded_risky=23), perp=79 bases (excluded_risky=21), overlap_bases=60, duplicates=0.
+- `tradeable_mcap_cs`: spot=28 bases, perp=26 bases, overlap_bases=24, duplicates=0.
+
+Universe roles (not strategy bases by default):
+- `binance_{spot,perp}_top100`: volume snapshot after gates; useful for monitoring and ad-hoc exploration.
+- `binance_{spot,perp}_mcap_top100`: mapping coverage/audit tool; expect `missing_bases`.
+
+Readiness table:
+- Use `## Strategy Readiness` in the DuckDB report for a one-glance check of quote purity, dedup, and basic count thresholds for the strategy base universes.
+
+Scanner readiness:
+- Use `## Scanner Readiness` to assess whether a universe is suitable for the opportunity scanner (liquidity distribution) vs strategy scanners (dedup + quote purity + anchors).
+
+Top100 underfill fix:
+- `binance_{spot,perp}_top100` now focuses on liquidity/tradability: quote allowlist, min volume, exclusions, and base de-dup.
+- Use `## Top100 Diagnostics` to see candidate counts through each step.
+
+Latest breakdown takeaways (from `artifacts/reports/binance-universes/20260311-083244/report.md`):
+- Spot quote composition: all spot universes are USDT-only except `binance_spot_top100` which has USDC spillover (USDT=52, USDC=6).
+- Spot `total_quote_volume_usd` (sum across members): `spot_mcap_top100` ~5.81B, `spot_tradeable_base` ~4.62B, `spot_cs_momentum` ~4.18B, `spot_tradeable_mcap_cs` ~4.07B, `spot_top100` ~0.73B.
+- Underfill persists for `*_top100` due to filters + TradingView results (spot=58, perp=88); treat it as a market snapshot, not a guaranteed-size base.
+- Spot/perp base overlap (bases): `tradeable_base` overlap_bases=60; `top100` overlap_bases=44; `tradeable_mcap_cs` overlap_bases=26.
+
+Spot vs perp audit checklist:
+- Confirm quote composition (spot top100 should be USDT/USDC only).
+- Confirm perp tickers end with `.P` and spot tickers do not.
+- Compare spot vs perp parity by family (base overlap + median liquidity/volatility) using `## Spot vs Perp Parity`.
+- Treat `*_mcap_top100` and `*_tradeable_mcap_cs` mapping loss (`missing_bases`) as expected; watch for regressions.
+
+Volume distribution review:
+- Use `## Volume Percentiles` to compare distribution shape per universe.
+- Use `## Top Volume Assets` to spot concentration and outliers per universe.
+- Use `## All Asset Volumes` and open the parquet files for a full per-asset view.
+
+Risky asset review (tradeable base):
+- See `excluded_risky` inside `artifacts/audits/binance-universes/binance_{spot,perp}_tradeable_base/universe.json`.
+- See `risky_assets.parquet` in the DuckDB report output; it flags non-mcap-top100 bases present in tradeable universes.
+
+Strategy base review:
+- Use `binance_{spot,perp}_tradeable_base` as the default shared base for strategy research.
+- Apply strategy-specific filters/rankers in analytics (DuckDB) to derive TSMOM/TSMR/CSMOM/CSMR candidate sets.
+- For cross-sectional strategies, optionally swap base universe to `binance_{spot,perp}_tradeable_mcap_cs` (market-cap anchored) or apply an analytics-stage market-cap filter.
+
+Current parity snapshot (see report):
+- `top100`: spot bases=82 vs perp bases=93 (overlap_bases=60), duplicates: spot=18, perp=7.
+- `tradeable_base`: spot bases=106 vs perp bases=102 (overlap_bases=70).
+
+Key findings (from audit + DuckDB report):
+- `binance_spot_top100` is not USD-quote-pure (TRY/JPY/BRL/EUR) and has many duplicate bases (USDT + USDC + fiat quotes).
+- `binance_{spot,perp}_tradeable_base` is quote-restricted (USDT/USDC allowlist) and one-per-base (no base duplicates), making it a better strategy base.
+- Market-cap-seeded universes remain mapping-lossy (`missing_bases` large), so treat them as coverage/audit tools; use `*_tradeable_mcap_cs` when you need a tradeable market-cap cross-section.
+
+Planned update (implemented):
+- Restrict `binance_{spot,perp}_top100` to `USDT`/`USDC` quotes for USD alignment.
+
 Issues spotted:
 - Market-cap-seeded universes still show high base->market mapping loss (`missing_bases`) even with `quote_assets` fallback.
 - CS momentum universes intentionally add eligibility gates; `missing_bases` is expected to be large.

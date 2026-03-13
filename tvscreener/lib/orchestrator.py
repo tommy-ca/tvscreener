@@ -180,11 +180,33 @@ class ScreenerController:
         return UNIVERSE_MAP[asset_type]
 
     def get_pairs(
-        self, asset_type: str, universe: str | None, specific: list[str] | None
+        self,
+        asset_type: str,
+        universe: str | None,
+        specific: list[str] | None,
+        *,
+        instrument_type: str | None = None,
     ) -> list[str]:
         """Resolve symbols based on asset type, universe selector, or explicit list."""
         if specific:
             return specific
+
+        # Universe aliases for ergonomic CLI/config usage.
+        universe_aliases = {
+            "binance_spot_base": "binance_spot_tradeable_base",
+            "binance_perp_base": "binance_perp_tradeable_base",
+            "binance_spot_largecap": "binance_spot_tradeable_mcap_cs",
+            "binance_perp_largecap": "binance_perp_tradeable_mcap_cs",
+            "binance_spot_snapshot": "binance_spot_top100",
+            "binance_perp_snapshot": "binance_perp_top100",
+        }
+        if asset_type == "crypto" and universe in {"majors", "minors"}:
+            it = (instrument_type or "spot").strip().lower()
+            venue = "perp" if it in {"perp", "swap"} else "spot"
+            universe = f"binance_{venue}_{universe}"
+
+        if universe:
+            universe = universe_aliases.get(universe, universe)
 
         asset_type = canonicalize_asset_type(asset_type)
         if asset_type == "forex":
@@ -209,6 +231,7 @@ class ScreenerController:
             tickers, snapshot = build_binance_crypto_universe(
                 constraints=BinanceCryptoUniverseConstraints(
                     instrument_type=instrument_type,
+                    quote_assets=("USDT", "USDC"),
                     # Tune spot floor down to keep spot/perp universe sizes comparable.
                     min_quote_volume_usd=(2_500_000 if instrument_type == "spot" else 10_000_000),
                 )
@@ -308,6 +331,45 @@ class ScreenerController:
             _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
             return tickers
 
+        if asset_type == "crypto" and universe in {
+            "binance_spot_majors",
+            "binance_perp_majors",
+            "binance_spot_minors",
+            "binance_perp_minors",
+        }:
+            from tvscreener.lib.universe.binance_crypto import (
+                BinanceCryptoMcapTierUniverseConstraints,
+                build_binance_crypto_universe_mcap_tier,
+                maybe_write_universe_json,
+            )
+
+            instrument_type = (
+                "spot" if universe in {"binance_spot_majors", "binance_spot_minors"} else "perp"
+            )
+            tier = "majors" if universe.endswith("_majors") else "minors"
+            rmin, rmax = (1, 20) if tier == "majors" else (21, 200)
+
+            tickers, snapshot = build_binance_crypto_universe_mcap_tier(
+                constraints=BinanceCryptoMcapTierUniverseConstraints(
+                    instrument_type=instrument_type,
+                    top_n_market_cap=200,
+                    mcap_rank_min=rmin,
+                    mcap_rank_max=rmax,
+                    min_quote_volume_usd_spot=2_500_000,
+                    min_quote_volume_usd_perp=20_000_000,
+                    min_history_days=180,
+                )
+            )
+
+            if isinstance(snapshot, dict):
+                snapshot.setdefault("constraints", {})
+                if isinstance(snapshot.get("constraints"), dict):
+                    snapshot["constraints"]["tier"] = tier
+
+            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
+            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
+            return tickers
+
         cfg = self.get_universe(asset_type)
         return list(cfg.pairs)
 
@@ -318,6 +380,17 @@ class ScreenerController:
 
         if request.assets.universe is None:
             request.assets.universe = settings.default_universe
+
+        # Normalize universe aliases early so downstream routing is consistent.
+        if request.assets.universe:
+            request.assets.universe = {
+                "binance_spot_base": "binance_spot_tradeable_base",
+                "binance_perp_base": "binance_perp_tradeable_base",
+                "binance_spot_largecap": "binance_spot_tradeable_mcap_cs",
+                "binance_perp_largecap": "binance_perp_tradeable_mcap_cs",
+                "binance_spot_snapshot": "binance_spot_top100",
+                "binance_perp_snapshot": "binance_perp_top100",
+            }.get(request.assets.universe, request.assets.universe)
         if request.assets.timeframes is None:
             request.assets.timeframes = settings.default_timeframes
         if request.assets.contract_type is None:
@@ -337,6 +410,10 @@ class ScreenerController:
                 "binance_perp_tradeable_base",
                 "binance_spot_tradeable_mcap_cs",
                 "binance_perp_tradeable_mcap_cs",
+                "binance_spot_majors",
+                "binance_perp_majors",
+                "binance_spot_minors",
+                "binance_perp_minors",
             }
             and getattr(request.assets, "instrument_type", None) is None
         ):
@@ -528,6 +605,10 @@ class ScreenerController:
             return self.run_query(args)
         if command == "audit":
             return self.run_audit(args)
+        if command == "report":
+            return self.run_report(args)
+        if command == "review":
+            return self.run_review(args)
 
         matrix_mode = args.matrix
         detailed_mode = args.detailed
@@ -616,18 +697,29 @@ class ScreenerController:
         out_base = Path(out_dir or "artifacts/audits/binance-universes")
         out_base.mkdir(parents=True, exist_ok=True)
 
+        include_all = bool(getattr(args, "include_all", False))
+
+        # Default audit set focuses on screener-style universes.
         universes = [
-            "binance_spot_top100",
-            "binance_perp_top100",
-            "binance_spot_mcap_top100",
-            "binance_perp_mcap_top100",
-            "binance_spot_cs_momentum",
-            "binance_perp_cs_momentum",
+            "binance_spot_majors",
+            "binance_perp_majors",
+            "binance_spot_minors",
+            "binance_perp_minors",
             "binance_spot_tradeable_base",
             "binance_perp_tradeable_base",
             "binance_spot_tradeable_mcap_cs",
             "binance_perp_tradeable_mcap_cs",
+            "binance_spot_top100",
+            "binance_perp_top100",
         ]
+
+        if include_all:
+            universes = universes + [
+                "binance_spot_mcap_top100",
+                "binance_perp_mcap_top100",
+                "binance_spot_cs_momentum",
+                "binance_perp_cs_momentum",
+            ]
 
         report: dict[str, dict] = {}
         sets: dict[str, set[str]] = {}
@@ -673,6 +765,15 @@ class ScreenerController:
             if any(not p.startswith("BINANCE:") for p in pairs):
                 errors.append("non_binance_ticker")
 
+            if u in {"binance_spot_top100", "binance_perp_top100"} and len(pairs) < 100:
+                errors.append("underfilled_top_n")
+
+            if u in {"binance_spot_top100", "binance_perp_top100"}:
+                allowed = {"USDT", "USDC"}
+                extra_quotes = [q for q in quote_dist if q not in allowed]
+                if extra_quotes:
+                    errors.append("non_usdt_usdc_quotes")
+
             report[u] = {
                 "count": len(pairs),
                 "sample": pairs[:10],
@@ -683,6 +784,7 @@ class ScreenerController:
                 "selection": (
                     uni.get("constraints", {}).get("selection") if isinstance(uni, dict) else None
                 ),
+                "diagnostics": (uni.get("diagnostics") if isinstance(uni, dict) else None),
                 "requested_tickers": (
                     len(uni.get("requested_tickers", [])) if isinstance(uni, dict) else None
                 ),
@@ -723,6 +825,78 @@ class ScreenerController:
 
         return 0
 
+    def run_report(self, args: argparse.Namespace) -> int:
+        target = getattr(args, "target", None)
+        if target != "binance-universes":
+            if self.console:
+                self.console.print(f"[red]Unknown report target: {target}[/red]")
+            return 2
+
+        in_dir = getattr(args, "in_dir", "artifacts/audits/binance-universes")
+        out_dir = getattr(args, "out_dir", "artifacts/reports/binance-universes")
+
+        from tvscreener.lib.reports.binance_universes import (
+            generate_binance_universes_report,
+        )
+
+        paths = generate_binance_universes_report(in_dir=in_dir, out_dir=out_dir)
+        if self.console:
+            self.console.print(f"[green]Wrote {paths.report_json}[/green]")
+            self.console.print(f"[green]Wrote {paths.report_md}[/green]")
+        return 0
+
+    def run_review(self, args: argparse.Namespace) -> int:
+        target = getattr(args, "target", None)
+        if target != "binance-universes":
+            if self.console:
+                self.console.print(f"[red]Unknown review target: {target}[/red]")
+            return 2
+
+        audit_out_dir = getattr(args, "audit_out_dir", "artifacts/audits/binance-universes")
+        report_out_dir = getattr(args, "report_out_dir", "artifacts/reports/binance-universes")
+        strict = bool(getattr(args, "strict", False))
+
+        audit_args = argparse.Namespace(
+            command="audit",
+            target=target,
+            out_dir=audit_out_dir,
+            include_all=bool(getattr(args, "include_all", False)),
+            verbose=getattr(args, "verbose", False),
+            config=getattr(args, "config", None),
+        )
+        rc = self.run_audit(audit_args)
+        if rc != 0:
+            return rc
+
+        # Strict mode: fail if any universe has errors.
+        if strict:
+            import json
+            from pathlib import Path
+
+            report_path = Path(audit_out_dir) / "report.json"
+            try:
+                payload = json.loads(report_path.read_text(encoding="utf-8"))
+                universes = (payload or {}).get("universes", {})
+                has_errors = any((v or {}).get("errors") for v in universes.values())
+                if has_errors:
+                    if self.console:
+                        self.console.print(
+                            "[bold red]Review failed: audit errors present[/bold red]"
+                        )
+                    return 2
+            except Exception:
+                return 2
+
+        report_args = argparse.Namespace(
+            command="report",
+            target=target,
+            in_dir=audit_out_dir,
+            out_dir=report_out_dir,
+            verbose=getattr(args, "verbose", False),
+            config=getattr(args, "config", None),
+        )
+        return self.run_report(report_args)
+
     def run_opportunity_scan(self, request: ScanRequest) -> int:
         """Run opportunity screener and handle output."""
         request = self.resolve_defaults(request)
@@ -741,7 +915,10 @@ class ScreenerController:
 
         # 2) Analytics pipeline (Iceberg + render)
         pairs = self.get_pairs(
-            request.assets.asset_type, request.assets.universe, request.assets.pairs
+            request.assets.asset_type,
+            request.assets.universe,
+            request.assets.pairs,
+            instrument_type=getattr(request.assets, "instrument_type", None),
         )
         timeframes = (
             request.assets.timeframes.split(",")
@@ -802,7 +979,10 @@ class ScreenerController:
         """Run opportunity screener and return results + screener instance."""
         request = self.resolve_defaults(request)
         pairs = self.get_pairs(
-            request.assets.asset_type, request.assets.universe, request.assets.pairs
+            request.assets.asset_type,
+            request.assets.universe,
+            request.assets.pairs,
+            instrument_type=getattr(request.assets, "instrument_type", None),
         )
         timeframes = (
             request.assets.timeframes.split(",")
@@ -1224,14 +1404,29 @@ class ScreenerController:
         params = {"asset_type": at, "tfsid": tfsid}
 
         order_by = "ORDER BY ENSEMBLE_SCORE DESC, GRID_ALIGNED DESC, fetched_at_utc DESC"
+        sql_entity = f"SELECT * FROM df WHERE {base_where} AND entity_id IN {pairs_in} {order_by}"
         sql_pair = f"SELECT * FROM df WHERE {base_where} AND PAIR IN {pairs_in} {order_by}"
         sql_symbol = f"SELECT * FROM df WHERE {base_where} AND symbol IN {pairs_in} {order_by}"
 
         with EdgeQueryClient() as edge_client:
             try:
+                # Fully-qualified symbols (BINANCE:BTCUSDT) should filter by entity_id.
+                if any(":" in p for p in pairs):
+                    return edge_client.query_sql(signals_latest_table, sql_entity, params=params)
                 return edge_client.query_sql(signals_latest_table, sql_pair, params=params)
             except Exception:
-                return edge_client.query_sql(signals_latest_table, sql_symbol, params=params)
+                # Fallback order: PAIR then symbol then entity_id.
+                try:
+                    return edge_client.query_sql(signals_latest_table, sql_pair, params=params)
+                except Exception:
+                    try:
+                        return edge_client.query_sql(
+                            signals_latest_table, sql_symbol, params=params
+                        )
+                    except Exception:
+                        return edge_client.query_sql(
+                            signals_latest_table, sql_entity, params=params
+                        )
 
     def _snapshot_label_from_df(self, df: Any) -> str | None:
         """Best-effort snapshot label for matrix view headers.

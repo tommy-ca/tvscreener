@@ -30,3 +30,7 @@ to support replayable pipelines, auditable signals, and fast edge analytics.
   `run_id`, `fetched_at_utc`, `timeframes`, `timeframe_set_id`, `source`, `scanner_family`.
 - Iceberg tables are canonical; on-disk snapshots are optional debug artifacts only.
 
+## Workspace hygiene
+- Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).
+- Local runner state lives under `.prefect-home/` (gitignored); delete it to reset local Prefect state.
+- Common safe cleanup (gitignored): `rm -rf __pycache__ .pytest_cache .ruff_cache build *.egg-info .prefect-home.bak-*`

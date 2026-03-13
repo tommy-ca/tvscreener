@@ -2,18 +2,39 @@
 
 ### Strategy layering model
 
-Each strategy family is an analytics layer over a **base universe** + derived features.
+Each strategy family is an analytics layer over a **shared base universe** + derived features.
 
-- **Base universe**: one of the existing Binance universes (`*_mcap_top100`, `*_cs_momentum`, `*_top100`).
+- **Base universe**: start from a tradeable-first universe, then apply strategy-specific filtering/ranking in analytics.
 
 Recommended mapping:
 - TS strategies (TSMOM/TSMR): `binance_{spot,perp}_tradeable_base`
 - CS strategies (CSMOM/CSMR): `binance_{spot,perp}_tradeable_mcap_cs`
 
-Avoid using `binance_spot_top100` as a strategy base because it includes non-USD quote assets (TRY/JPY/BRL/EUR),
-which breaks comparability to perps.
+Convenience aliases:
+- `binance_{spot,perp}_base` -> `binance_{spot,perp}_tradeable_base`
+- `binance_{spot,perp}_largecap` -> `binance_{spot,perp}_tradeable_mcap_cs`
+
+Default stance:
+- Use `binance_{spot,perp}_tradeable_base` as the common base universe across strategies.
+- For cross-sectional strategies, optionally apply an analytics-stage market-cap anchor (or swap the input universe to `*_tradeable_mcap_cs`).
+
+Avoid using `binance_{spot,perp}_top100` as a strategy base; it is a volume snapshot universe.
+Prefer `binance_{spot,perp}_tradeable_base` (shared strategy base) and apply strategy-specific rankers/filters in analytics.
 - **Eligibility gates**: applied in universe selection (liquidity, exclusions).
 - **Ranking/filtering**: applied in analytics (DuckDB) and persisted as results parquet.
+
+### Audit and readiness
+
+Use the audit+report pipeline to validate a base universe is strategy-ready:
+- quote purity (USDT/USDC)
+- base duplication rate
+- spot vs perp parity by family
+- risky exclusions (short-history non-mcap bases)
+- volume distribution (percentiles + bins)
+
+Recommended checks for the default strategy bases:
+- `tradeable_base`: verify `excluded_risky` is non-zero and duplicates are zero.
+- `tradeable_mcap_cs`: expect smaller counts due to market-cap mapping and liquidity gates; verify spot/perp base overlap is high.
 
 ### Strategy definitions (high-level)
 

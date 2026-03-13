@@ -70,6 +70,65 @@ def main() -> int:
             default="artifacts/audits/binance-universes",
             help="Directory to write audit report(s)",
         )
+        parser.add_argument(
+            "--include-all",
+            action="store_true",
+            help="Include extended diagnostic universes (mcap_top100, cs_momentum)",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+        args = parser.parse_args()
+    elif len(sys.argv) > 1 and sys.argv[1] == "report":
+        parser = argparse.ArgumentParser(description="Generate DuckDB-backed reports")
+        parser.add_argument("command", choices=["report"])
+        parser.add_argument(
+            "target",
+            choices=["binance-universes"],
+            help="Report target",
+        )
+        parser.add_argument(
+            "--in-dir",
+            default="artifacts/audits/binance-universes",
+            help="Directory containing universe.json audit folders",
+        )
+        parser.add_argument(
+            "--out-dir",
+            default="artifacts/reports/binance-universes",
+            help="Directory to write report outputs",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+        args = parser.parse_args()
+    elif len(sys.argv) > 1 and sys.argv[1] == "review":
+        parser = argparse.ArgumentParser(
+            description="Run audit + DuckDB report pipelines",
+        )
+        parser.add_argument("command", choices=["review"])
+        parser.add_argument(
+            "target",
+            choices=["binance-universes"],
+            help="Review target",
+        )
+        parser.add_argument(
+            "--audit-out-dir",
+            default="artifacts/audits/binance-universes",
+            help="Directory to write audit outputs",
+        )
+        parser.add_argument(
+            "--report-out-dir",
+            default="artifacts/reports/binance-universes",
+            help="Directory to write report outputs",
+        )
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            help="Exit non-zero if audit reports any errors",
+        )
+        parser.add_argument(
+            "--include-all",
+            action="store_true",
+            help="Include extended diagnostic universes (mcap_top100, cs_momentum)",
+        )
         parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
         parser.add_argument("--config", help="Path to YAML config")
         args = parser.parse_args()
@@ -125,6 +184,12 @@ def main() -> int:
                 "majors",
                 "minors",
                 "all",
+                "binance_spot_base",
+                "binance_perp_base",
+                "binance_spot_largecap",
+                "binance_perp_largecap",
+                "binance_spot_snapshot",
+                "binance_perp_snapshot",
                 "binance_spot_top100",
                 "binance_perp_top100",
                 "binance_spot_mcap_top100",
@@ -135,6 +200,10 @@ def main() -> int:
                 "binance_perp_tradeable_base",
                 "binance_spot_tradeable_mcap_cs",
                 "binance_perp_tradeable_mcap_cs",
+                "binance_spot_majors",
+                "binance_perp_majors",
+                "binance_spot_minors",
+                "binance_perp_minors",
             ],
             default=None,
         )
@@ -335,6 +404,14 @@ def main() -> int:
 
     setup_logging(args.verbose)
 
+    # Local-only helper commands should not require Prefect.
+    if (
+        getattr(args, "command", None) == "scan"
+        and getattr(args, "scanner", None) == "inspect"
+        and getattr(args, "runner", "prefect") == "prefect"
+    ):
+        args.runner = "local"
+
     # Parse sql_params if provided
     if getattr(args, "sql_params", None):
         import json
@@ -377,14 +454,25 @@ def main() -> int:
             console.print("[dim]Hint: install with `uv sync --extra prefect`[/dim]")
             return 2
 
-    # Register renderers (interactive CLI output)
-    from tvscreener.lib.screeners.renderers.rich_console import register_renderers
+    # Local runner: execute via PipelineRunSpec + LocalRunner.
+    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "local":
+        from tvscreener.lib.pipeline_runner import LocalRunner, PipelineRunSpec
 
-    register_renderers()
+        spec = PipelineRunSpec.from_cli_args(args)
+        res = LocalRunner(console=console).run(spec)
+        if not res.success:
+            console.print("\n[bold red]Scan failed[/bold red]")
+            return 2
+        console.print(f"\n[bold]Total: {res.result_count} results[/bold]")
+        return 0 if res.result_count > 0 else 1
 
     # Initialize orchestrator and run
     controller = ScreenerController(console=console)
     count = controller.run_from_args(args)
+
+    # Non-scan commands handle their own output and exit semantics.
+    if getattr(args, "command", "scan") != "scan":
+        return 0 if count >= 0 else 2
 
     if count < 0:
         console.print("\n[bold red]Scan failed[/bold red]")

@@ -20,6 +20,7 @@ For strategy development, we want a base universe that is:
 Both:
 - restrict to quote assets in an allowlist (`USDT`, `USDC`)
 - exclude stable/wrapped bases
+- exclude short-history non-mcap-top100 bases (see `update-binance-tradeable-base-risk-filter`)
 - apply a liquidity gate (`Volume 24h in USD`) with default floors tuned for parity:
   - spot: `>= 2_500_000`
   - perp: `>= 20_000_000`
@@ -29,3 +30,5 @@ Both:
 ### Relationship to strategies
 These universes intentionally do not encode momentum/mean-reversion logic.
 They only ensure tradeable candidates; ranking and signal generation remain analytics concerns.
+
+They are designed to be re-used as the shared base universe across multiple strategy families.

@@ -14,6 +14,7 @@ and augment them with:
 
 ### Current state
 - Universes exist and are auditable via `tvscreener-scan audit binance-universes`.
+- DuckDB reports can be generated via `tvscreener-scan report binance-universes` for distributions and overlap.
 - Opportunity/strategy pipelines already support multi-timeframe scoring and matrix rendering.
 - Lakehouse table isolation can be enabled via `TVSCREENER_LAKEHOUSE_LAYOUT=scalable`.
 

@@ -1,6 +1,8 @@
 # Tasks: Binance crypto opportunity scan (TradingView /scan)
 
-- [x] Add deterministic universe selector using TradingView crypto /scan (top 100, volume >= 10M, vol >= 3%)
+- [x] Add deterministic universe selector using TradingView crypto /scan (top 100 by volume; liquidity + exclusions + dedup)
+- [x] Persist diagnostics in `universe.json` for top100 underfill analysis
+- [x] Restrict `binance_{spot,perp}_top100` to `USDT`/`USDC` quotes
 - [ ] Add market cap top100 selector (CoinScreener Market Cap Calc -> Binance USDT markets)
 - [x] Add market cap top100 selector (CoinScreener Market Cap Calc -> Binance USDT markets)
 - [ ] Add DuckDB analytics query templates to filter by volume/volatility and render matrix

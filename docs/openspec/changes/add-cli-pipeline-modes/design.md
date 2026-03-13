@@ -15,6 +15,9 @@ Add `--pipeline` to `tvscreener-scan`:
 - `--pipeline analytics`: run the analytics pipeline only (query Iceberg + render).
 - `--pipeline both` (default): run data pipeline then analytics pipeline on the persisted outputs.
 
+Runner notes:
+- `--runner local` executes via the `PipelineRunSpec` contract and persists `tvscreener.runs` metadata.
+
 ### Source of truth for analytics
 - Opportunity matrix view reads from: `tvscreener.signals_latest`
 - Strategy matrix view reads from: `tvscreener.signals_latest`, then computes strategy signals in-memory.
@@ -28,4 +31,3 @@ Analytics runs need the same user-facing selectors as scans:
 - `--timeframes 240,60,15` (drives `timeframe_set_id`)
 
 Implementation uses DuckDB (`EdgeQueryClient`) to query Iceberg tables and returns a pandas DataFrame to existing renderers.
-

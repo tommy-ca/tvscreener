@@ -20,14 +20,17 @@ The system SHALL support selecting a Binance crypto universe by deterministic ra
 - **GIVEN** the operator requests a Binance crypto scan
 - **AND** the selection constraints are:
   - `market_types = [spot, perp]`
+  - `quote_assets = [USDT, USDC]`
   - `min_quote_volume_usd` is configurable; defaults:
     - spot: `2_500_000`
     - perp: `10_000_000`
-  - `min_volatility_24h_pct = 3.0`
   - `top_n = 100`
 - **WHEN** the universe selector runs
 - **THEN** it returns at most 100 instruments ordered by `quote_volume_usd` descending
-- **AND** every instrument in the returned set meets the minimum thresholds
+- **AND** every instrument in the returned set meets the minimum volume threshold
+- **AND** every instrument in the returned set ends in an allowed quote asset (`USDT` or `USDC`)
+- **AND** it excludes stable/wrapped bases (`exclude_bases`)
+- **AND** it de-dupes to one ticker per base (preferring the primary quote asset)
 
 #### Scenario: Selection type is recorded
 - **WHEN** the universe selector writes `universe.json`
@@ -47,8 +50,12 @@ The system SHALL support selecting Binance spot/perp markets derived from the to
 #### Scenario: Volatility uses TradingView native field when available
 - **GIVEN** TradingView returns a `Volatility` column for a candidate instrument
 - **WHEN** the universe selector computes `volatility_24h_pct`
-- **THEN** it uses TradingView's `Volatility` value
-- **AND** does not rely on a derived `(High-Low)/Price` proxy
+- **THEN** it uses TradingView's `Volatility` value when present
+- **AND** falls back per-row to a derived `(High-Low)/Price` proxy when native volatility is missing
+
+#### Scenario: Selector records diagnostics for selection analysis
+- **WHEN** the top-by-volume universe selector writes `universe.json`
+- **THEN** it includes a `diagnostics` object with candidate counts at each filter step
 
 ### Requirement: Opportunity scanner is shared across asset types
 The system SHALL run the same opportunity scanner family for forex and Binance crypto.
@@ -57,6 +64,19 @@ The system SHALL run the same opportunity scanner family for forex and Binance c
 - **GIVEN** a run executes with `scanner_family=opportunity`, `asset_type=crypto`, `source=tradingview`
 - **WHEN** the analytics pipeline renders the matrix view
 - **THEN** the output is compatible with the existing matrix rendering contract
+
+#### Scenario: Generic opportunity screener supports crypto
+- **GIVEN** `asset_type=crypto`
+- **WHEN** the opportunity screener is constructed
+- **THEN** it uses the TradingView `CryptoScreener` implementation (not an `unknown` asset type)
+
+### Requirement: Analytics pipeline loads crypto signals by entity_id
+The system SHALL load crypto `signals_latest` rows by `entity_id` when inputs are fully-qualified symbols.
+
+#### Scenario: Analytics loads majors/minors rows
+- **GIVEN** `asset_type=crypto` and a universe that returns symbols like `BINANCE:BTCUSDT`
+- **WHEN** the analytics pipeline loads `signals_latest`
+- **THEN** it filters by `entity_id IN (...)` (not `PAIR IN (...)`)
 
 ### Requirement: Universe membership is persisted for reproducibility
 The system SHALL persist the selected universe snapshot as an artifact.
@@ -71,6 +91,14 @@ The system SHALL persist the selected universe snapshot as an artifact.
 - **GIVEN** the universe selector maps from a base list (e.g. market cap bases)
 - **WHEN** it writes `universe.json`
 - **THEN** it includes `included_bases` and `missing_bases` to quantify mapping coverage
+
+### Requirement: Iceberg persistence succeeds for crypto opportunity runs
+The system SHALL persist crypto opportunity scan results to Iceberg without schema-type errors.
+
+#### Scenario: Volume-like fields are persisted with stable types
+- **GIVEN** TradingView returns a floating volume value
+- **WHEN** the data pipeline persists results to Iceberg
+- **THEN** the system normalizes count-like fields (e.g. `Volume`) to integer-compatible types
 
 ### Requirement: Tradeable base universes exist
 The system SHOULD provide Binance-first tradeable base universes for strategy development.
