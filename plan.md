@@ -388,6 +388,17 @@ Latest strict review report (post majors/minors rerun):
 Latest strict review report (post Prefect parity rerun):
 - `artifacts/reports/binance-universes/20260313-163456/report.md`
 
+Latest strict review report (post forex+crypto full rerun):
+- `artifacts/reports/binance-universes/20260313-173851/report.md`
+
+Latest full rerun matrices (Prefect, analytics):
+- `artifacts/runs/5411af003b204811aae87b4e901142019fd714d3146a7ae7c06b860b9497f4d8/matrix.txt` (forex majors)
+- `artifacts/runs/31dcff1740e7b70bc2e1c6cc58be5dba08cdeaff8183602987f0a2f7a7bd66c5/matrix.txt` (forex minors)
+- `artifacts/runs/a7455dfbf0cbcdf5f29e5066f51a848e55fd369a1201082d7cf1aeabf22dcb25/matrix.txt` (crypto spot majors)
+- `artifacts/runs/bd825bc7b6dfbd8329bba79db08114288c33dbf5941f046382653d96b29e3473/matrix.txt` (crypto perp majors)
+- `artifacts/runs/e91580cb1c2c036c2c8805da1b839e6d1f8b712281611ee0101a17db1b8b7912/matrix.txt` (crypto spot minors)
+- `artifacts/runs/8d52ec36b3e601a0f4b88509f19e528d536f1d804d31509109460d9abd3021f2/matrix.txt` (crypto perp minors)
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
