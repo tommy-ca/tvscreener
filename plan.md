@@ -408,6 +408,8 @@ Goal: rerun end-to-end `data` then `analytics --matrix` for Binance crypto major
 
 Default runner: Prefect (server + runner). Use `--runner local` explicitly only for fallback/debug.
 
+Local runner is never implied; it must be selected explicitly via `--runner local`.
+
 Start a local Prefect server (local/dev):
 ```bash
 export PREFECT_HOME="$PWD/.prefect-home"
