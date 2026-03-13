@@ -38,7 +38,9 @@ class GenericOpportunityScreener(BaseOpportunityScreener):
             raise ValueError(
                 f"Unsupported asset type: {asset_type}. Supported: {list(ASSET_MAP.keys())}"
             )
-        super().__init__(symbols=symbols, timeframes=timeframes, config=config)
+        super().__init__(
+            asset_type=self.asset_type, symbols=symbols, timeframes=timeframes, config=config
+        )
 
     def _get_screener_instance(self) -> Any:
         return ASSET_MAP[self.asset_type]["screener_class"]()

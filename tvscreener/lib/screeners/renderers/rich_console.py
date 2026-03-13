@@ -167,7 +167,9 @@ class RichConsoleRenderer(BaseRenderer):
         from tvscreener.constants.forex import DEFAULT_LIMIT_SUMMARY
 
         display_limit = limit if limit is not None else DEFAULT_LIMIT_SUMMARY
-        table = Table(title="Forex Opportunities")
+        asset = getattr(screener, "asset_type", "asset")
+        title = f"{str(asset).title()} Opportunities"
+        table = Table(title=title)
         table.add_column("Rank", style="dim", justify="right", no_wrap=True)
         table.add_column("Pair", style="cyan", no_wrap=True)
         table.add_column("Dir", justify="center")
@@ -670,6 +672,11 @@ def register_renderers() -> None:
     """Register all default renderers."""
     RichConsoleRenderer.register(
         "ForexOpportunityScreener",
+        empty_rich_message="No opportunities found",
+        render_method="_render_opportunity",
+    )
+    RichConsoleRenderer.register(
+        "GenericOpportunityScreener",
         empty_rich_message="No opportunities found",
         render_method="_render_opportunity",
     )
