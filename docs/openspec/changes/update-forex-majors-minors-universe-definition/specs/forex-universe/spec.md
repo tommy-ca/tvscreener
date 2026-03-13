@@ -14,6 +14,11 @@ The system SHALL provide deterministic forex majors/minors universes resolved wi
 - **WHEN** the operator selects `--universe minors`
 - **THEN** no resolved pair contains the substring `USD`
 
+#### Scenario: Minors cover the full cross set (unique)
+- **GIVEN** the majors currency set is `{EUR, GBP, JPY, CHF, CAD, AUD, NZD}` (excluding `USD`)
+- **WHEN** the operator selects `--universe minors`
+- **THEN** the resolved universe contains exactly 21 unique crosses (one orientation per cross)
+
 ### Requirement: Forex pre-analytics filtering produces one row per PAIR
 The system SHOULD deduplicate forex scan results to one best row per `PAIR` before analytics ranking.
 

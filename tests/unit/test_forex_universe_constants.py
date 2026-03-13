@@ -18,6 +18,7 @@ def test_forex_majors_are_fixed_and_usd_based() -> None:
 def test_forex_minors_exclude_usd_and_are_unique() -> None:
     assert all("USD" not in p for p in FOREX_MINORS)
     assert len(set(FOREX_MINORS)) == len(FOREX_MINORS)
+    assert len(FOREX_MINORS) == 21
 
 
 def test_default_forex_pairs_is_majors_plus_minors() -> None:

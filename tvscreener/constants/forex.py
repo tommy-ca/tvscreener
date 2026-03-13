@@ -25,6 +25,12 @@ FOREX_MINORS = [
     "GBPCAD",
     "AUDCAD",
     "GBPNZD",
+    # Complete the 7-currency (ex-USD) cross set.
+    "GBPCHF",
+    "AUDCHF",
+    "CADCHF",
+    "NZDCHF",
+    "NZDCAD",
 ]
 
 DEFAULT_FOREX_PAIRS = FOREX_MAJORS + FOREX_MINORS

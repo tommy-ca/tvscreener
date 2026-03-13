@@ -458,7 +458,7 @@ Latest Prefect parity run artifacts (matrix):
 
 Universe resolution (pre-network):
 - Majors: `EURUSD, GBPUSD, USDJPY, USDCHF, USDCAD, AUDUSD, NZDUSD`
-- Minors: a curated set of liquid crosses that exclude `USD`
+- Minors: the full 7-currency cross set excluding `USD` (21 unique crosses)
 
 Pre-analytics filtering (forex scans):
 - Expands each pair across preferred exchanges into tickers like `OANDA:EURUSD`.

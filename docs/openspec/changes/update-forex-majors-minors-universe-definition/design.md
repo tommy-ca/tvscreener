@@ -6,6 +6,7 @@ Forex universes are resolved in-process and are intentionally deterministic.
 
 - `--asset-type forex --universe majors` returns a fixed list of pairs (`FOREX_MAJORS`).
 - `--asset-type forex --universe minors` returns a fixed list of crosses that exclude `USD` (`FOREX_MINORS`).
+- `FOREX_MINORS` targets full cross coverage among the 7 non-USD majors currencies (21 unique crosses).
 - `--asset-type forex --universe all` (or unset) returns `DEFAULT_FOREX_PAIRS`.
 
 ### Pre-analytics filtering
