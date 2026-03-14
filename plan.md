@@ -402,6 +402,9 @@ Latest full rerun matrices (Prefect, analytics):
 - `artifacts/runs/e91580cb1c2c036c2c8805da1b839e6d1f8b712281611ee0101a17db1b8b7912/matrix.txt` (crypto spot minors)
 - `artifacts/runs/8d52ec36b3e601a0f4b88509f19e528d536f1d804d31509109460d9abd3021f2/matrix.txt` (crypto perp minors)
 
+Matrix render note:
+- Ensure factor cells never truncate into `|…` (e.g. `🟢|🟢|🟢` must render fully for MA/ROC too).
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`

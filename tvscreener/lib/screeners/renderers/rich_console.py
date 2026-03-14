@@ -172,7 +172,7 @@ class RichConsoleRenderer(BaseRenderer):
         table = Table(title=title)
         table.add_column("Rank", style="dim", justify="right", no_wrap=True)
         table.add_column("Pair", style="cyan", no_wrap=True)
-        table.add_column("Dir", justify="center")
+        table.add_column("Dir", justify="center", no_wrap=True)
         table.add_column("Ens", style="green", justify="right")
         table.add_column("Grid", style="yellow", justify="center")
         table.add_column("TF", style="dim yellow", justify="center")
@@ -345,12 +345,21 @@ class RichConsoleRenderer(BaseRenderer):
         table = Table(title=title)
         table.add_column("Pair", style="cyan", no_wrap=True)
         table.add_column("Dir", justify="center")
-        table.add_column("TREND", justify="center")
-        table.add_column("MA", justify="center")
-        table.add_column("OSC", justify="center")
-        table.add_column("ROC", justify="center")
-        table.add_column("Grid", style="yellow", justify="center")
-        table.add_column("Grade", style="magenta", justify="center")
+
+        # Rich will aggressively shrink short-header columns (e.g. "MA", "ROC")
+        # on narrow consoles, causing matrix cells like "🟢|🟢|🟢" to truncate
+        # into "🟢|🟢|…". Reserve enough width for the full emoji grid.
+        timeframes = list(getattr(screener, "timeframes", []) or [])
+        tf_count = max(1, len(timeframes))
+        # Emoji width is 2; separators are 1 => width ~= 2*n + (n-1) = 3n-1.
+        factor_min_width = max(8, 3 * tf_count - 1)
+
+        table.add_column("TREND", justify="center", min_width=factor_min_width, no_wrap=True)
+        table.add_column("MA", justify="center", min_width=factor_min_width, no_wrap=True)
+        table.add_column("OSC", justify="center", min_width=factor_min_width, no_wrap=True)
+        table.add_column("ROC", justify="center", min_width=factor_min_width, no_wrap=True)
+        table.add_column("Grid", style="yellow", justify="center", min_width=5, no_wrap=True)
+        table.add_column("Grade", style="magenta", justify="center", min_width=5, no_wrap=True)
         # Keep the matrix view compact and decision-oriented.
         # More numeric detail (ENSEMBLE_SCORE / TF_CONFLUENCE_*) is available in summary/detailed views.
 
@@ -371,7 +380,7 @@ class RichConsoleRenderer(BaseRenderer):
             osc_dirs = []
             roc_dirs = []
 
-            for tf in screener.timeframes:
+            for tf in timeframes:
                 trend_val = get_enriched_col(row, f"TREND_{tf}", f"Recommend All|{tf}", 0)
                 ma_val = get_enriched_col(row, f"MA_{tf}", f"Recommend Ma|{tf}", 0)
                 osc_val = get_enriched_col(row, f"OSC_{tf}", f"Recommend Other|{tf}", 0)
@@ -478,8 +487,7 @@ class RichConsoleRenderer(BaseRenderer):
                 table.add_column("RR", justify="right", style="yellow")
                 table.add_column("Sz", justify="right", style="cyan")
 
-            for i, row_tuple in enumerate(strategy_df.itertuples(index=False), 1):
-                row = row_tuple._asdict()
+            for i, row in enumerate(strategy_df.to_dict(orient="records"), 1):
                 stats = self._collect_confluence_stats(row)
                 confluence_summary = self._format_confluence_summary(stats)
                 pair = str(get_enriched_col(row, "PAIR", "Name"))
@@ -655,7 +663,7 @@ class RichConsoleRenderer(BaseRenderer):
 
         display_limit = limit if limit is not None else DEFAULT_LIMIT_MATRIX
         for strategy in df["STRATEGY"].unique():
-            strategy_df = df[df["STRATEGY"] == strategy]
+            strategy_df = df.loc[df["STRATEGY"] == strategy].copy()
             display_df = strategy_df.head(display_limit) if display_limit > 0 else strategy_df
             title = f"Strategy Matrix: {strategy}"
             if snapshot_label:

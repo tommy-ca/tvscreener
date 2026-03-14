@@ -125,6 +125,10 @@ Forex parity check:
 Matrix format:
 - Crypto opportunity `--matrix` uses the same Confluence Matrix format as forex.
 
+Matrix rendering stability:
+- Factor columns reserve enough width so cells like `🟢|🟢|🟢` do not truncate into `🟢|🟢|…`.
+- Prefect runner captures `matrix.txt` with a wide Rich console to keep artifacts stable for review.
+
 Forex full-loop validation (data + analytics):
 ```bash
 uv run tvscreener-scan --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline data --runner prefect

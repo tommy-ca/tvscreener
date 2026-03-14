@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 from rich.console import Console
+from rich.table import Table
 
 from tvscreener.beauty import VisualStyler
 from tvscreener.lib.screeners.renderers.rich_console import RichConsoleRenderer
@@ -94,3 +95,40 @@ class TestRichConsoleRenderer(unittest.TestCase):
 
         # This should run without error
         self.renderer.render(screener)
+
+    def test_matrix_cells_do_not_truncate_with_ellipsis(self):
+        screener = MagicMock()
+        screener.__class__.__name__ = "ForexOpportunityScreener"
+        screener.timeframes = ["240", "60", "15"]
+
+        df = pd.DataFrame(
+            {
+                "PAIR": ["RENDERUSDT.P"],
+                "DIRECTION": ["long"],
+                "GRADE": ["A+"],
+                "GRID_ALIGNED": [11],
+                "GRID_TOTAL": [12],
+                "TREND_240": [1.0],
+                "TREND_60": [1.0],
+                "TREND_15": [1.0],
+                "MA_240": [1.0],
+                "MA_60": [1.0],
+                "MA_15": [1.0],
+                "OSC_240": [1.0],
+                "OSC_60": [0.0],
+                "OSC_15": [-1.0],
+                "ROC_240": [1.0],
+                "ROC_60": [1.0],
+                "ROC_15": [1.0],
+            }
+        )
+
+        console = Console(width=80, force_terminal=True)
+        with console.capture() as capture:
+            self.renderer._render_confluence_matrix(
+                screener, df, console, Table, title="Confluence Matrix"
+            )
+
+        out = capture.get()
+        self.assertNotIn("|…", out)
+        self.assertIn("🟢|🟢|🟢", out)

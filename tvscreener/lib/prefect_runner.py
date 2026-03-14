@@ -28,7 +28,9 @@ def _console_for_spec(spec: PipelineRunSpec):
     # and mirrored into Prefect logs.
     from rich.console import Console
 
-    return Console(record=True)
+    # Use a generous width so saved `matrix.txt` artifacts don't truncate
+    # emoji grids into "…" on narrow default consoles.
+    return Console(record=True, width=140, force_terminal=True)
 
 
 def _ensure_dir(path: Path) -> None:

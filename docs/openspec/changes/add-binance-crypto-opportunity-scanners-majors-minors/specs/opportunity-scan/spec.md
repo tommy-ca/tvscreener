@@ -49,6 +49,11 @@ The system SHOULD persist `instrument_type` for each run in `tvscreener.runs`.
 - **WHEN** `--matrix` is used
 - **THEN** the output uses the Confluence Matrix format (TREND/MA/OSC/ROC across timeframes + Grid + Grade)
 
+#### Scenario: Matrix factor cells do not truncate
+- **GIVEN** the matrix view renders 3 timeframes
+- **WHEN** the output is persisted to `matrix.txt`
+- **THEN** factor cells render full emoji grids (e.g. `🟢|🟢|🟢`) and MUST NOT include `|…`
+
 #### Scenario: Matrix view shows readable pair labels for crypto
 - **GIVEN** a crypto universe returns fully-qualified symbols like `BINANCE:BTCUSDT`
 - **WHEN** the matrix view is rendered
