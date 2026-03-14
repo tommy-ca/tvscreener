@@ -391,6 +391,9 @@ Latest strict review report (post Prefect parity rerun):
 Latest strict review report (post forex+crypto full rerun):
 - `artifacts/reports/binance-universes/20260313-173851/report.md`
 
+Latest strict review report (post forex+crypto full rerun, 2026-03-14):
+- `artifacts/reports/binance-universes/20260314-115838/report.md`
+
 Latest full rerun matrices (Prefect, analytics):
 - `artifacts/runs/5411af003b204811aae87b4e901142019fd714d3146a7ae7c06b860b9497f4d8/matrix.txt` (forex majors)
 - `artifacts/runs/31dcff1740e7b70bc2e1c6cc58be5dba08cdeaff8183602987f0a2f7a7bd66c5/matrix.txt` (forex minors)
