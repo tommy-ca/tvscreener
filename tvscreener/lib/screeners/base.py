@@ -41,6 +41,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class SyntheticField:
+    """Field-like object for requesting missing timed columns.
+
+    Some TradingView endpoints accept timed variants like `Recommend.All|240`
+    but the generated field enums may not include the `*_240` members.
+    """
+
+    label: str
+    field_name: str
+    format: str | None = None
+    interval: bool = False
+    historical: bool = False
+
+    def has_recommendation(self) -> bool:
+        return self.format == "recommendation"
+
+
 def normalize_iceberg_count_like_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Normalize count-like columns to integer-compatible pandas dtypes.
 
@@ -1102,6 +1120,37 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
             f = getattr(field_class, p, None)
             if f:
                 fields.append(f)
+
+        # Fallback: synthesize timed fields from base names if timed enums are missing.
+        # This is primarily used for futures/index endpoints.
+        base_map = {
+            f"RECOMMEND_ALL_{tf}": "RECOMMEND_ALL",
+            f"RECOMMEND_MA_{tf}": "RECOMMEND_MA",
+            f"RECOMMEND_OTHER_{tf}": "RECOMMEND_OTHER",
+            f"ROC_{tf}": "ROC",
+        }
+        for timed_attr, base_attr in base_map.items():
+            if getattr(field_class, timed_attr, None) is not None:
+                continue
+            base = getattr(field_class, base_attr, None)
+            if base is None:
+                continue
+            base_field_name = getattr(base, "field_name", None)
+            base_label = getattr(base, "label", None)
+            if not base_field_name or not base_label:
+                continue
+            if "|" in str(base_field_name):
+                continue
+
+            fields.append(
+                SyntheticField(
+                    label=f"{base_label}|{tf}",
+                    field_name=f"{base_field_name}|{tf}",
+                    format=getattr(base, "format", None),
+                    interval=getattr(base, "interval", False),
+                    historical=getattr(base, "historical", False),
+                )
+            )
 
         return fields
 
