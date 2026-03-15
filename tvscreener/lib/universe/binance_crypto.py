@@ -222,7 +222,13 @@ def filter_and_rank_candidates(
     exclude_bases = {b.strip().upper() for b in constraints.exclude_bases}
     out = out.loc[~out["base"].astype(str).str.upper().isin(exclude_bases)].copy()
 
-    out = out.loc[out["quote_volume_usd"] >= float(constraints.min_quote_volume_usd)].copy()
+    # Liquidity floor is a tradeable-universe concern. For top-by-volume snapshot universes
+    # (`*_top100`) we treat `min_quote_volume_usd` as a soft hint: filter when possible, but
+    # if it underfills `top_n` we fall back to ranking without the floor.
+    out_all = out
+    min_volume_floor = float(constraints.min_quote_volume_usd)
+    if min_volume_floor > 0:
+        out = out.loc[out["quote_volume_usd"] >= min_volume_floor].copy()
 
     # Dedup: pick one ticker per base, prefer the first quote asset.
     quote_preference = {q: i for i, q in enumerate(quote_assets)}
@@ -232,6 +238,17 @@ def filter_and_rank_candidates(
         ascending=[True, False],
     )  # type: ignore[call-arg]
     out = out.drop_duplicates(subset=["base"], keep="first").copy()
+
+    if min_volume_floor > 0 and len(out) < int(constraints.top_n):
+        out = out_all.copy()
+        out["_quote_pref"] = (
+            out["quote_asset"].astype(str).map(lambda q: quote_preference.get(q, 999))
+        )
+        out = out.sort_values(
+            ["_quote_pref", "quote_volume_usd"],
+            ascending=[True, False],
+        )  # type: ignore[call-arg]
+        out = out.drop_duplicates(subset=["base"], keep="first").copy()
 
     # Final ranking: highest USD quote volume.
     out = out.sort_values(["quote_volume_usd"], ascending=[False])  # type: ignore[call-arg]

@@ -73,6 +73,8 @@ Guideline: keep base universes raw and do ranking/thresholding in DuckDB analyti
 
 For `binance_{spot,perp}_top100`, restrict quotes to `USDT`/`USDC` so the universe is USD-quote-aligned.
 
+Note: `min_quote_volume_usd` is treated as a soft hint for the top-by-volume snapshot universes; if it would underfill the requested `top_n`, selection falls back to ranking without the floor so `*_top100` stays exactly 100.
+
 ### Audit tooling
 
 Use the built-in audit command to generate a structured report of universe health:

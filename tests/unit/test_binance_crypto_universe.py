@@ -40,6 +40,38 @@ def test_filter_and_rank_candidates_applies_thresholds_and_sorts():
     assert out["instrument_type"].tolist() == ["spot"]
 
 
+def test_filter_and_rank_candidates_fills_top_n_when_floor_underfills():
+    # Build enough unique bases to satisfy top_n even if a liquidity floor is too strict.
+    rows = []
+    for i in range(150):
+        base = f"COIN{i:03d}"
+        rows.append(
+            {
+                "Symbol": f"BINANCE:{base}USDT",
+                "Price": 1.0,
+                "High": 1.1,
+                "Low": 0.9,
+                "Volatility": 10.0,
+                "Volume 24h in USD": float(10_000_000 - i * 10_000),
+            }
+        )
+    df = pd.DataFrame(rows)
+
+    out = filter_and_rank_candidates(
+        df,
+        constraints=BinanceCryptoUniverseConstraints(
+            instrument_type="spot",
+            top_n=100,
+            quote_assets=("USDT",),
+            # This floor would underfill if treated as a hard filter.
+            min_quote_volume_usd=9_900_000,
+        ),
+    )
+
+    assert len(out) == 100
+    assert out["Symbol"].str.endswith("USDT").all()
+
+
 def test_compute_volatility_falls_back_to_proxy_when_native_missing():
     df = pd.DataFrame(
         {
