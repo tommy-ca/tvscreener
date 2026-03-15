@@ -184,6 +184,8 @@ def main() -> int:
                 "majors",
                 "minors",
                 "all",
+                "market_risk",
+                "risk",
                 "binance_spot_base",
                 "binance_perp_base",
                 "binance_spot_largecap",

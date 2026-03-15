@@ -22,6 +22,10 @@ from tvscreener.constants.forex import (
     FOREX_MAJORS,
     FOREX_MINORS,
 )
+from tvscreener.constants.market_risk import (
+    MARKET_RISK_FUTURES_TICKERS,
+    MARKET_RISK_PROXY_TICKERS,
+)
 from tvscreener.constants.stocks import STOCK_UNIVERSE
 from tvscreener.core.enums import Direction
 from tvscreener.filter import AtrFilter, RocFilter, ScoreFilter, VolumeFilter
@@ -218,6 +222,12 @@ class ScreenerController:
                 return DEFAULT_FOREX_PAIRS
             # Unknown forex selector: fall back to default
             return DEFAULT_FOREX_PAIRS
+
+        if universe in {"market_risk", "risk"}:
+            if asset_type == "stock":
+                return list(MARKET_RISK_PROXY_TICKERS)
+            if asset_type == "futures":
+                return list(MARKET_RISK_FUTURES_TICKERS)
 
         # Non-forex: use configured universe pairs
         if asset_type == "crypto" and universe in {"binance_spot_top100", "binance_perp_top100"}:
