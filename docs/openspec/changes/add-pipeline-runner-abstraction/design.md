@@ -144,3 +144,9 @@ Compatibility rules:
 - CLI defaults: `--runner prefect`, `--pipeline both`
 - `--runner local` remains supported as an explicit fallback for debugging/offline runs.
 - Existing API surfaces remain; the runner abstraction is additive.
+
+### Future workflow engines
+
+The `PipelineRunSpec` abstraction is intentionally workflow-engine-agnostic. Alternative engines can be evaluated and integrated as additional runners without changing the scan core.
+
+See `docs/openspec/changes/evaluate-workflow-engine-options/design.md`.

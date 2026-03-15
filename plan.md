@@ -420,6 +420,13 @@ If you need to reset local Prefect state too:
 scripts/clean-workspace.sh --prefect
 ```
 
+## Workflow engine options (research)
+
+Candidates to evaluate as Prefect alternatives:
+- Dagu: file-based single-binary YAML DAG runner (GPL-3.0)
+- Hatchet: Postgres-backed durable queue + workflows (MIT)
+- Windmill: Postgres-backed platform for scripts/workflows/UIs (AGPL + additional CE terms)
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
