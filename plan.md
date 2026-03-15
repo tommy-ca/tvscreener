@@ -467,6 +467,9 @@ Data-vs-matrix validation note:
 - Futures basket currently returns null `Recommend.*|{tf}` and `Roc|{tf}` values, so the matrix is correctly all-neutral (`0/12`, `F`).
 - Use stock proxies (e.g. `SPY`, `QQQ`, `TVC:VIX`, `TVC:DXY`) if the overlay must be matrix-informative.
 
+Latest market-risk proxy basket matrix (stock):
+- `artifacts/runs/24124097f596691e0f78e9c7b9e3871d2d16bfef3d522308b7ac457de011e0a6/matrix.txt` (SPY/QQQ/VIX/DXY)
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`

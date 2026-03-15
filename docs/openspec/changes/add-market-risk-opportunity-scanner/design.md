@@ -39,6 +39,9 @@ Recommended proxy mapping (matrix-friendly):
 - VIX: `TVC:VIX` (stock)
 - DXY: `TVC:DXY` (stock)
 
+Validated run artifacts (Prefect):
+- `artifacts/runs/24124097f596691e0f78e9c7b9e3871d2d16bfef3d522308b7ac457de011e0a6/matrix.txt`
+
 ### Strategy fit (how to interpret results)
 
 This output is best used to **adjust risk and bias** for other scanners:
