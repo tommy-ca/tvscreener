@@ -455,6 +455,10 @@ uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type stock
   --timeframes 240,60,15 --pipeline analytics --matrix --limit 10
 ```
 
+Latest market-risk matrices:
+- `artifacts/runs/73ae50e4e6c8a3fd1cb2e8121e42d3de7b9533d967442b80611a0239f785c3cc/matrix.txt` (futures: ES/NQ/VX)
+- `artifacts/runs/5b87112bee57b85102dce487d4ff8473d7e2206d7875d5dafa3499276c499165/matrix.txt` (stock: DXY)
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
