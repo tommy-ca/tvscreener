@@ -25,3 +25,11 @@ The system SHALL define a deterministic market risk basket and persist the resol
 - **GIVEN** the market risk overlay is configured
 - **WHEN** the overlay is executed
 - **THEN** the resolved tickers include `CME_MINI:ES1!`, `CME_MINI:NQ1!`, `CBOE:VX1!`, and `TVC:DXY`
+
+### Requirement: Market risk overlay produces non-null factors
+The system SHOULD select risk proxy symbols that populate `TREND/MA/OSC/ROC` factor inputs across timeframes.
+
+#### Scenario: Proxies yield non-null factor columns
+- **GIVEN** the market risk overlay uses proxy symbols
+- **WHEN** the operator runs `--pipeline analytics --matrix`
+- **THEN** the underlying factor columns for each instrument include non-null values for `TREND_{tf}`, `MA_{tf}`, `OSC_{tf}`, and `ROC_{tf}`

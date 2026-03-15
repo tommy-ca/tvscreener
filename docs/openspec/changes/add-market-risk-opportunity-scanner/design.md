@@ -24,6 +24,21 @@ Notes:
 - Prefer continuous futures (e.g., `ES1!`) for stable history.
 - `CBOE:VX1!` is the VIX futures continuous symbol on the futures endpoint.
 
+### Validation findings (data vs matrix)
+
+Observed with `CME_MINI:ES1!`, `CME_MINI:NQ1!`, `CBOE:VX1!` on the futures endpoint:
+- Timed opportunity factors (`Recommend.*|{tf}`, `Roc|{tf}`) are returned as null/NA.
+- This yields an all-neutral matrix (`⚪|⚪|⚪`, `0/12`, `Grade=F`) even though the tickers ingest successfully.
+
+Implication:
+- For a meaningful matrix-based overlay, prefer **risk proxies that populate the opportunity factor columns**.
+
+Recommended proxy mapping (matrix-friendly):
+- NQ proxy: `NASDAQ:QQQ` (stock)
+- ES proxy: `AMEX:SPY` (stock)
+- VIX: `TVC:VIX` (stock)
+- DXY: `TVC:DXY` (stock)
+
 ### Strategy fit (how to interpret results)
 
 This output is best used to **adjust risk and bias** for other scanners:

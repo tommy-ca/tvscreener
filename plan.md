@@ -463,6 +463,10 @@ Latest market-risk matrix review:
 - Futures basket renders 3 rows (ES1!/NQ1!/VX1!) with no `|…` truncation.
 - DXY renders 1 row with full factor cells (e.g. `🟢|🟢|🟢`).
 
+Data-vs-matrix validation note:
+- Futures basket currently returns null `Recommend.*|{tf}` and `Roc|{tf}` values, so the matrix is correctly all-neutral (`0/12`, `F`).
+- Use stock proxies (e.g. `SPY`, `QQQ`, `TVC:VIX`, `TVC:DXY`) if the overlay must be matrix-informative.
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
