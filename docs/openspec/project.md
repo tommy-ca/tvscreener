@@ -34,3 +34,6 @@ to support replayable pipelines, auditable signals, and fast edge analytics.
 - Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).
 - Local runner state lives under `.prefect-home/` (gitignored); delete it to reset local Prefect state.
 - Common safe cleanup (gitignored): `rm -rf __pycache__ .pytest_cache .ruff_cache build *.egg-info .prefect-home.bak-*`
+
+Recommended:
+- Use `scripts/clean-workspace.sh` for repeatable cleanup.

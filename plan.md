@@ -408,6 +408,18 @@ Latest full rerun matrices (Prefect, analytics):
 Matrix render note:
 - Ensure factor cells never truncate into `|…` (e.g. `🟢|🟢|🟢` must render fully for MA/ROC too).
 
+## Cleanup workflow
+
+Safe default cleanup (caches only):
+```bash
+scripts/clean-workspace.sh
+```
+
+If you need to reset local Prefect state too:
+```bash
+scripts/clean-workspace.sh --prefect
+```
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
