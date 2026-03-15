@@ -44,6 +44,7 @@ Named universe:
 
 Validated run artifacts (Prefect):
 - `artifacts/runs/24124097f596691e0f78e9c7b9e3871d2d16bfef3d522308b7ac457de011e0a6/matrix.txt`
+- `artifacts/runs/e6838f43888957085bd9576bd42d39aaeea2cba7df8e01c94b0e1425a2bf8b7f/matrix.txt` (via `--universe market_risk`)
 
 ### Strategy fit (how to interpret results)
 
