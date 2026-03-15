@@ -26,6 +26,11 @@ The system SHALL define a deterministic market risk basket and persist the resol
 - **WHEN** the overlay is executed
 - **THEN** the resolved tickers include `CME_MINI:ES1!`, `CME_MINI:NQ1!`, `CBOE:VX1!`, and `TVC:DXY`
 
+#### Scenario: Named universe resolves proxy basket
+- **GIVEN** `asset_type=stock` and `universe=market_risk`
+- **WHEN** the operator runs without passing `--pairs`
+- **THEN** the resolved tickers equal `AMEX:SPY`, `NASDAQ:QQQ`, `TVC:VIX`, and `TVC:DXY`
+
 ### Requirement: Market risk overlay produces non-null factors
 The system SHOULD select risk proxy symbols that populate `TREND/MA/OSC/ROC` factor inputs across timeframes.
 
