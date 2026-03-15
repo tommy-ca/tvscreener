@@ -42,3 +42,15 @@ Before analytics ranking and matrix rendering:
   - 10-day average volume as a tie-breaker
 
 This ensures majors/minors behave as stable, operator-friendly universes before any analytics-stage ranking/filtering.
+
+### Strategy fit and risk notes
+
+The forex opportunity scanner is best aligned with:
+- directional swing setups with multi-timeframe alignment
+- trend/momentum continuation (especially when 240/60 agree)
+
+Common risk drivers to account for outside the scanner:
+- economic event risk (CPI, NFP, FOMC)
+- regime shifts (risk-on/off)
+
+Recommended: pair forex opportunity outputs with a small macro risk overlay (e.g. NQ/ES/VIX/DXY) to modulate sizing and bias.

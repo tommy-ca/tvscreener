@@ -40,6 +40,18 @@ uv run tvscreener-scan --scanner opportunity --asset-type crypto --instrument-ty
 
 Note: strategy-specific volatility ranking/filtering is applied later in analytics; universes are liquidity + tradability focused.
 
+### Strategy fit and risk notes
+
+The crypto opportunity scanner is best aligned with:
+- directional swing setups with multi-timeframe alignment
+- momentum/trend continuation
+
+Key risks to account for outside the scanner:
+- funding / perp-specific microstructure
+- broad risk regime (equities volatility spillover)
+
+Recommended: pair crypto opportunity outputs with a macro risk overlay (e.g. NQ/ES/VIX/DXY) to modulate sizing and bias.
+
 ### Audit and readiness
 Use the DuckDB review pipeline:
 

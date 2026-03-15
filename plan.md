@@ -427,6 +427,34 @@ Candidates to evaluate as Prefect alternatives:
 - Hatchet: Postgres-backed durable queue + workflows (MIT)
 - Windmill: Postgres-backed platform for scripts/workflows/UIs (AGPL + additional CE terms)
 
+## Market risk overlay (planned)
+
+Goal: add a small macro/market-risk opportunity scan (NQ/ES/VIX/DXY) using the same `data` + `analytics --matrix` pipelines.
+
+Change package: `docs/openspec/changes/add-market-risk-opportunity-scanner/`
+
+Reality check (TradingView endpoints):
+- `CME_MINI:ES1!` and `CME_MINI:NQ1!` are available via `asset_type=futures`.
+- VIX futures continuous is `CBOE:VX1!` on the futures endpoint (not `CBOE:VIX1!`).
+- `TVC:DXY` is available via `asset_type=stock`.
+
+Prefect validation commands:
+```bash
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type futures \
+  --pairs CME_MINI:ES1! CME_MINI:NQ1! CBOE:VX1! \
+  --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type futures \
+  --pairs CME_MINI:ES1! CME_MINI:NQ1! CBOE:VX1! \
+  --timeframes 240,60,15 --pipeline analytics --matrix --limit 10
+
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type stock \
+  --pairs TVC:DXY \
+  --timeframes 240,60,15 --pipeline data
+uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type stock \
+  --pairs TVC:DXY \
+  --timeframes 240,60,15 --pipeline analytics --matrix --limit 10
+```
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`
