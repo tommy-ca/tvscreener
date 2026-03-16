@@ -66,20 +66,21 @@ Latest validated matrices:
 
 Validated at (UTC):
 - Data freshness refreshed via Prefect worker; latest `pipeline_mode_executed='data'` start times:
-  - forex majors: 2026-03-16 12:18:00
-  - forex minors: 2026-03-16 12:19:05
-  - crypto majors spot: 2026-03-16 12:27:22
-  - crypto majors perp: 2026-03-16 12:28:33
-  - crypto minors spot: 2026-03-16 12:29:44
-  - crypto minors perp: 2026-03-16 12:30:58
-  - market risk: 2026-03-16 12:45:05
+  - forex majors: 2026-03-16 15:42:51
+  - forex minors: 2026-03-16 15:44:19
+  - crypto majors spot: 2026-03-16 15:43:35
+  - crypto majors perp: 2026-03-16 15:45:08
+  - crypto minors spot: 2026-03-16 15:46:28
+  - crypto minors perp: 2026-03-16 15:47:55
+  - market risk: 2026-03-16 15:41:59
 - Analytics matrices rerendered from Iceberg at:
-  - forex majors: 2026-03-16 12:53:55
-  - forex minors: 2026-03-16 12:53:58
-  - crypto majors spot: 2026-03-16 12:54:32
-  - crypto majors perp: 2026-03-16 12:54:35
-  - crypto minors spot: 2026-03-16 12:55:15
-  - market risk: 2026-03-16 12:55:51
+  - forex majors: 2026-03-16 15:50:44
+  - forex minors: 2026-03-16 15:50:42
+  - crypto majors spot: 2026-03-16 15:51:15
+  - crypto majors perp: 2026-03-16 15:51:17
+  - crypto minors spot: 2026-03-16 15:51:49
+  - crypto minors perp: 2026-03-16 15:51:47
+  - market risk: 2026-03-16 15:52:18
 
 Validation note:
 - Verified scheduled `data` runs were recent (within the last hour) before rerendering the analytics matrices.
@@ -129,6 +130,13 @@ uv run prefect worker start --pool tvscreener --type process --install-policy ne
 uv run prefect deployment run "tvscreener-batch/opportunity-forex-majors-minors-data" --watch
 uv run prefect deployment run "tvscreener-batch/opportunity-crypto-binance-majors-minors-data" --watch
 uv run prefect deployment run "tvscreener-batch/opportunity-market-risk-proxy-data" --watch
+```
+
+Fast path (no watch):
+```bash
+uv run prefect deployment run "tvscreener-batch/opportunity-forex-majors-minors-data"
+uv run prefect deployment run "tvscreener-batch/opportunity-crypto-binance-majors-minors-data"
+uv run prefect deployment run "tvscreener-batch/opportunity-market-risk-proxy-data"
 ```
 
 Runner-based scheduling (lightweight, recommended for single-machine):
