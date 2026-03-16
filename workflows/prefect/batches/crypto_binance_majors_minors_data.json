@@ -1,0 +1,32 @@
+{
+  "batch_id": "crypto-binance-majors-minors-data",
+  "defaults": {
+    "scanner_family": "opportunity",
+    "pipeline_mode": "data",
+    "asset_type": "crypto",
+    "timeframes": [
+      "240",
+      "60",
+      "15"
+    ],
+    "matrix": false
+  },
+  "runs": [
+    {
+      "instrument_type": "spot",
+      "universe": "majors"
+    },
+    {
+      "instrument_type": "perp",
+      "universe": "majors"
+    },
+    {
+      "instrument_type": "spot",
+      "universe": "minors"
+    },
+    {
+      "instrument_type": "perp",
+      "universe": "minors"
+    }
+  ]
+}
