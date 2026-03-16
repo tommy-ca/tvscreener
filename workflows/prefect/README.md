@@ -138,6 +138,28 @@ uv run --extra prefect python workflows/prefect/run_batch.py \
   --concurrency 12
 ```
 
+## Scheduled runs (cron)
+
+This repo includes a small helper to register cron-based scheduled runs for key opportunity universes.
+
+Batch specs:
+- `workflows/prefect/batches/forex_majors_minors_both.json`
+- `workflows/prefect/batches/crypto_binance_majors_minors_both.json`
+- `workflows/prefect/batches/market_risk_proxy_both.json`
+
+Register deployments (requires a work pool + worker):
+
+```bash
+export PREFECT_HOME="$PWD/.prefect-home"
+uv run prefect server start --host 127.0.0.1 --port 4200 --background
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+
+uv run prefect work-pool create --type process tvscreener
+uv run prefect worker start --pool tvscreener
+
+uv run python workflows/prefect/deploy_schedules.py --apply --work-pool tvscreener
+```
+
 #### Rerun semantics (what changes on disk vs in Iceberg)
 
 - **Data runs** (`pipeline_mode=data|both`) will update Iceberg tables for the selected universe/timeframe set.
