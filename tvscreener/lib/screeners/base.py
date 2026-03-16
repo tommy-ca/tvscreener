@@ -810,6 +810,15 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
                             overwrite_filter=latest_overwrite_filter,
                         )
             except Exception as e:
+                strict = str(os.getenv("TVSCREENER_STRICT_PERSIST") or "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                if strict:
+                    logger.error("Iceberg %s persistence failed: %s", stage.capitalize(), e)
+                    raise
                 logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
 
         return df

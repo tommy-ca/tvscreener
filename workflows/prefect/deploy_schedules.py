@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,7 +81,13 @@ def main() -> int:
     parser.add_argument(
         "--work-pool",
         default=DEFAULT_WORK_POOL,
-        help="Unused for runner deployments (kept for compatibility)",
+        help="Work pool name (used for worker deployments)",
+    )
+    parser.add_argument(
+        "--engine",
+        choices=["runner", "worker"],
+        default="runner",
+        help="Deployment engine: runner (no worker) or worker (work pool)",
     )
     parser.add_argument(
         "--paused",
@@ -106,7 +113,7 @@ def main() -> int:
     args = parser.parse_args()
 
     runner: Runner | None = None
-    if args.apply or args.start_runner:
+    if str(args.engine) == "runner" and (args.apply or args.start_runner):
         runner = Runner(name="tvscreener")
 
     for d in _deployments(mode=str(args.mode)):
@@ -130,20 +137,40 @@ def main() -> int:
             )
             continue
 
-        assert runner is not None
-        runner.add_flow(
-            flow=_RUN_BATCH_FLOW,
-            name=d.name,
-            schedules=[schedule],
-            paused=bool(args.paused),
-            parameters=params,
-            tags=["tvscreener", "batch", "opportunity"],
-            description=f"Scheduled batch: {d.batch_path}",
-        )
+        if str(args.engine) == "worker":
+            deployment = _RUN_BATCH_FLOW.to_deployment(
+                name=d.name,
+                schedules=[schedule],
+                paused=bool(args.paused),
+                parameters=params,
+                tags=["tvscreener", "batch", "opportunity"],
+                description=f"Scheduled batch: {d.batch_path}",
+                work_pool_name=str(args.work_pool),
+                job_variables={"working_dir": str(_repo_root())},
+            )
+            _deployment_id = deployment.apply()
+        else:
+            assert runner is not None
+            runner.add_flow(
+                flow=_RUN_BATCH_FLOW,
+                name=d.name,
+                schedules=[schedule],
+                paused=bool(args.paused),
+                parameters=params,
+                tags=["tvscreener", "batch", "opportunity"],
+                description=f"Scheduled batch: {d.batch_path}",
+            )
+
+    if str(args.engine) != "runner" and args.start_runner:
+        raise SystemExit("--start-runner is only supported with --engine runner")
 
     if args.start_runner:
         assert runner is not None
-        runner.start()
+
+        async def _start() -> None:
+            await runner.start()
+
+        asyncio.run(_start())
 
     return 0
 

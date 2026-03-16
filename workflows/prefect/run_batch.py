@@ -24,7 +24,9 @@ def _console_for_spec(spec: PipelineRunSpec):
 
     from rich.console import Console
 
-    return Console(record=True)
+    # Use a generous width so saved `matrix.txt` artifacts don't truncate
+    # emoji grids into "…" on narrow default consoles.
+    return Console(record=True, width=140, force_terminal=True)
 
 
 def _repo_root() -> Path:
@@ -262,14 +264,34 @@ def run_data(spec: PipelineRunSpec) -> RunResult:
     if _RATE_LIMITER is not None:
         _RATE_LIMITER.wait()
 
+    run_dir = None
+    if _ARTIFACTS_BASE_DIR is not None:
+        run_dir = _ARTIFACTS_BASE_DIR / (data_spec.params_hash or data_spec.compute_params_hash())
+
     console = _console_for_spec(data_spec)
-    res = LocalRunner(console=console).run(data_spec)
+
+    prev_run_dir = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
+    if run_dir is not None:
+        os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
+    try:
+        res = LocalRunner(console=console).run(data_spec)
+    finally:
+        if prev_run_dir is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = prev_run_dir
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+
     if console is not None and _ARTIFACTS_BASE_DIR is not None:
         text = console.export_text()
         if text.strip():
-            run_dir = _ARTIFACTS_BASE_DIR / (
-                data_spec.params_hash or data_spec.compute_params_hash()
-            )
+            assert run_dir is not None
             _ensure_dir(run_dir)
             (run_dir / "matrix.txt").write_text(text, encoding="utf-8")
     return res
@@ -279,14 +301,29 @@ def run_data(spec: PipelineRunSpec) -> RunResult:
 def run_analytics(spec: PipelineRunSpec) -> RunResult:
     analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
 
+    run_dir = None
+    if _ARTIFACTS_BASE_DIR is not None:
+        run_dir = _ARTIFACTS_BASE_DIR / (
+            analytics_spec.params_hash or analytics_spec.compute_params_hash()
+        )
+
     console = _console_for_spec(analytics_spec)
-    res = LocalRunner(console=console).run(analytics_spec)
+
+    prev_run_dir = os.environ.get("TVSCREENER_RUN_DIR")
+    if run_dir is not None:
+        os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
+    try:
+        res = LocalRunner(console=console).run(analytics_spec)
+    finally:
+        if prev_run_dir is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = prev_run_dir
+
     if console is not None and _ARTIFACTS_BASE_DIR is not None:
         text = console.export_text()
         if text.strip():
-            run_dir = _ARTIFACTS_BASE_DIR / (
-                analytics_spec.params_hash or analytics_spec.compute_params_hash()
-            )
+            assert run_dir is not None
             _ensure_dir(run_dir)
             (run_dir / "matrix.txt").write_text(text, encoding="utf-8")
     return res

@@ -159,6 +159,17 @@ def test_ingest_persists_params_hash_and_code_version(
     assert persisted_df.iloc[0]["code_version"] == "git-abc123"
 
 
+def test_strict_persist_raises_on_iceberg_error(mock_catalog, mock_write_iceberg, monkeypatch):
+    monkeypatch.setenv("TVSCREENER_STRICT_PERSIST", "1")
+    mock_write_iceberg.side_effect = RuntimeError("boom")
+
+    config = ScreenerConfig()
+    screener = MockScreener(symbols=["TEST"], config=config)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        _ = screener._ingest()
+
+
 def test_fetch_all_data_retries_then_succeeds():
     config = ScreenerConfig(
         extra_options={

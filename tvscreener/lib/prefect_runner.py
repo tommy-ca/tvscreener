@@ -86,7 +86,9 @@ def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str 
     data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
     console = _console_for_spec(data_spec)
     previous = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
     os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
     try:
         res = LocalRunner(console=console).run(data_spec)
     finally:
@@ -94,6 +96,11 @@ def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str 
             os.environ.pop("TVSCREENER_RUN_DIR", None)
         else:
             os.environ["TVSCREENER_RUN_DIR"] = previous
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
     matrix_text = console.export_text() if console is not None else None
     return res, matrix_text
 

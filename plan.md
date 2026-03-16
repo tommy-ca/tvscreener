@@ -218,6 +218,35 @@ Defaults (tuned for parity):
 - spot min volume: `2_500_000`
 - perp min volume: `20_000_000`
 
+## 2026-03-16: Scheduled deployments validation (data-first)
+
+Goal: validate the Prefect scheduled deployments for:
+- forex majors/minors
+- Binance crypto spot/perp majors/minors
+- market risk proxy basket
+
+Workflow:
+1) Confirm scheduled `pipeline_mode=data` runs are fresh via `tvscreener.runs`.
+2) If stale, trigger the data batch deployments first.
+3) Rerender the matrix via `pipeline_mode=analytics` for each universe.
+
+Notes:
+- Data-only schedules do not update analytics artifacts (`matrix.txt`, `*_results.parquet`).
+- Scheduled runs should fail if Iceberg persistence fails (strict persist enabled for Prefect data tasks).
+
+Commands (analytics rerender, matrix view):
+```bash
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type forex --universe majors --timeframes 240,60,15 --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type forex --universe minors --timeframes 240,60,15 --matrix --limit 50
+
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --matrix --limit 50
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --matrix --limit 50
+
+uv run tvscreener-scan --runner prefect --scanner opportunity --pipeline analytics --asset-type stock --universe market_risk --timeframes 240,60,15 --matrix --limit 50
+```
+
 Base-universe recommendation:
 - Use `binance_{spot,perp}_tradeable_base` as the default **base universe** for strategy research (tradeable-first).
 - Keep `binance_{spot,perp}_mcap_top100` as a reference universe for market-cap coverage audits.
