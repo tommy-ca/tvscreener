@@ -66,21 +66,21 @@ Latest validated matrices:
 
 Validated at (UTC):
 - Data freshness refreshed via Prefect worker; latest `pipeline_mode_executed='data'` start times:
-  - forex majors: 2026-03-16 15:42:51
-  - forex minors: 2026-03-16 15:44:19
-  - crypto majors spot: 2026-03-16 15:43:35
-  - crypto majors perp: 2026-03-16 15:45:08
-  - crypto minors spot: 2026-03-16 15:46:28
-  - crypto minors perp: 2026-03-16 15:47:55
-  - market risk: 2026-03-16 15:41:59
+  - forex majors: 2026-03-16 18:55:35
+  - forex minors: 2026-03-16 18:57:02
+  - crypto majors spot: 2026-03-16 18:58:49
+  - crypto majors perp: 2026-03-16 19:00:17
+  - crypto minors spot: 2026-03-16 19:01:45
+  - crypto minors perp: 2026-03-16 19:03:17
+  - market risk: 2026-03-16 19:06:30
 - Analytics matrices rerendered from Iceberg at:
-  - forex majors: 2026-03-16 15:50:44
-  - forex minors: 2026-03-16 15:50:42
-  - crypto majors spot: 2026-03-16 15:51:15
-  - crypto majors perp: 2026-03-16 15:51:17
-  - crypto minors spot: 2026-03-16 15:51:49
-  - crypto minors perp: 2026-03-16 15:51:47
-  - market risk: 2026-03-16 15:52:18
+  - forex majors: 2026-03-16 19:07:25
+  - forex minors: 2026-03-16 19:10:53
+  - crypto majors spot: 2026-03-16 19:08:00
+  - crypto majors perp: 2026-03-16 19:08:02
+  - crypto minors spot: 2026-03-16 19:08:34
+  - crypto minors perp: 2026-03-16 19:08:36
+  - market risk: 2026-03-16 19:09:07
 
 Validation note:
 - Verified scheduled `data` runs were recent (within the last hour) before rerendering the analytics matrices.
