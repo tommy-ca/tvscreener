@@ -21,6 +21,10 @@ uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex
 uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline analytics --matrix
 uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe minors --timeframes 240,60,15 --pipeline analytics --matrix
 ```
+
+Validated artifacts:
+- `artifacts/runs/5411af003b204811aae87b4e901142019fd714d3146a7ae7c06b860b9497f4d8/matrix.txt` (majors)
+- `artifacts/runs/31dcff1740e7b70bc2e1c6cc58be5dba08cdeaff8183602987f0a2f7a7bd66c5/matrix.txt` (minors)
 - `--asset-type forex --universe all` (or unset) returns `DEFAULT_FOREX_PAIRS`.
 
 ### Pre-analytics filtering
