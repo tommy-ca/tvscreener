@@ -505,6 +505,9 @@ Validated on-demand analytics rerenders (matrix):
 - `artifacts/runs/6b1f70993b3d2628e7f67014a74e41b1d6073ebc1c038fd18153e89bee97d5ed/matrix.txt` (crypto perp minors)
 - `artifacts/runs/e6838f43888957085bd9576bd42d39aaeea2cba7df8e01c94b0e1425a2bf8b7f/matrix.txt` (market risk)
 
+Data freshness check:
+- Confirm `pipeline_mode_executed=data` runs are recent before rerendering analytics.
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`

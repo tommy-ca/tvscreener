@@ -42,6 +42,9 @@ Latest validated matrices:
 - `artifacts/runs/6b1f70993b3d2628e7f67014a74e41b1d6073ebc1c038fd18153e89bee97d5ed/matrix.txt` (crypto perp minors)
 - `artifacts/runs/e6838f43888957085bd9576bd42d39aaeea2cba7df8e01c94b0e1425a2bf8b7f/matrix.txt` (market risk)
 
+Validation note:
+- Verified scheduled `data` runs were recent (within the last hour) before rerendering the analytics matrices.
+
 Batch specs:
 - `workflows/prefect/batches/forex_majors_minors_both.json` (existing)
 - `workflows/prefect/batches/forex_majors_minors_data.json`
