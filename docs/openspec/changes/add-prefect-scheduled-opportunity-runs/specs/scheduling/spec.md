@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Scheduled runs cover key universes
-The system SHOULD support scheduled execution of opportunity scanners for:
+The system SHOULD support scheduled execution of opportunity data pipelines for:
 - forex majors/minors
 - Binance crypto spot/perp majors/minors
 - market risk proxy basket

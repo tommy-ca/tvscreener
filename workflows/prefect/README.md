@@ -144,8 +144,11 @@ This repo includes a small helper to register cron-based scheduled runs for key 
 
 Batch specs:
 - `workflows/prefect/batches/forex_majors_minors_both.json`
+- `workflows/prefect/batches/forex_majors_minors_data.json`
 - `workflows/prefect/batches/crypto_binance_majors_minors_both.json`
+- `workflows/prefect/batches/crypto_binance_majors_minors_data.json`
 - `workflows/prefect/batches/market_risk_proxy_both.json`
+- `workflows/prefect/batches/market_risk_proxy_data.json`
 
 Register deployments (requires a work pool + worker):
 
@@ -158,6 +161,23 @@ uv run prefect work-pool create --type process tvscreener
 uv run prefect worker start --pool tvscreener
 
 uv run python workflows/prefect/deploy_schedules.py --apply --work-pool tvscreener
+```
+
+Runner-based scheduling (lightweight, recommended for single-machine):
+
+```bash
+export PREFECT_HOME="$PWD/.prefect-home"
+uv run prefect server start --host 127.0.0.1 --port 4200 --background
+export PREFECT_API_URL="http://127.0.0.1:4200/api"
+
+uv run python workflows/prefect/deploy_schedules.py --apply
+uv run python workflows/prefect/deploy_schedules.py --start-runner
+```
+
+By default the deploy script schedules **data-only** pipelines. To chain analytics after data, use:
+
+```bash
+uv run python workflows/prefect/deploy_schedules.py --apply --mode both --work-pool tvscreener
 ```
 
 #### Rerun semantics (what changes on disk vs in Iceberg)
