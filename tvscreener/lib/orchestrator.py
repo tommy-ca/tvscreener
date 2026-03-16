@@ -1240,7 +1240,7 @@ class ScreenerController:
 
     def _fetch_data_with_progress(self, fetch_func: Any) -> Any:
         """Helper to run a fetch function with rich progress bar if console is available."""
-        if self.console:
+        if self.console and not getattr(self.console, "record", False):
             from rich.progress import Progress, SpinnerColumn, TextColumn
 
             with Progress(
@@ -1250,8 +1250,9 @@ class ScreenerController:
             ) as progress:
                 progress.add_task("Fetching data...", total=None)
                 return fetch_func()
-        else:
-            return fetch_func()
+
+        # Avoid noisy spinner frames in recorded consoles (e.g. Prefect runner logs/artifacts).
+        return fetch_func()
 
     def _ensure_parent_exists(self, path: Path) -> None:
         """Ensure the parent directory of a path exists."""
