@@ -19,6 +19,9 @@ Runner notes:
 - Default runner is Prefect (`--runner prefect`), backed by a Prefect server (`PREFECT_API_URL`).
 - `--runner local` is an explicit fallback; it executes via the `PipelineRunSpec` contract and persists `tvscreener.runs` metadata.
 
+Logging notes:
+- When running with Prefect (recorded console), progress spinners are disabled to avoid noisy `Fetching data...` frame spam in logs.
+
 ### Source of truth for analytics
 - Opportunity matrix view reads from: `tvscreener.signals_latest`
 - Strategy matrix view reads from: `tvscreener.signals_latest`, then computes strategy signals in-memory.
