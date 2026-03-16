@@ -486,6 +486,10 @@ Goal: schedule periodic opportunity batch runs for:
 
 Deploy helper: `workflows/prefect/deploy_schedules.py`
 
+Validated scheduled deployment (data-only):
+- `tvscreener-batch/opportunity-forex-majors-minors-data`
+- Artifacts: `artifacts/runs/batch/forex-majors-minors-data/batch_result.json`
+
 Iceberg validation queries:
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT asset_type, count(*) AS n FROM df GROUP BY 1"`
 - `uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT venue, count(*) AS n FROM df WHERE asset_type='crypto' GROUP BY 1"`

@@ -68,3 +68,20 @@ uv run python workflows/prefect/deploy_schedules.py --apply --paused --work-pool
 
 - Schedules are UTC by default.
 - Data runs are rate-limited per worker (`min_interval_seconds` + jitter) and serialized (`data_concurrency=1`) to protect upstream.
+
+### Validation (forex majors/minors data-only)
+
+Trigger the deployment once:
+```bash
+uv run prefect deployment run "tvscreener-batch/opportunity-forex-majors-minors-data"
+```
+
+Expected artifacts:
+- `artifacts/runs/batch/forex-majors-minors-data/batch_result.json`
+- `artifacts/runs/<params_hash>/run_spec.json`
+- `artifacts/runs/<params_hash>/run_result.json`
+
+Expected lakehouse metadata:
+```bash
+uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe, pipeline_mode_executed, success, result_count, started_at_utc FROM df WHERE asset_type='forex' ORDER BY started_at_utc DESC LIMIT 6"
+```

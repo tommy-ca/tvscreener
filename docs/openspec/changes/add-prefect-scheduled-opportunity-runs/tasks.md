@@ -3,3 +3,4 @@
 - [x] Add batch specs for crypto majors/minors and market risk proxy
 - [x] Add a deployment helper to register cron schedules
 - [x] Document how to start server + worker and apply schedules
+- [x] Validate forex majors/minors data-only deployment produces run artifacts and tvscreener.runs rows
