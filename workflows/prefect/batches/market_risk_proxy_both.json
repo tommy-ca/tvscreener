@@ -1,0 +1,19 @@
+{
+  "batch_id": "market-risk-proxy",
+  "defaults": {
+    "scanner_family": "opportunity",
+    "pipeline_mode": "both",
+    "asset_type": "stock",
+    "universe": "market_risk",
+    "timeframes": [
+      "240",
+      "60",
+      "15"
+    ],
+    "matrix": true,
+    "limit": 10
+  },
+  "runs": [
+    {}
+  ]
+}
