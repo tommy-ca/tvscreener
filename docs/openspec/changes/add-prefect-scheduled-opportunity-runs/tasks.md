@@ -4,3 +4,5 @@
 - [x] Add a deployment helper to register cron schedules
 - [x] Document how to start server + worker and apply schedules
 - [x] Validate forex majors/minors data-only deployment produces run artifacts and tvscreener.runs rows
+- [x] Validate Binance crypto majors/minors data-only deployment produces run artifacts and tvscreener.runs rows
+- [x] Validate market risk proxy data-only deployment produces run artifacts and tvscreener.runs rows

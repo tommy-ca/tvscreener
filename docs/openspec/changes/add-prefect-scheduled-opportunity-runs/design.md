@@ -85,3 +85,33 @@ Expected lakehouse metadata:
 ```bash
 uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe, pipeline_mode_executed, success, result_count, started_at_utc FROM df WHERE asset_type='forex' ORDER BY started_at_utc DESC LIMIT 6"
 ```
+
+### Validation (crypto Binance majors/minors data-only)
+
+Trigger the deployment once:
+```bash
+uv run prefect deployment run "tvscreener-batch/opportunity-crypto-binance-majors-minors-data"
+```
+
+Batch artifact:
+- `artifacts/runs/batch/crypto-binance-majors-minors-data/batch_result.json`
+
+Expected lakehouse metadata:
+```bash
+uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe, instrument_type, pipeline_mode_executed, success, result_count, started_at_utc FROM df WHERE asset_type='crypto' ORDER BY started_at_utc DESC LIMIT 8"
+```
+
+### Validation (market risk proxy data-only)
+
+Trigger the deployment once:
+```bash
+uv run prefect deployment run "tvscreener-batch/opportunity-market-risk-proxy-data"
+```
+
+Batch artifact:
+- `artifacts/runs/batch/market-risk-proxy-data/batch_result.json`
+
+Expected lakehouse metadata:
+```bash
+uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe, pipeline_mode_executed, success, result_count, started_at_utc FROM df WHERE asset_type='stock' ORDER BY started_at_utc DESC LIMIT 8"
+```
