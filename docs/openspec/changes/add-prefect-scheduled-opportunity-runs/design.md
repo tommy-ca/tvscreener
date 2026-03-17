@@ -16,6 +16,8 @@ Scheduled data runs enable strict persistence so Iceberg write failures fail the
 
 This is implemented by setting `TVSCREENER_STRICT_PERSIST=1` for Prefect batch and single-run data tasks.
 
+Strict persistence also applies to appending the audit row in `tvscreener.runs`.
+
 ### Analytics validation (post scheduled data)
 
 After a scheduled data run completes, validate by rerendering the matrix from Iceberg:
@@ -43,9 +45,17 @@ Freshness note:
 - Data-only schedules (`pipeline_mode=data`) will not update analytics artifacts (`opportunity_results.parquet`, `matrix.txt`).
 - Before rerendering, verify the most recent successful `pipeline_mode_executed='data'` run is recent for the target universe.
 
+Write semantics note:
+- Analytics runs are read-only with respect to the medallion/product tables used for signals (e.g. `signals_latest`).
+- Analytics runs still append audit metadata to `tvscreener.runs`.
+
 Recommended operator policy:
 - Treat data as "fresh" when the latest successful `pipeline_mode_executed='data'` run is within the last 60 minutes.
 - If stale, trigger the `*-data` deployments via a Prefect worker, then rerender analytics.
+
+Concurrency note:
+- Iceberg writes use optimistic concurrency; concurrent runs can conflict ("branch main has changed").
+- Prefer serial execution for writers: Prefect worker `--limit 1` and batch `data_concurrency=1`.
 
 Example audit queries:
 ```bash
@@ -55,35 +65,51 @@ uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe,
 uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT entity_id, strftime(fetched_at_utc,'%Y-%m-%d %H:%M:%S') AS fetched_at_utc, params_hash FROM df WHERE entity_id IN ('BINANCE:BTCUSDT','BINANCE:ETHUSDT') ORDER BY fetched_at_utc DESC LIMIT 10"
 ```
 
+Artifact contract:
+- Per run (`artifacts/runs/<params_hash>/`):
+  - `run_spec.json` (always)
+  - `run_result.json` (always)
+  - `matrix.txt` (when `--matrix` is enabled)
+  - `<scanner_family>_results.parquet` (analytics/both; when output is not explicitly configured)
+  - `universe.json` (best-effort; when universe resolution writes a snapshot and `TVSCREENER_RUN_DIR` is set)
+- Per batch (`artifacts/runs/batch/<batch_id>/`):
+  - `batch_meta.json`
+  - `batch_result.json`
+
+`params_hash` note:
+- `params_hash` is derived from a normalized `PipelineRunSpec`.
+- Ordering of list fields matters (e.g. `timeframes`); keep `timeframes` in a stable order (recommended: `15,60,240`) to keep `params_hash` stable across reruns.
+
 Latest validated matrices:
-- `artifacts/runs/70696cd35fb6f9f781e621a79fe0df995e70adb6925ed81052ba9aaad8fcc890/matrix.txt` (forex majors)
-- `artifacts/runs/2ed6f942ae981b9c26606953e7a5a679efc1ed5526bbae63953cebc35517393f/matrix.txt` (forex minors)
-- `artifacts/runs/b966754797cb6428bfe242b903c82119bcd923224be60299f8c3c8c6883d1e8e/matrix.txt` (crypto spot majors)
-- `artifacts/runs/02cdbd5ea6d54772f41e63878f3ece1df983038d485d12daf1d44212a99d984b/matrix.txt` (crypto perp majors)
-- `artifacts/runs/3f18bd080d54f2118eeee02be0f79f9eab605cfe95d8977de244d7051a577388/matrix.txt` (crypto spot minors)
-- `artifacts/runs/6b1f70993b3d2628e7f67014a74e41b1d6073ebc1c038fd18153e89bee97d5ed/matrix.txt` (crypto perp minors)
-- `artifacts/runs/504ad7c6595b6e54d95243e9919d623e0bc7503acb42151fa5eab432c28dbaf1/matrix.txt` (market risk)
+- `artifacts/runs/e4d3e44e6fa50fb549ccb3645a5c76cf25f8915de48e79f9f3b3d6816c482422/matrix.txt` (forex majors)
+- `artifacts/runs/fb64d6d11b583d906aab257e02052d15fdd909547547d905386dfcc216e09c1a/matrix.txt` (forex minors)
+- `artifacts/runs/5d39896c7b206a5732d787e4ac613b4facb7ded55922302ae30e7f0a701d1e13/matrix.txt` (crypto spot majors)
+- `artifacts/runs/534a87f6f0598cc24fe08667623ec8ba12b05ce8043df9bc1a2a69abeb3df0e0/matrix.txt` (crypto perp majors)
+- `artifacts/runs/7a0d1f3ea396d92df61dca07def1079bf09c56981b80be698168383953036a57/matrix.txt` (crypto spot minors)
+- `artifacts/runs/29b3377f46f41db36d308398229075cce176b49b45b8f7bff5c9ad7deabb20ee/matrix.txt` (crypto perp minors)
+- `artifacts/runs/ad9fe17e402518d372066373b2f451b39cefd6c74c4c509b09e3027c1ca163a3/matrix.txt` (market risk)
 
 Validated at (UTC):
-- Data freshness refreshed via Prefect worker; latest `pipeline_mode_executed='data'` start times:
-  - forex majors: 2026-03-16 18:55:35
-  - forex minors: 2026-03-16 18:57:02
-  - crypto majors spot: 2026-03-16 18:58:49
-  - crypto majors perp: 2026-03-16 19:00:17
-  - crypto minors spot: 2026-03-16 19:01:45
-  - crypto minors perp: 2026-03-16 19:03:17
-  - market risk: 2026-03-16 19:06:30
+- Data freshness validated via `tvscreener.runs`; latest `pipeline_mode_executed='data'` start times:
+  - forex majors: 2026-03-17 17:15:03
+  - forex minors: 2026-03-17 17:16:36
+  - crypto majors spot: 2026-03-17 17:25:08
+  - crypto majors perp: 2026-03-17 17:26:42
+  - crypto minors spot: 2026-03-17 17:28:10
+  - crypto minors perp: 2026-03-17 17:29:49
+  - market risk: 2026-03-17 17:31:43
 - Analytics matrices rerendered from Iceberg at:
-  - forex majors: 2026-03-16 19:07:25
-  - forex minors: 2026-03-16 19:10:53
-  - crypto majors spot: 2026-03-16 19:08:00
-  - crypto majors perp: 2026-03-16 19:08:02
-  - crypto minors spot: 2026-03-16 19:08:34
-  - crypto minors perp: 2026-03-16 19:08:36
-  - market risk: 2026-03-16 19:09:07
+  - forex majors: 2026-03-17 17:43:29
+  - forex minors: 2026-03-17 17:43:48
+  - crypto majors spot: 2026-03-17 17:44:08
+  - crypto majors perp: 2026-03-17 17:44:28
+  - crypto minors spot: 2026-03-17 17:44:48
+  - crypto minors perp: 2026-03-17 17:45:10
+  - market risk: 2026-03-17 17:45:30
 
 Validation note:
 - Verified scheduled `data` runs were recent (within the last hour) before rerendering the analytics matrices.
+- Verified analytics rerenders wrote `matrix.txt` and appended `pipeline_mode_executed='analytics'` rows to `tvscreener.runs`.
 
 Batch specs:
 - `workflows/prefect/batches/forex_majors_minors_both.json` (existing)
@@ -115,6 +141,7 @@ uv run prefect worker start --pool tvscreener
 Worker note:
 - The `process` work pool uses a temp working directory by default.
 - These deployments set `job_variables.working_dir` to the repo root so file-path entrypoints like `workflows/prefect/run_batch.py:run_batch` can be imported.
+- Prefect `process` workers do not fetch/clone code; the repo must already exist at `job_variables.working_dir` on the worker host.
 
 4) Register deployments (cron schedules) for workers:
 ```bash
@@ -165,6 +192,15 @@ uv run python3 workflows/prefect/deploy_schedules.py --apply --paused --engine w
 
 - Schedules are UTC by default.
 - Data runs are rate-limited per worker (`min_interval_seconds` + jitter) and serialized (`data_concurrency=1`) to protect upstream.
+
+Prefect API startup note:
+- Immediately after `prefect server start`, the API may accept connections before it is ready; transient `503` can occur.
+- Gate apply/run actions on the readiness endpoint:
+  - `curl -sf http://127.0.0.1:4200/api/ready >/dev/null`
+
+Prefect CSRF note:
+- A `422` from `/api/csrf-token` indicates an invalid request shape (not necessarily an auth failure).
+- If local CSRF support is noisy, disable client CSRF support via `PREFECT_CLIENT_CSRF_SUPPORT_ENABLED=false` (or enable server-side CSRF protection and use the full token flow).
 
 ### Validation (forex majors/minors data-only)
 
