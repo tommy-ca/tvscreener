@@ -87,6 +87,9 @@ def _persist_run_record(spec: PipelineRunSpec, result: RunResult) -> None:
             partition_by=["asset_type", "ingest_date"],
         )
     except Exception as exc:
+        if (os.getenv("TVSCREENER_STRICT_PERSIST") or "").strip() == "1":
+            raise
+
         logger.debug("Run metadata persistence failed: %s", exc)
 
 

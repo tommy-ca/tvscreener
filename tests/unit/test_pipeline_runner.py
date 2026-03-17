@@ -70,3 +70,38 @@ def test_local_runner_persists_runs_metadata(monkeypatch):
     assert persisted_df.iloc[0]["code_version"] == spec.code_version
     assert persisted_df.iloc[0]["asset_type"] == "forex"
     assert bool(persisted_df.iloc[0]["success"]) is True
+
+
+def test_local_runner_strict_persist_raises_on_run_metadata_failure(monkeypatch):
+    from tvscreener.lib import pipeline_runner as pr
+
+    class DummyController:
+        def __init__(self, console=None):
+            self._console = console
+
+        def run_scan(self, _request):
+            return 1
+
+    def failing_write_iceberg(*_args, **_kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setenv("TVSCREENER_STRICT_PERSIST", "1")
+    monkeypatch.setattr(pr, "ScreenerController", DummyController)
+    monkeypatch.setattr(pr, "_utc_now", lambda: datetime(2026, 3, 7, 12, 0, tzinfo=UTC))
+    monkeypatch.setattr("tvscreener.lib.lakehouse.get_manager", lambda _config=None: object())
+    monkeypatch.setattr("tvscreener.lib.lakehouse.write_iceberg", failing_write_iceberg)
+
+    spec = pr.PipelineRunSpec(
+        scanner_family="opportunity",
+        pipeline_mode="data",
+        asset_type="forex",
+        universe="majors",
+        timeframes=["15", "60", "240"],
+    ).normalized()
+
+    try:
+        _ = pr.LocalRunner(console=None).run(spec)
+    except RuntimeError as exc:
+        assert str(exc) == "boom"
+    else:
+        raise AssertionError("Expected strict persistence to raise")
