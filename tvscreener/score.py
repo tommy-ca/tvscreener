@@ -105,7 +105,14 @@ class ScoringEngine:
         if copy:
             df = df.copy()
 
-        roc_cols = [f"Roc|{tf}" for tf in self.timeframes if f"Roc|{tf}" in df.columns]
+        roc_cols = []
+        for tf in self.timeframes:
+            canonical = f"ROC_{tf}"
+            raw = f"Roc|{tf}"
+            if canonical in df.columns:
+                roc_cols.append(canonical)
+            elif raw in df.columns:
+                roc_cols.append(raw)
         if roc_cols:
             df["ROC_SCORE"] = df[roc_cols].mean(axis=1)
         else:

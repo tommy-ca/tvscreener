@@ -53,6 +53,25 @@ class TestEnsembleScoring:
         assert "ENSEMBLE_SCORE" in result.columns
         assert "DIRECTION" in result.columns
 
+    def test_roc_score_uses_canonical_columns(self):
+        screener = ForexOpportunityScreener(
+            pairs=["EURUSD"],
+            timeframes=["15", "60", "240"],
+        )
+
+        mock_df = pd.DataFrame(
+            {
+                "Name": ["EURUSD"],
+                "Symbol": ["EURUSD:OANDA"],
+                "ROC_15": [1.0],
+                "ROC_60": [2.0],
+                "ROC_240": [3.0],
+            }
+        )
+
+        result = screener._engine.rank_opportunities(mock_df)
+        assert abs(result.iloc[0]["ROC_SCORE"] - 2.0) < 1e-9
+
     def test_ensemble_score_calculation(self):
         screener = ForexOpportunityScreener(
             pairs=["EURUSD"],
