@@ -45,6 +45,19 @@ Scheduled deployments SHOULD provide stable parameters for batch execution.
   - `rate_limit` (enabled; min interval + jitter)
   - `skip_existing` (default `False`)
 
+### Requirement: Analytics rerenders can be deployed
+The system SHOULD support creating Prefect deployments that rerender analytics matrices on a schedule.
+
+#### Scenario: Operator registers analytics-only deployments
+- **GIVEN** batch specs exist for `pipeline_mode=analytics`
+- **WHEN** deployments are registered for those batch specs
+- **THEN** Prefect can execute periodic analytics rerenders without upstream fetches
+
+#### Scenario: Scheduled matrix rerenders are not sharded
+- **GIVEN** an operator wants a complete matrix view per universe
+- **WHEN** they register analytics-only deployments
+- **THEN** the batch specs avoid pair sharding so a single run generates a complete matrix
+
 ### Requirement: Prefect server readiness is gated
 Operators SHOULD wait for the Prefect API to be ready before applying deployments or creating flow runs.
 
@@ -79,6 +92,36 @@ When rerendering analytics (e.g. with `--matrix`), the system SHOULD write a mat
 - **THEN** `artifacts/runs/<params_hash>/matrix.txt` is written
 - **AND** a `pipeline_mode_executed='analytics'` row is appended to `tvscreener.runs`
 
+### Requirement: Matrix views are visible in the Prefect UI
+When running under Prefect, matrix views SHOULD be published as Prefect Markdown artifacts for quick inspection.
+
+#### Scenario: Prefect run publishes a Markdown artifact
+- **GIVEN** a Prefect flow run executed with `--matrix`
+- **WHEN** matrix output is generated
+- **THEN** a Prefect Markdown artifact is created containing the matrix (in a fenced code block)
+
+### Requirement: Table reports can be published from Iceberg queries
+Operators SHOULD be able to publish small tabular reports (derived from DuckDB queries over Iceberg tables) into the Prefect UI.
+
+#### Scenario: Operator publishes a data freshness table
+- **GIVEN** an operator can query Iceberg tables via DuckDB
+- **WHEN** they create a Prefect Table artifact from the query result
+- **THEN** the Prefect UI shows the data freshness table alongside the flow run
+
+#### Scenario: Batch deployments publish a table summary
+- **GIVEN** a Prefect batch deployment runs multiple specs
+- **WHEN** the batch completes
+- **THEN** the flow publishes a Prefect Table artifact summarizing per-run results
+
+### Requirement: Analytics results tables are visible in the Prefect UI
+When running under Prefect, analytics result rows SHOULD be published as a Prefect Table artifact.
+
+#### Scenario: Prefect analytics run publishes a results table
+- **GIVEN** a Prefect flow run executed `pipeline_mode=analytics`
+- **WHEN** analytics writes a results parquet artifact
+- **THEN** a Prefect Table artifact is created from the top result rows
+- **AND** the table includes decision features when present (e.g. `PAIR`, `Price`, `RVOL`, `Volume`, `ENSEMBLE_SCORE`, `GRADE`, `DIRECTION`, `GRID_ALIGNED`, `GRID_TOTAL`, `CONFLUENCE_LEVEL`, `TOTAL_CONFLUENCE`, `TF_CONFLUENCE`, and factor scores/dirs)
+
 ### Requirement: Run metadata persistence can be strict
 When strict persistence is enabled, failing to append `tvscreener.runs` SHOULD fail the run.
 
@@ -100,6 +143,7 @@ The system SHOULD derive a deterministic `params_hash` from a normalized `Pipeli
 - **GIVEN** `PipelineRunSpec` includes list fields like `timeframes` and `pairs`
 - **WHEN** operators author batch specs
 - **THEN** they keep list ordering stable so the computed `params_hash` does not change due to reordering alone
+- **AND** they use a consistent `timeframes` order (recommended: `15,60,240`) across runs
 
 ### Requirement: Avoid concurrent writes to Iceberg
 Operators SHOULD avoid launching multiple runs that write to the same Iceberg tables concurrently.

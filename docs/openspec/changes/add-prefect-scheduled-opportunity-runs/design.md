@@ -24,21 +24,21 @@ After a scheduled data run completes, validate by rerendering the matrix from Ic
 
 ```bash
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe majors --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe majors --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe minors --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type forex --universe minors --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe majors --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe majors --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type spot --universe minors --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type crypto --instrument-type perp --universe minors --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
-  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type stock --universe market_risk --timeframes 240,60,15 --pipeline analytics --matrix
+  uv run tvscreener-scan --runner prefect --scanner opportunity --asset-type stock --universe market_risk --timeframes 15,60,240 --pipeline analytics --matrix --config tvscreener.yaml
 ```
 
 Freshness note:
@@ -76,36 +76,55 @@ Artifact contract:
   - `batch_meta.json`
   - `batch_result.json`
 
+Prefect UI artifacts:
+- When running under Prefect, matrix output is also published as a Prefect Markdown artifact (versioned by a stable key).
+- Key format (approx): `tvscreener-matrix-<scanner>-<asset_type>-<instrument_type?>-<universe?>-<timeframe_set_id?>`.
+- Key parts are sanitized (lowercase; non-`[a-z0-9-]` characters replaced with `-`).
+
+Prefect UI tables:
+- Analytics runs also publish a Prefect Table artifact with the top result rows.
+- Key format mirrors the matrix key with `results` instead of `matrix`.
+- The table is intended to explain the decision: price/liquidity context, grid + grade, and the component scores/dirs that drove the matrix.
+- Current columns (when present): `PAIR`, `Name`, `Price`, `RVOL`, `Volume`, `ENSEMBLE_SCORE`, `GRADE`, `DIRECTION`, `GRID_ALIGNED`, `GRID_TOTAL`, `CONFLUENCE_LEVEL`, `TOTAL_CONFLUENCE`, `TF_CONFLUENCE`, `TREND_SCORE`, `MA_SCORE`, `OSC_SCORE`, `ROC_SCORE`, `ROC_AVG`, `TREND_DIR`, `MA_DIR`, `OSC_DIR`, `ROC_DIR`, `RATING_SCORE`.
+
+DuckDB report artifacts (optional):
+- For quick ops dashboards, you can query Iceberg tables (DuckDB) and publish the result as a Prefect Table artifact.
+- Example: build a table from `tvscreener.runs` (data freshness and latest analytics rerenders) and publish it with `prefect.artifacts.create_table_artifact`.
+
+Prefect batch artifacts:
+- Prefect batch runs also publish a Table artifact summarizing the batch results.
+- Key format: `tvscreener-batch-<batch_id>`.
+
 `params_hash` note:
 - `params_hash` is derived from a normalized `PipelineRunSpec`.
 - Ordering of list fields matters (e.g. `timeframes`); keep `timeframes` in a stable order (recommended: `15,60,240`) to keep `params_hash` stable across reruns.
 
 Latest validated matrices:
-- `artifacts/runs/e4d3e44e6fa50fb549ccb3645a5c76cf25f8915de48e79f9f3b3d6816c482422/matrix.txt` (forex majors)
-- `artifacts/runs/fb64d6d11b583d906aab257e02052d15fdd909547547d905386dfcc216e09c1a/matrix.txt` (forex minors)
-- `artifacts/runs/5d39896c7b206a5732d787e4ac613b4facb7ded55922302ae30e7f0a701d1e13/matrix.txt` (crypto spot majors)
-- `artifacts/runs/534a87f6f0598cc24fe08667623ec8ba12b05ce8043df9bc1a2a69abeb3df0e0/matrix.txt` (crypto perp majors)
-- `artifacts/runs/7a0d1f3ea396d92df61dca07def1079bf09c56981b80be698168383953036a57/matrix.txt` (crypto spot minors)
-- `artifacts/runs/29b3377f46f41db36d308398229075cce176b49b45b8f7bff5c9ad7deabb20ee/matrix.txt` (crypto perp minors)
-- `artifacts/runs/ad9fe17e402518d372066373b2f451b39cefd6c74c4c509b09e3027c1ca163a3/matrix.txt` (market risk)
+- `artifacts/runs/1f50f646cea5137a7e04bbf5522c37d66ed53d3062a9026bc35dd52e2db35c12/matrix.txt` (forex majors)
+- `artifacts/runs/4d1eb4623dfa4c0c6cd0c1aab4b921375791550a22fbe89c795357b2463db4ac/matrix.txt` (forex minors)
+- `artifacts/runs/9adf553aa50ec0199b011c42eceb2bc50aecc644341ff034e6251b64a535f4a0/matrix.txt` (crypto spot majors)
+- `artifacts/runs/fc028529c86cec8a39ec06ba3de6f2e80d1c874f82822138d1fa0bff2ea2d70b/matrix.txt` (crypto perp majors)
+- `artifacts/runs/16b92a50cd3a9b8e126eba053ca59ed6eb22e8e85e3c035c8d1b46da99ee1a1e/matrix.txt` (crypto spot minors)
+- `artifacts/runs/31e6057e79b0a3b7662236c4ab6f1d57c3617ac69dbc6b484ff26ad6946d7ccc/matrix.txt` (crypto perp minors)
+- `artifacts/runs/46da8bfeeb4e08e27d03fff43c442eb8e6a47c5e692541ff1c01cb6efffa054a/matrix.txt` (market risk)
 
 Validated at (UTC):
 - Data freshness validated via `tvscreener.runs`; latest `pipeline_mode_executed='data'` start times:
-  - forex majors: 2026-03-17 17:15:03
-  - forex minors: 2026-03-17 17:16:36
-  - crypto majors spot: 2026-03-17 17:25:08
-  - crypto majors perp: 2026-03-17 17:26:42
-  - crypto minors spot: 2026-03-17 17:28:10
-  - crypto minors perp: 2026-03-17 17:29:49
-  - market risk: 2026-03-17 17:31:43
+  - forex majors: 2026-03-18 11:15:02
+  - forex minors: 2026-03-18 11:17:28
+  - crypto majors spot: 2026-03-18 11:25:13
+  - crypto majors perp: 2026-03-18 11:27:29
+  - crypto minors spot: 2026-03-18 11:29:38
+  - crypto minors perp: 2026-03-18 11:31:56
+  - market risk: 2026-03-18 11:45:07
 - Analytics matrices rerendered from Iceberg at:
-  - forex majors: 2026-03-17 17:43:29
-  - forex minors: 2026-03-17 17:43:48
-  - crypto majors spot: 2026-03-17 17:44:08
-  - crypto majors perp: 2026-03-17 17:44:28
-  - crypto minors spot: 2026-03-17 17:44:48
-  - crypto minors perp: 2026-03-17 17:45:10
-  - market risk: 2026-03-17 17:45:30
+  - forex majors: 2026-03-18 11:40:04
+  - forex minors: 2026-03-18 11:40:12
+  - crypto majors spot: 2026-03-18 11:50:17
+  - crypto majors perp: 2026-03-18 11:50:28
+  - crypto minors spot: 2026-03-18 11:48:17
+  - crypto minors perp: 2026-03-18 11:48:26
+  - market risk: 2026-03-18 11:49:18
 
 Validation note:
 - Verified scheduled `data` runs were recent (within the last hour) before rerendering the analytics matrices.
@@ -114,10 +133,14 @@ Validation note:
 Batch specs:
 - `workflows/prefect/batches/forex_majors_minors_both.json` (existing)
 - `workflows/prefect/batches/forex_majors_minors_data.json`
+- `workflows/prefect/batches/forex_majors_minors_analytics.json`
+- `workflows/prefect/batches/forex_majors_minors_opportunity_analytics.json`
 - `workflows/prefect/batches/crypto_binance_majors_minors_both.json`
 - `workflows/prefect/batches/crypto_binance_majors_minors_data.json`
+- `workflows/prefect/batches/crypto_binance_majors_minors_analytics.json`
 - `workflows/prefect/batches/market_risk_proxy_both.json`
 - `workflows/prefect/batches/market_risk_proxy_data.json`
+- `workflows/prefect/batches/market_risk_proxy_analytics.json`
 
 ### Apply schedules
 
@@ -181,6 +204,11 @@ uv run python3 workflows/prefect/deploy_schedules.py --start-runner
 To schedule `both` (data + analytics chained):
 ```bash
 uv run python3 workflows/prefect/deploy_schedules.py --apply --mode both --engine worker --work-pool tvscreener
+```
+
+To schedule `analytics` rerenders (matrix-only, read-only with respect to signals tables):
+```bash
+uv run python3 workflows/prefect/deploy_schedules.py --apply --mode analytics --engine worker --work-pool tvscreener
 ```
 
 To create them paused first:
