@@ -1,0 +1,39 @@
+models:
+  - name: tvscreener_runs
+    table: tvscreener.runs
+    primary_key: run_id
+    dimensions:
+      - name: started_at_utc
+        type: time
+        granularity: second
+      - name: finished_at_utc
+        type: time
+        granularity: second
+      - name: asset_type
+        type: categorical
+      - name: instrument_type
+        type: categorical
+      - name: universe
+        type: categorical
+      - name: pipeline_mode_executed
+        type: categorical
+      - name: scanner_family
+        type: categorical
+      - name: timeframe_set_id
+        type: categorical
+      - name: success
+        type: categorical
+      - name: code_version
+        type: categorical
+    metrics:
+      - name: run_count
+        agg: count
+      - name: success_count
+        agg: sum
+        sql: "CASE WHEN success THEN 1 ELSE 0 END"
+      - name: failure_count
+        agg: sum
+        sql: "CASE WHEN NOT success THEN 1 ELSE 0 END"
+      - name: avg_result_count
+        agg: avg
+        sql: result_count

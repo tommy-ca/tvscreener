@@ -100,6 +100,12 @@ When running under Prefect, matrix views SHOULD be published as Prefect Markdown
 - **WHEN** matrix output is generated
 - **THEN** a Prefect Markdown artifact is created containing the matrix (in a fenced code block)
 
+#### Scenario: One artifact per run spec
+- **GIVEN** operators want minimal Prefect artifact noise
+- **WHEN** analytics runs under Prefect
+- **THEN** exactly one per-run-spec artifact is published by default (Markdown)
+- **AND** it includes the matrix plus a small decision preview (top rows)
+
 ### Requirement: Table reports can be published from Iceberg queries
 Operators SHOULD be able to publish small tabular reports (derived from DuckDB queries over Iceberg tables) into the Prefect UI.
 
@@ -121,6 +127,66 @@ When running under Prefect, analytics result rows SHOULD be published as a Prefe
 - **WHEN** analytics writes a results parquet artifact
 - **THEN** a Prefect Table artifact is created from the top result rows
 - **AND** the table includes decision features when present (e.g. `PAIR`, `Price`, `RVOL`, `Volume`, `ENSEMBLE_SCORE`, `GRADE`, `DIRECTION`, `GRID_ALIGNED`, `GRID_TOTAL`, `CONFLUENCE_LEVEL`, `TOTAL_CONFLUENCE`, `TF_CONFLUENCE`, and factor scores/dirs)
+
+#### Scenario: Results tables are derived from Iceberg semantic surface
+- **GIVEN** the run wrote signals into `tvscreener.signals_batch`
+- **WHEN** the Prefect results table artifact is created
+- **THEN** it is derived from a query over `tvscreener.signals_batch` filtered by the `data` params hash
+- **AND** it falls back to per-run parquet outputs only if the Iceberg query fails
+
+#### Scenario: Analytics run publishes a grade summary
+- **GIVEN** a Prefect flow run executed `pipeline_mode=analytics`
+- **WHEN** matrix-relevant attributes exist (e.g. `GRADE`, `DIRECTION`)
+- **THEN** the flow publishes a second Table artifact summarizing counts/averages by grade and direction
+
+#### Scenario: Summary table publication is optional
+- **GIVEN** operators want fewer Prefect artifacts per run
+- **WHEN** `TVSCREENER_PUBLISH_RESULTS_SUMMARY` is not set to `1`
+- **THEN** only the main `tvscreener-results-...` table is published
+
+#### Scenario: Table artifacts are opt-in
+- **GIVEN** one artifact per run spec is the default
+- **WHEN** `TVSCREENER_PUBLISH_TABLE_ARTIFACTS` is not set to `1`
+- **THEN** no per-run Table artifacts are published
+
+### Requirement: `ROC_SCORE` is derived from canonical ROC columns
+The system SHOULD compute `ROC_SCORE` from canonical ROC columns (e.g. `ROC_15`, `ROC_60`, `ROC_240`) when present.
+
+#### Scenario: Canonical ROC columns produce non-zero `ROC_SCORE`
+- **GIVEN** an opportunity row has non-zero `ROC_15/ROC_60/ROC_240`
+- **WHEN** scoring runs
+- **THEN** `ROC_SCORE` is non-zero (mean of the available ROC columns)
+
+### Requirement: A semantic layer can define shared dimensions and measures
+The system SHOULD support defining a semantic model (dimensions + measures/metrics) so that Prefect artifacts and DuckDB/Iceberg queries share consistent definitions.
+
+#### Scenario: Operator defines decision metrics once
+- **GIVEN** a semantic model exists for analytics outputs
+- **WHEN** an operator publishes a Prefect Table artifact
+- **THEN** the table can be derived from semantic dimensions/measures rather than ad-hoc column selection
+
+#### Scenario: Semantic model includes the matrix view surface
+- **GIVEN** the opportunity matrix view is rendered from `tvscreener.signals_latest`
+- **WHEN** a semantic model is defined
+- **THEN** it includes matrix-level dimensions (pair, timeframe_set_id, direction, grade)
+- **AND** it includes matrix-level measures (opportunity_count, counts by grade/direction, average scores)
+
+#### Scenario: Semantic model is validated and versioned
+- **GIVEN** a semantic model is stored in the repo
+- **WHEN** CI runs
+- **THEN** semantic model validation runs (schema + query compilation)
+- **AND** changes to the model are code-reviewed like any other change
+
+#### Scenario: Sidemantic integration is gated by licensing
+- **GIVEN** Sidemantic is AGPL-3.0
+- **WHEN** the project evaluates adopting it
+- **THEN** the decision is recorded and approved before adding Sidemantic as a required dependency
+
+#### Scenario: Sidemantic is used only when enabled
+- **GIVEN** Sidemantic is installed as an optional extra
+- **WHEN** `TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
+- **THEN** analytics table artifacts are generated from Sidemantic semantic queries
+- **AND** when not enabled, they are generated via the built-in DuckDB/Iceberg SQL
 
 ### Requirement: Run metadata persistence can be strict
 When strict persistence is enabled, failing to append `tvscreener.runs` SHOULD fail the run.

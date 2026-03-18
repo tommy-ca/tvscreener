@@ -66,6 +66,15 @@ wheels = [
 ]
 
 [[package]]
+name = "antlr4-python3-runtime"
+version = "4.13.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/33/5f/2cdf6f7aca3b20d3f316e9f505292e1f256a32089bd702034c29ebde6242/antlr4_python3_runtime-4.13.2.tar.gz", hash = "sha256:909b647e1d2fc2b70180ac586df3933e38919c85f98ccc656a96cd3f25ef3916", size = 117467, upload-time = "2024-08-03T19:00:12.757Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/89/03/a851e84fcbb85214dc637b6378121ef9a0dd61b4c65264675d8a5c9b1ae7/antlr4_python3_runtime-4.13.2-py3-none-any.whl", hash = "sha256:fe3835eb8d33daece0e799090eda89719dbccee7aa39ef94eed3818cafa5a7e8", size = 144462, upload-time = "2024-08-03T19:00:11.134Z" },
+]
+
+[[package]]
 name = "anyio"
 version = "4.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3363,6 +3372,24 @@ wheels = [
 ]
 
 [[package]]
+name = "sidemantic"
+version = "0.8.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "antlr4-python3-runtime", marker = "python_full_version >= '3.11'" },
+    { name = "duckdb", marker = "python_full_version >= '3.11'" },
+    { name = "jinja2", marker = "python_full_version >= '3.11'" },
+    { name = "pydantic", marker = "python_full_version >= '3.11'" },
+    { name = "pyyaml", marker = "python_full_version >= '3.11'" },
+    { name = "sqlglot", marker = "python_full_version >= '3.11'" },
+    { name = "typer", marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9a/de/9bf35f9e8c077ff5920063126d8592546537439aaad8eee664fc9008f16d/sidemantic-0.8.2.tar.gz", hash = "sha256:aed785eace31f33b43f161b962b24c8a2efe78c0fc57d7c042b6cbbc8d82a982", size = 1176239, upload-time = "2026-02-25T15:38:59.598Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5f/ce/f5d61586273cbbef8a3f09bc278b03e25e40df952b0ed0b5149d82640339/sidemantic-0.8.2-py3-none-any.whl", hash = "sha256:efc6de70082f8b774563a8d2b8a8254a2f25a2a2982ef60353cd767a3f2d6181", size = 581312, upload-time = "2026-02-25T15:38:58.143Z" },
+]
+
+[[package]]
 name = "six"
 version = "1.17.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3452,6 +3479,15 @@ wheels = [
 [package.optional-dependencies]
 asyncio = [
     { name = "greenlet" },
+]
+
+[[package]]
+name = "sqlglot"
+version = "27.12.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/2c/8b/a19c3d9d6933f8ee6ea05a1df6e8b7ce48fd910bbb366ac9fbf522dcaa38/sqlglot-27.12.0.tar.gz", hash = "sha256:1bb0500503eea375bf86ddc72b2e9ca955113bd0cbf8968bcf4ed5f4cd8d5575", size = 5450508, upload-time = "2025-09-04T16:53:26.6Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e4/89/9dc71793f4cfbebbe9529986f887c1a627ffc57550f5de246409a5f721d4/sqlglot-27.12.0-py3-none-any.whl", hash = "sha256:b3a3d9d0cc27d7eece4057ff97714fe2d950ae9c5dc0df702db6fcd333565bb8", size = 510978, upload-time = "2025-09-04T16:53:23.87Z" },
 ]
 
 [[package]]
@@ -3633,6 +3669,9 @@ mcp = [
 prefect = [
     { name = "prefect" },
 ]
+semantic = [
+    { name = "sidemantic", marker = "python_full_version >= '3.11'" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -3661,10 +3700,11 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.27.1" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
+    { name = "sidemantic", marker = "python_full_version >= '3.11' and extra == 'semantic'", specifier = ">=0.8.2" },
     { name = "tabulate", marker = "extra == 'mcp'", specifier = ">=0.9.0" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=4.0.0" },
 ]
-provides-extras = ["dev", "mcp", "cli", "prefect"]
+provides-extras = ["dev", "mcp", "cli", "prefect", "semantic"]
 
 [package.metadata.requires-dev]
 dev = [

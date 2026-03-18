@@ -14,9 +14,23 @@ try:
 except Exception:  # pragma: no cover
     # Prefect is an optional dependency; import lazily at runtime.
     _PREFECT_AVAILABLE = False
-    flow = None  # type: ignore[assignment]
-    tags = None  # type: ignore[assignment]
-    task = None  # type: ignore[assignment]
+
+    def task(*_args: Any, **_kwargs: Any):  # type: ignore[no-redef]
+        def _decorator(fn):
+            return fn
+
+        return _decorator
+
+    def flow(*_args: Any, **_kwargs: Any):  # type: ignore[no-redef]
+        def _decorator(fn):
+            return fn
+
+        return _decorator
+
+    @contextlib.contextmanager
+    def tags(*_args: Any, **_kwargs: Any):  # type: ignore[no-redef]
+        yield
+
 
 from tvscreener.lib.pipeline_runner import LocalRunner, PipelineRunSpec, RunResult
 
@@ -82,20 +96,69 @@ def _maybe_publish_prefect_matrix_artifact(
     with contextlib.suppress(Exception):
         from prefect.artifacts import create_markdown_artifact
 
-        key = _prefect_matrix_key(spec)
-        markdown = "\n".join(
-            [
-                f"**params_hash**: `{params_hash}`",
-                "",
-                "```text",
-                matrix_text.rstrip(),
-                "```",
-            ]
+        from tvscreener.lib.semantic_artifacts import (
+            resolve_latest_successful_data_params_hash,
+            semantic_opportunity_grade_summary,
+            semantic_opportunity_top_rows,
         )
+
+        def _to_md_table(rows: list[dict[str, Any]], limit: int = 15) -> str:
+            if not rows:
+                return ""
+
+            cols = list(rows[0].keys())
+            cols = cols[:12]
+            header = "| " + " | ".join(cols) + " |"
+            sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+            body = []
+            for r in rows[:limit]:
+                body.append("| " + " | ".join(str(r.get(c, "")) for c in cols) + " |")
+            return "\n".join([header, sep, *body])
+
+        data_params_hash = resolve_latest_successful_data_params_hash(spec)
+        rows = (
+            semantic_opportunity_top_rows(data_params_hash=data_params_hash, limit=30)
+            if data_params_hash
+            else None
+        )
+        summary = (
+            semantic_opportunity_grade_summary(data_params_hash=data_params_hash, limit=50)
+            if data_params_hash
+            else None
+        )
+
+        key = _prefect_matrix_key(spec)
+        blocks: list[str] = [
+            f"**analytics params_hash**: `{params_hash}`",
+        ]
+        if data_params_hash:
+            blocks.append(f"**data params_hash**: `{data_params_hash}`")
+        blocks += [
+            "",
+            "## Matrix",
+            "```text",
+            matrix_text.rstrip(),
+            "```",
+        ]
+
+        if rows:
+            blocks += [
+                "",
+                "## Top Rows",
+                _to_md_table(rows, limit=15),
+            ]
+
+        if (os.getenv("TVSCREENER_PUBLISH_RESULTS_SUMMARY") or "").strip() == "1" and summary:
+            blocks += [
+                "",
+                "## Grade Summary",
+                _to_md_table(summary, limit=25),
+            ]
+
         create_markdown_artifact(
             key=key,
-            markdown=markdown,
-            description="Latest matrix view (versioned by key)",
+            markdown="\n".join([b for b in blocks if b is not None]),
+            description="Matrix + decision context (single artifact)",
         )
 
 
@@ -106,63 +169,73 @@ def _prefect_results_key(spec: PipelineRunSpec) -> str:
 def _maybe_publish_prefect_results_table_artifact(
     *, spec: PipelineRunSpec, params_hash: str, results_path: str | None
 ) -> None:
-    if not results_path:
+    # Prefer one artifact per run-spec total; keep table artifacts opt-in.
+    if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() != "1":
         return
-
     try:
-        import pandas as pd
         from prefect.artifacts import create_table_artifact
 
-        def _coerce_cell(value: Any) -> Any:
-            if pd.isna(value):
-                return None
-            # Numpy scalars
-            if hasattr(value, "item"):
-                try:
-                    return value.item()
-                except Exception:
-                    pass
-            return value
+        from tvscreener.lib.semantic_artifacts import (
+            resolve_latest_successful_data_params_hash,
+            semantic_opportunity_grade_summary,
+            semantic_opportunity_top_rows,
+        )
 
-        df = pd.read_parquet(results_path)
-        preferred_cols = [
-            "PAIR",
-            "Name",
-            "Price",
-            "RVOL",
-            "Volume",
-            "ENSEMBLE_SCORE",
-            "GRADE",
-            "DIRECTION",
-            "GRID_ALIGNED",
-            "GRID_TOTAL",
-            "CONFLUENCE_LEVEL",
-            "TOTAL_CONFLUENCE",
-            "TF_CONFLUENCE",
-            "TREND_SCORE",
-            "MA_SCORE",
-            "OSC_SCORE",
-            "ROC_SCORE",
-            "ROC_AVG",
-            "TREND_DIR",
-            "MA_DIR",
-            "OSC_DIR",
-            "ROC_DIR",
-            "RATING_SCORE",
-        ]
-        cols = [c for c in preferred_cols if c in df.columns]
-        if not cols:
+        data_params_hash = resolve_latest_successful_data_params_hash(spec) or ""
+
+        semantic_rows = (
+            semantic_opportunity_top_rows(data_params_hash=data_params_hash, limit=30)
+            if data_params_hash
+            else None
+        )
+        rows = semantic_rows
+
+        if rows is None and results_path:
+            import pandas as pd
+
+            def _coerce_cell(value: Any) -> Any:
+                if pd.isna(value):
+                    return None
+                if hasattr(value, "item"):
+                    try:
+                        return value.item()
+                    except Exception:
+                        return value
+                return value
+
+            df = pd.read_parquet(results_path)
+            subset = df.head(30)
+            rows = []
+            for _, row in subset.iterrows():
+                rows.append({col: _coerce_cell(row[col]) for col in subset.columns})
+
+        if not rows:
             return
 
-        subset = df[cols].head(30)
-        rows: list[dict[str, Any]] = []
-        for _, row in subset.iterrows():
-            rows.append({col: _coerce_cell(row[col]) for col in subset.columns})
+        desc = (
+            f"Top rows from data `{data_params_hash}` (analytics `{params_hash}`)"
+            if semantic_rows is not None
+            else f"Top rows from `{params_hash}`"
+        )
         create_table_artifact(
             key=_prefect_results_key(spec),
             table=rows,
-            description=f"Top rows from `{params_hash}`",
+            description=desc,
         )
+
+        # Keep artifact volume down by default.
+        if (os.getenv("TVSCREENER_PUBLISH_RESULTS_SUMMARY") or "").strip() == "1":
+            summary = (
+                semantic_opportunity_grade_summary(data_params_hash=data_params_hash, limit=50)
+                if data_params_hash
+                else None
+            )
+            if summary:
+                create_table_artifact(
+                    key=f"{_prefect_results_key(spec)}-summary",
+                    table=summary,
+                    description=f"Grade/direction summary for `{data_params_hash}`",
+                )
     except Exception:
         return
 
@@ -227,8 +300,10 @@ def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult,
     console = _console_for_spec(analytics_spec)
     previous = os.environ.get("TVSCREENER_RUN_DIR")
     prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
+    prev_semantic = os.environ.get("TVSCREENER_SEMANTIC_RUNTIME")
     os.environ["TVSCREENER_RUN_DIR"] = run_dir
     os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
+    os.environ["TVSCREENER_SEMANTIC_RUNTIME"] = "sidemantic"
     try:
         res = LocalRunner(console=console).run(analytics_spec)
     finally:
@@ -241,6 +316,11 @@ def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult,
             os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
         else:
             os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+
+        if prev_semantic is None:
+            os.environ.pop("TVSCREENER_SEMANTIC_RUNTIME", None)
+        else:
+            os.environ["TVSCREENER_SEMANTIC_RUNTIME"] = prev_semantic
     matrix_text = console.export_text() if console is not None else None
     return res, matrix_text
 

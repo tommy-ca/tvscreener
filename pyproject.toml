@@ -64,6 +64,11 @@ prefect = [
     "prefect>=3.0.0"
 ]
 
+# NOTE: Sidemantic is AGPL-3.0. Keep this optional and gated.
+semantic = [
+    "sidemantic>=0.8.2; python_version >= '3.11'",
+]
+
 [project.scripts]
 tvscreener-mcp = "tvscreener.mcp:run"
 tvscreener-scan = "tvscreener.cli:main"

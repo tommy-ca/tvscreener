@@ -77,15 +77,147 @@ Artifact contract:
   - `batch_result.json`
 
 Prefect UI artifacts:
-- When running under Prefect, matrix output is also published as a Prefect Markdown artifact (versioned by a stable key).
+- When running under Prefect, each run spec publishes a single Markdown artifact (versioned by a stable key).
 - Key format (approx): `tvscreener-matrix-<scanner>-<asset_type>-<instrument_type?>-<universe?>-<timeframe_set_id?>`.
 - Key parts are sanitized (lowercase; non-`[a-z0-9-]` characters replaced with `-`).
 
 Prefect UI tables:
-- Analytics runs also publish a Prefect Table artifact with the top result rows.
-- Key format mirrors the matrix key with `results` instead of `matrix`.
-- The table is intended to explain the decision: price/liquidity context, grid + grade, and the component scores/dirs that drove the matrix.
-- Current columns (when present): `PAIR`, `Name`, `Price`, `RVOL`, `Volume`, `ENSEMBLE_SCORE`, `GRADE`, `DIRECTION`, `GRID_ALIGNED`, `GRID_TOTAL`, `CONFLUENCE_LEVEL`, `TOTAL_CONFLUENCE`, `TF_CONFLUENCE`, `TREND_SCORE`, `MA_SCORE`, `OSC_SCORE`, `ROC_SCORE`, `ROC_AVG`, `TREND_DIR`, `MA_DIR`, `OSC_DIR`, `ROC_DIR`, `RATING_SCORE`.
+- By default, run specs do not publish per-run Table artifacts (to reduce duplication with the Markdown artifact).
+- To opt in, set `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`.
+- Table source:
+  - Prefer an Iceberg query over `tvscreener.signals_batch` filtered by the corresponding `data` params hash.
+  - Fall back to reading the per-run parquet output if the Iceberg query fails.
+- Summary table:
+  - The flow can publish a `-summary` table keyed like `tvscreener-results-...-summary` with counts/averages grouped by `GRADE` and `DIRECTION`.
+  - To reduce Prefect artifact noise, it is disabled by default; set `TVSCREENER_PUBLISH_RESULTS_SUMMARY=1` to enable.
+
+### Artifact audit (analytics table)
+
+Current state (validated via the Prefect API `/api/artifacts/<key>/latest`):
+- The `tvscreener-results-...` Table artifacts are stable at 23 columns across forex/crypto/market-risk.
+- Forex includes `RVOL` and `Volume`; some universes may have `RVOL=null`.
+
+ROC audit note:
+- If `ROC_SCORE` appears as `0.0` while raw `ROC_15/ROC_60/ROC_240` are non-zero, that indicates a canonicalization mismatch.
+- The scoring engine computes `ROC_SCORE` from ROC columns; ensure it recognizes canonical `ROC_<tf>` columns as well as raw TradingView columns like `Roc|<tf>`.
+- If the scoring logic changes, rerun the `data` deployment to refresh `signals_batch` before expecting new values in analytics table artifacts.
+
+Implementation note:
+- The Prefect CLI `prefect artifact inspect ... -o json` output is not strict JSON (contains literal newlines in string values).
+- For machine parsing/audits, prefer the Prefect API endpoints.
+
+### Semantic layer (exploration)
+
+Goal:
+- Define shared dimensions and measures/metrics so table artifacts, DuckDB queries, and any future dashboards use the same definitions.
+
+Non-goals (for now):
+- Replace the existing scan pipeline logic.
+- Introduce mandatory always-on services for local runs.
+
+Candidate libraries:
+- `sidequery/sidemantic`: Python-first semantic/metrics layer with DuckDB support and adapters for Cube + MetricFlow + other formats.
+- `dbt-labs/metricflow`: semantic metric compiler intended to run alongside dbt projects.
+- `cube-js/cube`: full semantic-layer runtime + APIs (more infra; strongest when you want a long-running service).
+
+Note on "BSL":
+- Sidemantic supports "BSL" as a semantic model format.
+- If "bsl" refers to a specific runtime/library (not a model format), it needs separate evaluation.
+
+Recommended starting point (low-infra):
+- Evaluate Sidemantic first because it natively supports DuckDB and can sit next to this repo without requiring dbt or a dedicated server.
+
+Sidemantic notes:
+- Sidemantic is AGPL-3.0; confirm licensing is acceptable before adopting it in-repo.
+- If licensing is a blocker, keep semantic definitions in `semantic/` and continue executing via DuckDB (EdgeQueryClient) until an alternative runtime is selected.
+
+Integration audit (Sidemantic)
+
+Reality check:
+- Our Iceberg access path is via `pyiceberg` -> Arrow -> DuckDB in-process (see `tvscreener/lib/query.py`).
+- Sidemantic expects to query a database connection (e.g. DuckDB) and read from real tables/views.
+- Therefore, an integration needs a small runtime layer that exposes Iceberg tables to the Sidemantic DuckDB connection (either by materializing to DuckDB tables/views or by routing Sidemantic SQL through the existing EdgeQueryClient).
+
+Recommended integration shape (minimal infra):
+1) Keep semantic definitions in `semantic/models/*.yml`.
+2) Provide a `SemanticLayer` wrapper that uses DuckDB and registers:
+   - `tvscreener.runs` as a relation
+   - `tvscreener.signals_batch` (and optionally `signals_latest`) as a relation
+3) Use Sidemantic for:
+   - validating the semantic definitions (`sidemantic validate semantic/models`)
+   - generating standardized queries for Prefect table artifacts
+
+Acceptance criteria:
+- Prefect results tables are generated from semantic queries (not from ad-hoc column lists).
+- Semantic validation can run in CI.
+- The semantic runtime does not require a long-running service for local usage.
+
+License gate:
+- Do not add `sidemantic` as a required dependency unless AGPL-3.0 is explicitly accepted.
+
+Enablement:
+- Install: `uv sync --extra semantic`
+- Enable runtime: `export TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
+
+Python compatibility:
+- Sidemantic currently requires Python >= 3.11.
+
+Evaluation criteria (audit):
+- Works locally with DuckDB and the existing Iceberg tables.
+- Models are versioned in git and validated in CI.
+- Can express shared dimensions/measures for both:
+  - operational dashboards (`tvscreener.runs`), and
+  - decision dashboards (opportunity analytics / signals tables).
+- Minimal infra: prefer CLI/library mode first; add a server only if needed.
+- Licensing is acceptable.
+
+Proposed semantic entities
+
+1) `runs` (operational)
+- Source: Iceberg table `tvscreener.runs`.
+- Dimensions:
+  - `started_at_utc` (time)
+  - `asset_type`, `instrument_type`, `universe`
+  - `pipeline_mode_executed`, `success`
+  - `code_version`, `params_hash`
+- Measures:
+  - `run_count`
+  - `success_rate`
+  - `avg_result_count`
+  - `p50_runtime_seconds`, `p95_runtime_seconds` (if duration is recorded)
+  - `freshness_minutes` (computed relative to now)
+
+2) `opportunity_signals` (decision surface)
+- Preferred source: Iceberg product/gold table used by analytics reads (e.g. `tvscreener.signals_latest`) rather than per-run parquet artifacts.
+- Dimensions:
+  - `fetched_at_utc` / `signal_date` (time)
+  - `asset_type`, `instrument_type`, `universe`, `venue`
+  - `PAIR` (or `entity_id`), `Name`
+  - `DIRECTION`, `GRADE`, `CONFLUENCE_LEVEL`
+  - `timeframe_set_id`
+- Measures:
+  - `opportunity_count`
+  - `count_by_grade` / `share_by_grade`
+  - `count_by_direction`
+  - `avg_ensemble_score`, `avg_total_confluence`
+  - `top_n_by_total_confluence`
+
+Bridging note:
+- Until the Iceberg decision table is modeled, Prefect "results" Table artifacts can continue to be derived from the per-run parquet outputs.
+- The target end-state is to compute those tables from semantic queries over Iceberg so the same definitions power artifacts and dashboards.
+
+Proposed next steps:
+1) Identify a minimal semantic model for `tvscreener.runs` (freshness, success rate, runtime) and for analytics outputs (counts by grade/direction, top-N by confluence).
+2) Choose an initial storage for semantic definitions (recommended: `semantic/` directory in this repo).
+3) Implement a thin wrapper that can execute semantic queries via DuckDB against Iceberg tables.
+4) Switch Prefect table artifacts to be generated from semantic queries (not raw parquet reads) once the model is stable.
+
+Semantic model files (initial draft):
+- `semantic/models/tvscreener_runs.yml`
+- `semantic/models/opportunity_matrix.yml`
+
+Semantic model note (matrix):
+- `semantic/models/opportunity_matrix.yml` includes measures derived from the same columns that power the matrix (TREND/MA/OSC/ROC across timeframes, plus grid/confluence/grade).
 
 DuckDB report artifacts (optional):
 - For quick ops dashboards, you can query Iceberg tables (DuckDB) and publish the result as a Prefect Table artifact.
