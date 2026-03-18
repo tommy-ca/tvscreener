@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, cast
 
@@ -49,6 +50,121 @@ def _write_json(path: Path, payload: object) -> None:
 def _write_matrix_artifact(run_dir: Path, matrix_text: str) -> None:
     # Keep it ASCII-friendly and stable for diffs.
     (run_dir / "matrix.txt").write_text(matrix_text, encoding="utf-8")
+
+
+def _prefect_matrix_key(spec: PipelineRunSpec) -> str:
+    def _sanitize(part: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9-]+", "-", part.strip().lower())
+        cleaned = re.sub(r"-+", "-", cleaned).strip("-")
+        return cleaned
+
+    parts: list[str] = [
+        "tvscreener",
+        "matrix",
+        _sanitize(str(spec.scanner_family or "")) or "unknown",
+        _sanitize(str(spec.asset_type or "")) or "unknown",
+    ]
+    if spec.instrument_type:
+        parts.append(_sanitize(str(spec.instrument_type)))
+    if spec.universe:
+        parts.append(_sanitize(str(spec.universe)))
+    if spec.timeframe_set_id:
+        parts.append(_sanitize(str(spec.timeframe_set_id)))
+    return "-".join([p for p in parts if p])
+
+
+def _maybe_publish_prefect_matrix_artifact(
+    *, spec: PipelineRunSpec, params_hash: str, matrix_text: str
+) -> None:
+    if not matrix_text.strip():
+        return
+
+    with contextlib.suppress(Exception):
+        from prefect.artifacts import create_markdown_artifact
+
+        key = _prefect_matrix_key(spec)
+        markdown = "\n".join(
+            [
+                f"**params_hash**: `{params_hash}`",
+                "",
+                "```text",
+                matrix_text.rstrip(),
+                "```",
+            ]
+        )
+        create_markdown_artifact(
+            key=key,
+            markdown=markdown,
+            description="Latest matrix view (versioned by key)",
+        )
+
+
+def _prefect_results_key(spec: PipelineRunSpec) -> str:
+    return _prefect_matrix_key(spec).replace("-matrix-", "-results-", 1)
+
+
+def _maybe_publish_prefect_results_table_artifact(
+    *, spec: PipelineRunSpec, params_hash: str, results_path: str | None
+) -> None:
+    if not results_path:
+        return
+
+    try:
+        import pandas as pd
+        from prefect.artifacts import create_table_artifact
+
+        def _coerce_cell(value: Any) -> Any:
+            if pd.isna(value):
+                return None
+            # Numpy scalars
+            if hasattr(value, "item"):
+                try:
+                    return value.item()
+                except Exception:
+                    pass
+            return value
+
+        df = pd.read_parquet(results_path)
+        preferred_cols = [
+            "PAIR",
+            "Name",
+            "Price",
+            "RVOL",
+            "Volume",
+            "ENSEMBLE_SCORE",
+            "GRADE",
+            "DIRECTION",
+            "GRID_ALIGNED",
+            "GRID_TOTAL",
+            "CONFLUENCE_LEVEL",
+            "TOTAL_CONFLUENCE",
+            "TF_CONFLUENCE",
+            "TREND_SCORE",
+            "MA_SCORE",
+            "OSC_SCORE",
+            "ROC_SCORE",
+            "ROC_AVG",
+            "TREND_DIR",
+            "MA_DIR",
+            "OSC_DIR",
+            "ROC_DIR",
+            "RATING_SCORE",
+        ]
+        cols = [c for c in preferred_cols if c in df.columns]
+        if not cols:
+            return
+
+        subset = df[cols].head(30)
+        rows: list[dict[str, Any]] = []
+        for _, row in subset.iterrows():
+            rows.append({col: _coerce_cell(row[col]) for col in subset.columns})
+        create_table_artifact(
+            key=_prefect_results_key(spec),
+            table=rows,
+            description=f"Top rows from `{params_hash}`",
+        )
+    except Exception:
+        return
 
 
 def _resolve_base_dir(artifacts_dir: str) -> Path:
@@ -105,12 +221,14 @@ def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str 
     return res, matrix_text
 
 
-@task(retries=0)  # type: ignore[misc]
+@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
 def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
     analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
     console = _console_for_spec(analytics_spec)
     previous = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
     os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
     try:
         res = LocalRunner(console=console).run(analytics_spec)
     finally:
@@ -118,6 +236,11 @@ def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult,
             os.environ.pop("TVSCREENER_RUN_DIR", None)
         else:
             os.environ["TVSCREENER_RUN_DIR"] = previous
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
     matrix_text = console.export_text() if console is not None else None
     return res, matrix_text
 
@@ -177,6 +300,9 @@ def prefect_run_flow(
             matrix_path = None
             if matrix_text:
                 _write_matrix_artifact(run_dir, matrix_text)
+                _maybe_publish_prefect_matrix_artifact(
+                    spec=spec, params_hash=params_hash, matrix_text=matrix_text
+                )
                 matrix_path = str(run_dir / "matrix.txt")
             payload = {
                 "spec_version": spec.spec_version,
@@ -199,7 +325,14 @@ def prefect_run_flow(
             matrix_path = None
             if matrix_text:
                 _write_matrix_artifact(run_dir, matrix_text)
+                _maybe_publish_prefect_matrix_artifact(
+                    spec=spec, params_hash=params_hash, matrix_text=matrix_text
+                )
                 matrix_path = str(run_dir / "matrix.txt")
+
+            _maybe_publish_prefect_results_table_artifact(
+                spec=spec, params_hash=params_hash, results_path=analytics_output
+            )
             payload = {
                 "spec_version": spec.spec_version,
                 "params_hash": params_hash,
@@ -224,6 +357,9 @@ def prefect_run_flow(
         matrix_text = analytics_matrix_text or data_matrix_text
         if matrix_text:
             _write_matrix_artifact(run_dir, matrix_text)
+            _maybe_publish_prefect_matrix_artifact(
+                spec=spec, params_hash=params_hash, matrix_text=matrix_text
+            )
             matrix_path = str(run_dir / "matrix.txt")
 
         payload = {

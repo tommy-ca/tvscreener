@@ -5,10 +5,11 @@ import hashlib
 import json
 import os
 import random
+import re
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from prefect import flow, tags, task
 from prefect.task_runners import ConcurrentTaskRunner
@@ -27,6 +28,149 @@ def _console_for_spec(spec: PipelineRunSpec):
     # Use a generous width so saved `matrix.txt` artifacts don't truncate
     # emoji grids into "…" on narrow default consoles.
     return Console(record=True, width=140, force_terminal=True)
+
+
+def _prefect_matrix_key(spec: PipelineRunSpec) -> str:
+    def _sanitize(part: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9-]+", "-", part.strip().lower())
+        cleaned = re.sub(r"-+", "-", cleaned).strip("-")
+        return cleaned
+
+    parts: list[str] = [
+        "tvscreener",
+        "matrix",
+        _sanitize(str(spec.scanner_family or "")) or "unknown",
+        _sanitize(str(spec.asset_type or "")) or "unknown",
+    ]
+    if spec.instrument_type:
+        parts.append(_sanitize(str(spec.instrument_type)))
+    if spec.universe:
+        parts.append(_sanitize(str(spec.universe)))
+    if spec.timeframe_set_id:
+        parts.append(_sanitize(str(spec.timeframe_set_id)))
+    return "-".join([p for p in parts if p])
+
+
+def _maybe_publish_prefect_matrix_artifact(
+    *, spec: PipelineRunSpec, params_hash: str, matrix_text: str
+) -> None:
+    if not matrix_text.strip():
+        return
+
+    try:
+        from prefect.artifacts import create_markdown_artifact
+
+        key = _prefect_matrix_key(spec)
+        markdown = "\n".join(
+            [
+                f"**params_hash**: `{params_hash}`",
+                "",
+                "```text",
+                matrix_text.rstrip(),
+                "```",
+            ]
+        )
+        create_markdown_artifact(
+            key=key,
+            markdown=markdown,
+            description="Latest matrix view (versioned by key)",
+        )
+    except Exception:
+        return
+
+
+def _prefect_results_key(spec: PipelineRunSpec) -> str:
+    return _prefect_matrix_key(spec).replace("-matrix-", "-results-", 1)
+
+
+def _maybe_publish_prefect_results_table_artifact(
+    *, spec: PipelineRunSpec, params_hash: str, results_path: str | None
+) -> None:
+    if not results_path:
+        return
+
+    try:
+        import pandas as pd
+        from prefect.artifacts import create_table_artifact
+
+        def _coerce_cell(value: Any) -> Any:
+            if pd.isna(value):
+                return None
+            # Numpy scalars
+            if hasattr(value, "item"):
+                try:
+                    return value.item()
+                except Exception:
+                    pass
+            return value
+
+        df = pd.read_parquet(results_path)
+        preferred_cols = [
+            "PAIR",
+            "Name",
+            "Price",
+            "RVOL",
+            "Volume",
+            "ENSEMBLE_SCORE",
+            "GRADE",
+            "DIRECTION",
+            "GRID_ALIGNED",
+            "GRID_TOTAL",
+            "CONFLUENCE_LEVEL",
+            "TOTAL_CONFLUENCE",
+            "TF_CONFLUENCE",
+            "TREND_SCORE",
+            "MA_SCORE",
+            "OSC_SCORE",
+            "ROC_SCORE",
+            "ROC_AVG",
+            "TREND_DIR",
+            "MA_DIR",
+            "OSC_DIR",
+            "ROC_DIR",
+            "RATING_SCORE",
+        ]
+        cols = [c for c in preferred_cols if c in df.columns]
+        if not cols:
+            return
+
+        subset = df[cols].head(30)
+        rows: list[dict[str, Any]] = []
+        for _, row in subset.iterrows():
+            rows.append({col: _coerce_cell(row[col]) for col in subset.columns})
+        create_table_artifact(
+            key=_prefect_results_key(spec),
+            table=rows,
+            description=f"Top rows from `{params_hash}`",
+        )
+    except Exception:
+        return
+
+
+def _maybe_publish_prefect_batch_table_artifact(*, batch_id: str, results: dict[str, Any]) -> None:
+    try:
+        from prefect.artifacts import create_table_artifact
+
+        rows: list[dict[str, Any]] = []
+        for params_hash, payload in results.items():
+            row = {
+                "params_hash": params_hash,
+                "scanner_family": payload.get("scanner_family"),
+                "pipeline_mode_requested": payload.get("pipeline_mode_requested"),
+                "success": payload.get("success"),
+                "result_count": payload.get("result_count"),
+                "results_path": payload.get("results_path"),
+                "matrix_path": payload.get("matrix_path"),
+            }
+            rows.append(row)
+
+        create_table_artifact(
+            key=f"tvscreener-batch-{batch_id}",
+            table=rows,
+            description="Batch results summary",
+        )
+    except Exception:
+        return
 
 
 def _repo_root() -> Path:
@@ -294,10 +438,13 @@ def run_data(spec: PipelineRunSpec) -> RunResult:
             assert run_dir is not None
             _ensure_dir(run_dir)
             (run_dir / "matrix.txt").write_text(text, encoding="utf-8")
+            _maybe_publish_prefect_matrix_artifact(
+                spec=data_spec, params_hash=str(run_dir.name), matrix_text=text
+            )
     return res
 
 
-@task(retries=0)
+@task(retries=2, retry_delay_seconds=10)
 def run_analytics(spec: PipelineRunSpec) -> RunResult:
     analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
 
@@ -310,8 +457,10 @@ def run_analytics(spec: PipelineRunSpec) -> RunResult:
     console = _console_for_spec(analytics_spec)
 
     prev_run_dir = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
     if run_dir is not None:
         os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
     try:
         res = LocalRunner(console=console).run(analytics_spec)
     finally:
@@ -320,16 +469,35 @@ def run_analytics(spec: PipelineRunSpec) -> RunResult:
         else:
             os.environ["TVSCREENER_RUN_DIR"] = prev_run_dir
 
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+
     if console is not None and _ARTIFACTS_BASE_DIR is not None:
         text = console.export_text()
         if text.strip():
             assert run_dir is not None
             _ensure_dir(run_dir)
             (run_dir / "matrix.txt").write_text(text, encoding="utf-8")
+            _maybe_publish_prefect_matrix_artifact(
+                spec=analytics_spec, params_hash=str(run_dir.name), matrix_text=text
+            )
+
+    if run_dir is not None:
+        results_path = analytics_spec.output
+        if not results_path:
+            results_path = str(_default_results_path(run_dir, analytics_spec))
+        _maybe_publish_prefect_results_table_artifact(
+            spec=analytics_spec, params_hash=str(run_dir.name), results_path=results_path
+        )
     return res
 
 
-@flow(name="tvscreener-batch", task_runner=ConcurrentTaskRunner())
+@flow(
+    name="tvscreener-batch",
+    task_runner=cast(Any, ConcurrentTaskRunner()),
+)  # type: ignore
 def run_batch(
     batch_path: str,
     artifacts_dir: str = "artifacts/runs",
@@ -582,6 +750,8 @@ def run_batch(
         "concurrency_hint": concurrency_hint,
         "batch_artifacts_dir": str(batch_dir),
     }
+
+    _maybe_publish_prefect_batch_table_artifact(batch_id=batch_id, results=results)
     _write_json(batch_dir / "batch_result.json", summary)
     return summary
 
@@ -644,7 +814,7 @@ def main() -> int:
             int(args.analytics_concurrency or 1),
         )
     if max_workers:
-        batch_flow = run_batch.with_options(
+        batch_flow = cast(Any, run_batch).with_options(
             task_runner=ConcurrentTaskRunner(max_workers=int(max_workers))
         )
     else:
