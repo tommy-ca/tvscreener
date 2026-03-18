@@ -56,6 +56,25 @@ def _deployments(*, mode: str) -> list[DeploymentSpec]:
             ),
         ]
 
+    if mode == "analytics":
+        return [
+            DeploymentSpec(
+                name="opportunity-forex-majors-minors-analytics",
+                batch_path="workflows/prefect/batches/forex_majors_minors_opportunity_analytics.json",
+                cron="40 * * * *",
+            ),
+            DeploymentSpec(
+                name="opportunity-crypto-binance-majors-minors-analytics",
+                batch_path="workflows/prefect/batches/crypto_binance_majors_minors_analytics.json",
+                cron="50 * * * *",
+            ),
+            DeploymentSpec(
+                name="opportunity-market-risk-proxy-analytics",
+                batch_path="workflows/prefect/batches/market_risk_proxy_analytics.json",
+                cron="7-59/15 * * * *",
+            ),
+        ]
+
     # Default: schedule only data pipelines.
     return [
         DeploymentSpec(
@@ -96,7 +115,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["data", "both"],
+        choices=["data", "both", "analytics"],
         default="data",
         help="Which pipeline mode to schedule (default: data only)",
     )
@@ -118,11 +137,15 @@ def main() -> int:
 
     for d in _deployments(mode=str(args.mode)):
         schedule = Cron(d.cron, timezone=d.timezone)
+        analytics_concurrency = 8
+        if str(args.mode) == "analytics":
+            analytics_concurrency = 1
+
         params = {
             "batch_path": d.batch_path,
             "artifacts_dir": "artifacts/runs",
             "data_concurrency": 1,
-            "analytics_concurrency": 8,
+            "analytics_concurrency": analytics_concurrency,
             "rate_limit": {
                 "enabled": True,
                 "min_interval_seconds": 1.0,

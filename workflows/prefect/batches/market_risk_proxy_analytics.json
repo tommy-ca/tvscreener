@@ -1,0 +1,15 @@
+{
+  "batch_id": "market-risk-proxy-analytics",
+  "defaults": {
+    "scanner_family": "opportunity",
+    "pipeline_mode": "analytics",
+    "asset_type": "stock",
+    "universe": "market_risk",
+    "timeframes": ["15", "60", "240"],
+    "matrix": true,
+    "config_path": "tvscreener.yaml"
+  },
+  "runs": [
+    {}
+  ]
+}
