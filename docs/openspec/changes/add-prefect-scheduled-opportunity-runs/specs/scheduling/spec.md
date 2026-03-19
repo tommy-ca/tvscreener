@@ -48,6 +48,12 @@ Operators SHOULD be able to start Prefect server/workers using a repo-local defa
 - **WHEN** deployments are applied
 - **THEN** `prefect.yaml` and `.prefectignore` exist in the repo to provide a standard Prefect project configuration
 
+#### Scenario: Setup runbook is provided
+- **GIVEN** a new operator wants to run schedules locally
+- **WHEN** they follow the repo runbook
+- **THEN** the documented steps create a server, work pool, queues, workers, and deployments reproducibly
+- **AND** the runbook lives at `workflows/prefect/README.md`
+
 #### Scenario: Prefect vs app settings are separated
 - **GIVEN** the repo provides `prefect.yaml`
 - **WHEN** operators configure the system

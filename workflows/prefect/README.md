@@ -9,6 +9,12 @@ This directory contains an **optional** Prefect wrapper that runs `tvscreener` p
 uv sync --extra prefect
 ```
 
+To make analytics deployments reproducible (semantic table artifacts), also install:
+
+```bash
+uv sync --extra semantic
+```
+
 For the simplest local parity workflow, start from the repo-provided `.env` template:
 
 ```bash
@@ -28,11 +34,12 @@ uv run --extra prefect python workflows/prefect/run_batch.py --help
 
 ### Dedicated Prefect server (recommended)
 
-```bash
-uv run prefect server start --host 127.0.0.1 --port 4200 --background
-```
+Use the repo-local helper so `PREFECT_HOME` and `PREFECT_API_URL` are consistent:
 
-With `.env` configured, you can omit exports (CLI loads `.env` best-effort).
+```bash
+cp .env.example .env
+uv run python3 workflows/prefect/prefectctl.py server start --background
+```
 
 ### Export a spec (engine-agnostic)
 
@@ -150,35 +157,56 @@ Batch specs:
 - `workflows/prefect/batches/market_risk_proxy_both.json`
 - `workflows/prefect/batches/market_risk_proxy_data.json`
 
-Register deployments (requires a work pool + worker):
+Reproducible local setup (server + pool + queues + workers + deployments):
 
 ```bash
-export PREFECT_HOME="$PWD/.prefect-home"
-uv run prefect server start --host 127.0.0.1 --port 4200 --background
-export PREFECT_API_URL="http://127.0.0.1:4200/api"
+cp .env.example .env
+uv sync --extra prefect --extra semantic
 
-uv run prefect work-pool create --type process tvscreener
-uv run prefect worker start --pool tvscreener
+# Server
+uv run python3 workflows/prefect/prefectctl.py server start --background
 
-uv run python workflows/prefect/deploy_schedules.py --apply --work-pool tvscreener
+# Work pool + queues (create if missing)
+uv run prefect work-pool create --type process tvscreener --no-prompt
+uv run prefect work-queue create --pool tvscreener data --no-prompt
+uv run prefect work-queue create --pool tvscreener analytics --no-prompt
+
+# Workers (two terminals)
+uv run python3 workflows/prefect/prefectctl.py worker --queue data --limit 1
+uv run python3 workflows/prefect/prefectctl.py worker --queue analytics --limit 4
+
+# Deployments
+uv run python3 workflows/prefect/prefectctl.py apply --mode data
+uv run python3 workflows/prefect/prefectctl.py apply --mode analytics
+
+# Readiness + schedules (no manual triggers)
+uv run python3 workflows/prefect/prefectctl.py check --limit 10 --lookahead-minutes 90
 ```
 
 Runner-based scheduling (lightweight, recommended for single-machine):
 
 ```bash
-export PREFECT_HOME="$PWD/.prefect-home"
-uv run prefect server start --host 127.0.0.1 --port 4200 --background
-export PREFECT_API_URL="http://127.0.0.1:4200/api"
+cp .env.example .env
+uv sync --extra prefect
 
-uv run python workflows/prefect/deploy_schedules.py --apply
-uv run python workflows/prefect/deploy_schedules.py --start-runner
+uv run python3 workflows/prefect/prefectctl.py server start --background
+
+uv run python3 workflows/prefect/deploy_schedules.py --apply --engine runner
+uv run python3 workflows/prefect/deploy_schedules.py --start-runner
 ```
 
 By default the deploy script schedules **data-only** pipelines. To chain analytics after data, use:
 
 ```bash
-uv run python workflows/prefect/deploy_schedules.py --apply --mode both --work-pool tvscreener
+uv run python3 workflows/prefect/deploy_schedules.py --apply --mode both --engine worker --work-pool tvscreener
 ```
+
+### Deployment env defaults (analytics artifacts)
+
+Analytics/both worker deployments set these env vars by default (configurable via `.env` / `workflows/prefect/config.py`):
+- `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`
+- `TVSCREENER_PUBLISH_RESULTS_SUMMARY=1`
+- `TVSCREENER_SEMANTIC_RUNTIME=sidemantic` (set `TVSCREENER_PREFECT_ANALYTICS_SEMANTIC_RUNTIME=auto` to omit)
 
 #### Rerun semantics (what changes on disk vs in Iceberg)
 

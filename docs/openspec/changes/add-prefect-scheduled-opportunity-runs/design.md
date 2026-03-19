@@ -463,6 +463,7 @@ Worker queues (recommended split):
 To keep local/server/worker commands consistent, use the repo-local config and helper:
 - Config defaults: `workflows/prefect/config.py`
 - CLI helper: `workflows/prefect/prefectctl.py`
+- Runbook: `workflows/prefect/README.md`
 
 Config loading:
 - `workflows/prefect/config.py` loads `.env` via `python-dotenv` and parses settings via `pydantic-settings`.
