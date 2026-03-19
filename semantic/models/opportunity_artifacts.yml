@@ -1,0 +1,90 @@
+models:
+  - name: opportunity_artifacts
+    table: tvscreener.signals_batch
+    primary_key: entity_id
+    dimensions:
+      - name: fetched_at_utc
+        type: time
+        granularity: second
+      - name: params_hash
+        type: categorical
+      - name: entity_id
+        type: categorical
+      - name: pair
+        type: categorical
+        sql: PAIR
+      - name: name
+        type: categorical
+        sql: Name
+      - name: price
+        type: numeric
+        sql: Price
+      - name: rvol
+        type: numeric
+        sql: RVOL
+      - name: volume
+        type: numeric
+        sql: Volume
+      - name: ensemble_score
+        type: numeric
+        sql: ENSEMBLE_SCORE
+      - name: grade
+        type: categorical
+        sql: GRADE
+      - name: direction
+        type: categorical
+        sql: DIRECTION
+      - name: grid_aligned
+        type: numeric
+        sql: GRID_ALIGNED
+      - name: grid_total
+        type: numeric
+        sql: GRID_TOTAL
+      - name: confluence_level
+        type: categorical
+        sql: CONFLUENCE_LEVEL
+      - name: total_confluence
+        type: numeric
+        sql: TOTAL_CONFLUENCE
+      - name: tf_confluence
+        type: categorical
+        sql: TF_CONFLUENCE
+      - name: trend_score
+        type: numeric
+        sql: TREND_SCORE
+      - name: ma_score
+        type: numeric
+        sql: MA_SCORE
+      - name: osc_score
+        type: numeric
+        sql: OSC_SCORE
+      - name: roc_score
+        type: numeric
+        sql: ROC_SCORE
+      - name: roc_avg
+        type: numeric
+        sql: ROC_AVG
+      - name: roc_15
+        type: numeric
+        sql: ROC_15
+      - name: roc_60
+        type: numeric
+        sql: ROC_60
+      - name: roc_240
+        type: numeric
+        sql: ROC_240
+      - name: trend_dir
+        type: categorical
+        sql: TREND_DIR
+      - name: ma_dir
+        type: categorical
+        sql: MA_DIR
+      - name: osc_dir
+        type: categorical
+        sql: OSC_DIR
+      - name: roc_dir
+        type: categorical
+        sql: ROC_DIR
+      - name: rating_score
+        type: numeric
+        sql: RATING_SCORE

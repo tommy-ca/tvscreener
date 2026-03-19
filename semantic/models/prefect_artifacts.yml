@@ -1,0 +1,121 @@
+models:
+  - name: opportunity_top_rows
+    table: tvscreener.signals_batch_dedup
+    primary_key: entity_id
+    dimensions:
+      - name: params_hash
+        type: categorical
+      - name: fetched_at_utc
+        type: time
+        granularity: second
+      - name: entity_id
+        type: categorical
+      - name: PAIR
+        type: categorical
+      - name: Name
+        type: categorical
+      - name: Price
+        type: numeric
+      - name: RVOL
+        type: numeric
+      - name: Volume
+        type: numeric
+      - name: ENSEMBLE_SCORE
+        type: numeric
+      - name: ENSEMBLE_SCORE_ABS
+        type: numeric
+      - name: GRADE
+        type: categorical
+      - name: DIRECTION
+        type: categorical
+      - name: GRID_ALIGNED
+        type: numeric
+      - name: GRID_TOTAL
+        type: numeric
+      - name: CONFLUENCE_LEVEL
+        type: categorical
+      - name: TOTAL_CONFLUENCE
+        type: numeric
+      - name: TF_CONFLUENCE
+        type: categorical
+      - name: TREND_SCORE
+        type: numeric
+      - name: MA_SCORE
+        type: numeric
+      - name: OSC_SCORE
+        type: numeric
+      - name: ROC_SCORE
+        type: numeric
+      - name: ROC_AVG
+        type: numeric
+      - name: ROC_15
+        type: numeric
+      - name: ROC_60
+        type: numeric
+      - name: ROC_240
+        type: numeric
+      - name: TREND_DIR
+        type: categorical
+      - name: MA_DIR
+        type: categorical
+      - name: OSC_DIR
+        type: categorical
+      - name: ROC_DIR
+        type: categorical
+      - name: RATING_SCORE
+        type: numeric
+    metrics:
+      - name: opportunity_count
+        agg: count
+      - name: avg_ensemble_score
+        agg: avg
+        sql: ENSEMBLE_SCORE
+      - name: avg_total_confluence
+        agg: avg
+        sql: TOTAL_CONFLUENCE
+      - name: avg_trend_score
+        agg: avg
+        sql: TREND_SCORE
+      - name: avg_ma_score
+        agg: avg
+        sql: MA_SCORE
+      - name: avg_osc_score
+        agg: avg
+        sql: OSC_SCORE
+      - name: avg_roc_score
+        agg: avg
+        sql: ROC_SCORE
+
+  - name: opportunity_health
+    table: tvscreener.signals_pair_stats
+    primary_key: pair
+    dimensions:
+      - name: params_hash
+        type: categorical
+      - name: pair
+        type: categorical
+      - name: row_count
+        type: numeric
+      - name: direction_count
+        type: numeric
+      - name: duplicate_flag
+        type: numeric
+      - name: conflict_flag
+        type: numeric
+      - name: roc_flag
+        type: numeric
+    metrics:
+      - name: total_rows
+        agg: sum
+        sql: row_count
+      - name: unique_pairs
+        agg: count
+      - name: duplicate_pairs
+        agg: sum
+        sql: duplicate_flag
+      - name: conflict_pairs
+        agg: sum
+        sql: conflict_flag
+      - name: roc_score_zero_but_raw_nonzero
+        agg: sum
+        sql: roc_flag
