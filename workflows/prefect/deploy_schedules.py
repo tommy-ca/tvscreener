@@ -18,6 +18,7 @@ def _repo_root() -> Path:
 # Ensure repo root is importable when run as a script.
 sys.path.insert(0, str(_repo_root()))
 
+from workflows.prefect.config import load_config  # noqa: E402
 from workflows.prefect.run_batch import run_batch  # noqa: E402
 
 # `run_batch` is a Prefect Flow object at runtime.
@@ -32,7 +33,10 @@ class DeploymentSpec:
     timezone: str = "UTC"
 
 
-DEFAULT_WORK_POOL = "tvscreener"
+_CFG = load_config()
+DEFAULT_WORK_POOL = _CFG.work_pool
+DEFAULT_DATA_WORK_QUEUE = _CFG.data_work_queue
+DEFAULT_ANALYTICS_WORK_QUEUE = _CFG.analytics_work_queue
 
 
 def _deployments(*, mode: str) -> list[DeploymentSpec]:
@@ -109,6 +113,16 @@ def main() -> int:
         help="Deployment engine: runner (no worker) or worker (work pool)",
     )
     parser.add_argument(
+        "--data-work-queue",
+        default=DEFAULT_DATA_WORK_QUEUE,
+        help="Work queue name for data deployments (default: data)",
+    )
+    parser.add_argument(
+        "--analytics-work-queue",
+        default=DEFAULT_ANALYTICS_WORK_QUEUE,
+        help="Work queue name for analytics deployments (default: analytics)",
+    )
+    parser.add_argument(
         "--paused",
         action="store_true",
         help="Create deployments in a paused state",
@@ -160,6 +174,23 @@ def main() -> int:
             )
             continue
 
+        job_variables: dict[str, Any] = {"working_dir": str(_repo_root())}
+        if str(args.mode) == "analytics":
+            job_variables["env"] = {
+                "TVSCREENER_PUBLISH_TABLE_ARTIFACTS": "1",
+                # Semantic runtime defaults to auto (Sidemantic if installed).
+            }
+
+        work_queue_name: str | None = None
+        if str(args.engine) == "worker":
+            if d.name.endswith("-data"):
+                work_queue_name = str(args.data_work_queue)
+            elif d.name.endswith("-analytics"):
+                work_queue_name = str(args.analytics_work_queue)
+            else:
+                # both runs write to Iceberg; keep on the data queue.
+                work_queue_name = str(args.data_work_queue)
+
         if str(args.engine) == "worker":
             deployment = _RUN_BATCH_FLOW.to_deployment(
                 name=d.name,
@@ -169,7 +200,8 @@ def main() -> int:
                 tags=["tvscreener", "batch", "opportunity"],
                 description=f"Scheduled batch: {d.batch_path}",
                 work_pool_name=str(args.work_pool),
-                job_variables={"working_dir": str(_repo_root())},
+                work_queue_name=work_queue_name,
+                job_variables=job_variables,
             )
             _deployment_id = deployment.apply()
         else:
