@@ -151,6 +151,7 @@ Acceptance criteria:
 - Prefect results tables are generated from semantic queries (not from ad-hoc column lists).
 - Semantic validation can run in CI (non-interactive).
 - The semantic runtime does not require a long-running service for local usage.
+- Artifact schemas are stable across semantic runtimes (Sidemantic vs SQL fallback).
 
 License gate:
 - Do not add `sidemantic` as a required dependency unless AGPL-3.0 is explicitly accepted.
@@ -163,8 +164,12 @@ Enablement:
   - `export TVSCREENER_SEMANTIC_RUNTIME=sql`
 
 Current usage (in Prefect artifacts):
-- Top rows + health/lineage are computed via the built-in DuckDB/Iceberg SQL path.
-- Grade summary is computed via Sidemantic when available, and falls back to SQL on errors.
+- Top rows + health/lineage prefer the semantic runtime when Sidemantic is installed, and fall back to the built-in DuckDB/Iceberg SQL path on errors.
+- Grade summary prefers the semantic runtime when Sidemantic is installed, and falls back to SQL on errors.
+
+Semantic layer shape:
+- Semantic models define stable artifact surfaces (dimensions/aliases) so Prefect payload schemas do not drift between Sidemantic and SQL.
+- The Sidemantic adapter is slice-based (materialize only the needed `params_hash` subset into a temp DuckDB file) to avoid requiring a direct Iceberg-to-Sidemantic integration.
 
 Python compatibility:
 - Sidemantic currently requires Python >= 3.11.

@@ -283,6 +283,34 @@ The system SHOULD support defining a semantic model (dimensions + measures/metri
 - **WHEN** a Sidemantic semantic query fails at runtime (e.g. model load/query error)
 - **THEN** Prefect artifact generation continues using the built-in DuckDB/Iceberg SQL fallback
 
+### Requirement: Semantic artifacts have stable schemas
+Prefect artifacts SHOULD have stable column names/types regardless of semantic runtime.
+
+#### Scenario: Top rows schema is runtime-stable
+- **GIVEN** a Prefect run publishes a Top Rows preview (Markdown) and/or a results Table artifact
+- **WHEN** it runs with Sidemantic installed or uninstalled
+- **THEN** the output columns and their names are identical (no casing/key drift)
+
+#### Scenario: Grade summary schema is runtime-stable
+- **GIVEN** `TVSCREENER_PUBLISH_RESULTS_SUMMARY=1`
+- **WHEN** the summary is computed via Sidemantic or SQL fallback
+- **THEN** the output columns and their names are identical
+
+### Requirement: Sidemantic expands beyond summary-only usage
+When Sidemantic is installed, the system SHOULD be able to compute additional Prefect artifact payloads via semantic models (not only grade summaries).
+
+#### Scenario: Sidemantic can compute Top Rows
+- **GIVEN** Sidemantic is installed
+- **WHEN** Prefect table artifacts are enabled (`TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`)
+- **THEN** Top Rows can be produced via semantic queries against the semantic model surface
+- **AND** it falls back to SQL on errors
+
+#### Scenario: Sidemantic can compute Health checks
+- **GIVEN** Sidemantic is installed
+- **WHEN** a matrix Markdown artifact is published
+- **THEN** Health/lineage can be produced via semantic queries against the semantic model surface
+- **AND** it falls back to SQL on errors
+
 #### Scenario: Operator can force a runtime
 - **GIVEN** an operator wants explicit control
 - **WHEN** `TVSCREENER_SEMANTIC_RUNTIME=sql`
