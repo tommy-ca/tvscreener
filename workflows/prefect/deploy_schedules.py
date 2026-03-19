@@ -37,6 +37,9 @@ _CFG = load_config()
 DEFAULT_WORK_POOL = _CFG.work_pool
 DEFAULT_DATA_WORK_QUEUE = _CFG.data_work_queue
 DEFAULT_ANALYTICS_WORK_QUEUE = _CFG.analytics_work_queue
+DEFAULT_ANALYTICS_SEMANTIC_RUNTIME = _CFG.analytics_semantic_runtime
+DEFAULT_ANALYTICS_PUBLISH_TABLE_ARTIFACTS = _CFG.analytics_publish_table_artifacts
+DEFAULT_ANALYTICS_PUBLISH_RESULTS_SUMMARY = _CFG.analytics_publish_results_summary
 
 
 def _deployments(*, mode: str) -> list[DeploymentSpec]:
@@ -123,6 +126,21 @@ def main() -> int:
         help="Work queue name for analytics deployments (default: analytics)",
     )
     parser.add_argument(
+        "--analytics-semantic-runtime",
+        default=DEFAULT_ANALYTICS_SEMANTIC_RUNTIME,
+        help="Semantic runtime for analytics/both deployments (default: sidemantic; set to 'auto' to omit)",
+    )
+    parser.add_argument(
+        "--analytics-publish-table-artifacts",
+        default=str(int(DEFAULT_ANALYTICS_PUBLISH_TABLE_ARTIFACTS)),
+        help="Set to 1 to publish per-run results Table artifacts (default: 1)",
+    )
+    parser.add_argument(
+        "--analytics-publish-results-summary",
+        default=str(int(DEFAULT_ANALYTICS_PUBLISH_RESULTS_SUMMARY)),
+        help="Set to 1 to publish grade summary table (default: 1)",
+    )
+    parser.add_argument(
         "--paused",
         action="store_true",
         help="Create deployments in a paused state",
@@ -175,11 +193,19 @@ def main() -> int:
             continue
 
         job_variables: dict[str, Any] = {"working_dir": str(_repo_root())}
-        if str(args.mode) == "analytics":
-            job_variables["env"] = {
-                "TVSCREENER_PUBLISH_TABLE_ARTIFACTS": "1",
-                # Semantic runtime defaults to auto (Sidemantic if installed).
-            }
+        if str(args.mode) in {"analytics", "both"}:
+            env: dict[str, str] = {}
+            if str(args.analytics_publish_table_artifacts).strip() == "1":
+                env["TVSCREENER_PUBLISH_TABLE_ARTIFACTS"] = "1"
+            if str(args.analytics_publish_results_summary).strip() == "1":
+                env["TVSCREENER_PUBLISH_RESULTS_SUMMARY"] = "1"
+
+            runtime = str(args.analytics_semantic_runtime or "").strip().lower()
+            if runtime and runtime not in {"auto", "none"}:
+                env["TVSCREENER_SEMANTIC_RUNTIME"] = runtime
+
+            if env:
+                job_variables["env"] = env
 
         work_queue_name: str | None = None
         if str(args.engine) == "worker":
