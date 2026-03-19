@@ -15,6 +15,36 @@ from tvscreener.lib.query import EdgeQueryClient
 logger = logging.getLogger(__name__)
 
 
+def semantic_runtime() -> str:
+    """Select semantic runtime.
+
+    Policy:
+    - `TVSCREENER_SEMANTIC_RUNTIME=sql` forces built-in SQL.
+    - `TVSCREENER_SEMANTIC_RUNTIME=sidemantic` forces Sidemantic (falls back if not installed).
+    - unset/`auto`: use Sidemantic if installed, else SQL.
+    """
+
+    override = (os.getenv("TVSCREENER_SEMANTIC_RUNTIME") or "").strip().lower()
+    if override in {"sql", "duckdb"}:
+        return "sql"
+
+    if override in {"sidemantic"}:
+        try:
+            import sidemantic  # noqa: F401
+
+            return "sidemantic"
+        except Exception:
+            return "sql"
+
+    # auto
+    try:
+        import sidemantic  # noqa: F401
+
+        return "sidemantic"
+    except Exception:
+        return "sql"
+
+
 def _coerce_cell(value: Any) -> Any:
     # Keep Prefect artifact payloads JSON-friendly.
     try:
@@ -29,6 +59,13 @@ def _coerce_cell(value: Any) -> Any:
             return value.item()
         except Exception:
             return value
+
+    # Datetime-like objects
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
 
     return value
 
@@ -51,6 +88,19 @@ def semantic_opportunity_top_rows(
     """
 
     sql = f"""
+    WITH ranked AS (
+      SELECT
+        *,
+        row_number() OVER (
+          PARTITION BY PAIR
+          ORDER BY
+            TOTAL_CONFLUENCE DESC NULLS LAST,
+            abs(ENSEMBLE_SCORE) DESC NULLS LAST,
+            fetched_at_utc DESC NULLS LAST
+        ) AS rn
+      FROM df
+      WHERE params_hash = $params_hash
+    )
     SELECT
       PAIR,
       Name,
@@ -77,12 +127,14 @@ def semantic_opportunity_top_rows(
       MA_DIR,
       OSC_DIR,
       ROC_DIR,
-      RATING_SCORE
-    FROM df
-    WHERE params_hash = $params_hash
+      RATING_SCORE,
+      fetched_at_utc
+    FROM ranked
+    WHERE rn = 1
     ORDER BY
       TOTAL_CONFLUENCE DESC NULLS LAST,
-      ENSEMBLE_SCORE DESC NULLS LAST
+      abs(ENSEMBLE_SCORE) DESC NULLS LAST,
+      fetched_at_utc DESC NULLS LAST
     LIMIT {int(limit)}
     """
 
@@ -99,6 +151,64 @@ def semantic_opportunity_top_rows(
         return None
 
     return _df_to_rows(df, limit=limit)
+
+
+def semantic_opportunity_health(*, data_params_hash: str) -> dict[str, Any] | None:
+    """Health and lineage checks for table artifacts.
+
+    This is intended to catch:
+    - duplicated PAIR rows (and directional conflicts)
+    - `ROC_SCORE=0` while raw ROC_* values are non-zero
+    """
+
+    sql = """
+    WITH base AS (
+      SELECT
+        PAIR,
+        DIRECTION,
+        ROC_SCORE,
+        ROC_15,
+        ROC_60,
+        ROC_240
+      FROM df
+      WHERE params_hash = $params_hash
+    ),
+    per_pair AS (
+      SELECT
+        PAIR,
+        count(*) AS row_count,
+        count(DISTINCT DIRECTION) AS direction_count
+      FROM base
+      GROUP BY 1
+    )
+    SELECT
+      count(*) AS total_rows,
+      (SELECT count(*) FROM per_pair) AS unique_pairs,
+      (SELECT count(*) FROM per_pair WHERE row_count > 1) AS duplicate_pairs,
+      (SELECT count(*) FROM per_pair WHERE direction_count > 1) AS conflict_pairs,
+      sum(CASE WHEN ROC_SCORE = 0 AND (ROC_15 <> 0 OR ROC_60 <> 0 OR ROC_240 <> 0) THEN 1 ELSE 0 END)
+        AS roc_score_zero_but_raw_nonzero
+    FROM base
+    """
+
+    try:
+        with EdgeQueryClient(db_path=":memory:") as q:
+            df = q.query_sql(
+                "tvscreener.signals_batch", sql, params={"params_hash": data_params_hash}
+            )
+    except Exception as exc:
+        logger.debug("Semantic health query failed: %s", exc)
+        return None
+
+    if df.empty:
+        return None
+
+    out = {k: _coerce_cell(df.iloc[0][k]) for k in df.columns}
+    out["source_table"] = "tvscreener.signals_batch"
+    out["data_params_hash"] = data_params_hash
+    out["dedup_partition"] = "PAIR"
+    out["dedup_order"] = "TOTAL_CONFLUENCE desc, abs(ENSEMBLE_SCORE) desc, fetched_at_utc desc"
+    return out
 
 
 def resolve_latest_successful_data_params_hash(spec: PipelineRunSpec) -> str | None:
@@ -151,13 +261,27 @@ def semantic_opportunity_grade_summary(
 ) -> list[dict[str, Any]] | None:
     """Grade/direction summary for a run (matrix-friendly)."""
 
-    sidemantic_rows = sidemantic_opportunity_grade_summary(
-        data_params_hash=data_params_hash, limit=limit
-    )
-    if sidemantic_rows is not None:
-        return sidemantic_rows
+    if semantic_runtime() == "sidemantic":
+        sidemantic_rows = sidemantic_opportunity_grade_summary(
+            data_params_hash=data_params_hash, limit=limit
+        )
+        if sidemantic_rows is not None:
+            return sidemantic_rows
 
     sql = f"""
+    WITH ranked AS (
+      SELECT
+        *,
+        row_number() OVER (
+          PARTITION BY PAIR
+          ORDER BY
+            TOTAL_CONFLUENCE DESC NULLS LAST,
+            abs(ENSEMBLE_SCORE) DESC NULLS LAST,
+            fetched_at_utc DESC NULLS LAST
+        ) AS rn
+      FROM df
+      WHERE params_hash = $params_hash
+    )
     SELECT
       GRADE,
       DIRECTION,
@@ -168,8 +292,8 @@ def semantic_opportunity_grade_summary(
       avg(MA_SCORE) AS avg_ma_score,
       avg(OSC_SCORE) AS avg_osc_score,
       avg(ROC_SCORE) AS avg_roc_score
-    FROM df
-    WHERE params_hash = $params_hash
+    FROM ranked
+    WHERE rn = 1
     GROUP BY 1, 2
     ORDER BY opportunity_count DESC
     LIMIT {int(limit)}
@@ -191,7 +315,7 @@ def semantic_opportunity_grade_summary(
 
 
 def _sidemantic_enabled() -> bool:
-    return (os.getenv("TVSCREENER_SEMANTIC_RUNTIME") or "").strip().lower() == "sidemantic"
+    return semantic_runtime() == "sidemantic"
 
 
 def sidemantic_opportunity_grade_summary(

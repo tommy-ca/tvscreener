@@ -99,6 +99,7 @@ def _maybe_publish_prefect_matrix_artifact(
         from tvscreener.lib.semantic_artifacts import (
             resolve_latest_successful_data_params_hash,
             semantic_opportunity_grade_summary,
+            semantic_opportunity_health,
             semantic_opportunity_top_rows,
         )
 
@@ -147,6 +148,17 @@ def _maybe_publish_prefect_matrix_artifact(
                 "## Top Rows",
                 _to_md_table(rows, limit=15),
             ]
+
+        if data_params_hash:
+            health = semantic_opportunity_health(data_params_hash=data_params_hash)
+            if health:
+                blocks += [
+                    "",
+                    "## Health",
+                    "```json",
+                    json.dumps(health, indent=2, sort_keys=True, default=str),
+                    "```",
+                ]
 
         if (os.getenv("TVSCREENER_PUBLISH_RESULTS_SUMMARY") or "").strip() == "1" and summary:
             blocks += [
@@ -303,7 +315,7 @@ def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult,
     prev_semantic = os.environ.get("TVSCREENER_SEMANTIC_RUNTIME")
     os.environ["TVSCREENER_RUN_DIR"] = run_dir
     os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
-    os.environ["TVSCREENER_SEMANTIC_RUNTIME"] = "sidemantic"
+    # Do not force a semantic runtime; default is auto (Sidemantic if installed).
     try:
         res = LocalRunner(console=console).run(analytics_spec)
     finally:

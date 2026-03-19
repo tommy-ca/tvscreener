@@ -3,12 +3,18 @@ models:
     table: tvscreener.runs
     primary_key: run_id
     dimensions:
+      - name: run_id
+        type: categorical
       - name: started_at_utc
         type: time
         granularity: second
       - name: finished_at_utc
         type: time
         granularity: second
+      - name: params_hash
+        type: categorical
+      - name: pipeline_mode_requested
+        type: categorical
       - name: asset_type
         type: categorical
       - name: instrument_type
@@ -18,6 +24,8 @@ models:
       - name: pipeline_mode_executed
         type: categorical
       - name: scanner_family
+        type: categorical
+      - name: timeframes
         type: categorical
       - name: timeframe_set_id
         type: categorical

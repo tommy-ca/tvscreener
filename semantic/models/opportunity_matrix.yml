@@ -18,6 +18,8 @@ models:
         type: categorical
       - name: params_hash
         type: categorical
+      - name: code_version
+        type: categorical
       - name: entity_id
         type: categorical
       - name: pair
