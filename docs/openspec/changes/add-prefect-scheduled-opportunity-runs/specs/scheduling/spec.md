@@ -277,6 +277,12 @@ The system SHOULD support defining a semantic model (dimensions + measures/metri
 - **WHEN** `TVSCREENER_SEMANTIC_RUNTIME` is unset (auto)
 - **THEN** semantic queries fall back to the built-in DuckDB/Iceberg SQL
 
+#### Scenario: Sidemantic failures fall back to SQL
+- **GIVEN** Sidemantic is installed
+- **AND** `TVSCREENER_SEMANTIC_RUNTIME` is unset (auto) or set to `sidemantic`
+- **WHEN** a Sidemantic semantic query fails at runtime (e.g. model load/query error)
+- **THEN** Prefect artifact generation continues using the built-in DuckDB/Iceberg SQL fallback
+
 #### Scenario: Operator can force a runtime
 - **GIVEN** an operator wants explicit control
 - **WHEN** `TVSCREENER_SEMANTIC_RUNTIME=sql`

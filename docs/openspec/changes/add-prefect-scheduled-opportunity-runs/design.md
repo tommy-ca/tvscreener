@@ -162,6 +162,10 @@ Enablement:
   - `export TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
   - `export TVSCREENER_SEMANTIC_RUNTIME=sql`
 
+Current usage (in Prefect artifacts):
+- Top rows + health/lineage are computed via the built-in DuckDB/Iceberg SQL path.
+- Grade summary is computed via Sidemantic when available, and falls back to SQL on errors.
+
 Python compatibility:
 - Sidemantic currently requires Python >= 3.11.
 
