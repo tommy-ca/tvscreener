@@ -219,6 +219,16 @@ The system SHOULD deduplicate per-run decision outputs so table artifacts and ma
 - **WHEN** the deployment sets `job_variables.env.TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`
 - **THEN** both the Markdown matrix artifact and the per-run Table artifact are published
 
+#### Scenario: Scheduled analytics deployments enable grade summary
+- **GIVEN** analytics deployments run on a Prefect work pool
+- **WHEN** the deployment sets `job_variables.env.TVSCREENER_PUBLISH_RESULTS_SUMMARY=1`
+- **THEN** the optional grade summary Table artifact is published
+
+#### Scenario: Scheduled analytics deployments force Sidemantic runtime
+- **GIVEN** analytics deployments run on a Prefect work pool
+- **WHEN** the deployment sets `job_variables.env.TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
+- **THEN** semantic artifact queries prefer Sidemantic (with SQL fallback on errors)
+
 ### Requirement: `ROC_SCORE` is derived from canonical ROC columns
 The system SHOULD compute `ROC_SCORE` from canonical ROC columns (e.g. `ROC_15`, `ROC_60`, `ROC_240`) when present.
 

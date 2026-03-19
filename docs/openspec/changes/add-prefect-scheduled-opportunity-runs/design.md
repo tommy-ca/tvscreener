@@ -366,7 +366,8 @@ uv run python3 workflows/prefect/deploy_schedules.py --apply --mode analytics --
 
 Artifact publishing note:
 - Analytics worker deployments set `job_variables.env.TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` so table artifacts are published alongside the Markdown artifact.
-- They do not force a semantic runtime; the runtime auto-selects Sidemantic when installed, otherwise falls back to SQL.
+- They set `job_variables.env.TVSCREENER_PUBLISH_RESULTS_SUMMARY=1` to also publish the optional grade summary table.
+- They set `job_variables.env.TVSCREENER_SEMANTIC_RUNTIME=sidemantic` by default for reproducibility (configurable via `.env` / `workflows/prefect/config.py`).
 
 Lineage and health:
 - The matrix Markdown artifact includes a `## Health` JSON block derived from the same Iceberg source table used for table artifacts.
@@ -475,6 +476,10 @@ Settings split:
 
 Dotenv defaults:
 - `TVSCREENER_PREFECT_HOST` and `TVSCREENER_PREFECT_PORT` are the source of truth for the local server bind address.
+
+Deployment artifact defaults:
+- `TVSCREENER_PREFECT_ANALYTICS_SEMANTIC_RUNTIME` controls the runtime forced into analytics/both deployments (`sidemantic` by default; use `auto` to omit).
+- `TVSCREENER_PREFECT_ANALYTICS_PUBLISH_TABLE_ARTIFACTS` and `TVSCREENER_PREFECT_ANALYTICS_PUBLISH_RESULTS_SUMMARY` control Prefect artifact publication defaults.
 
 Common commands:
 ```bash
