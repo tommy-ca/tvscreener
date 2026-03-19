@@ -171,6 +171,10 @@ uv run prefect work-pool create --type process tvscreener --no-prompt
 uv run prefect work-queue create --pool tvscreener data --no-prompt
 uv run prefect work-queue create --pool tvscreener analytics --no-prompt
 
+# If these already exist, inspect instead of creating:
+uv run prefect work-pool ls
+uv run prefect work-queue ls --pool tvscreener
+
 # Workers (two terminals)
 uv run python3 workflows/prefect/prefectctl.py worker --queue data --limit 1
 uv run python3 workflows/prefect/prefectctl.py worker --queue analytics --limit 4
@@ -181,6 +185,17 @@ uv run python3 workflows/prefect/prefectctl.py apply --mode analytics
 
 # Readiness + schedules (no manual triggers)
 uv run python3 workflows/prefect/prefectctl.py check --limit 10 --lookahead-minutes 90
+```
+
+Verify in the UI:
+- Open `http://127.0.0.1:4200/`
+- Check Deployments for `tvscreener-batch/...`
+- Confirm upcoming scheduled runs and recent worker activity
+
+Re-applying deployments is safe and updates job env defaults:
+```bash
+uv run python3 workflows/prefect/prefectctl.py apply --mode data
+uv run python3 workflows/prefect/prefectctl.py apply --mode analytics
 ```
 
 Runner-based scheduling (lightweight, recommended for single-machine):

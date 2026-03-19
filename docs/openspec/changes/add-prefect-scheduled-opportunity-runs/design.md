@@ -499,6 +499,10 @@ uv run python3 workflows/prefect/prefectctl.py apply --mode analytics
 uv run python3 workflows/prefect/prefectctl.py check --limit 10 --lookahead-minutes 90
 ```
 
+Reproducibility notes:
+- The runbook at `workflows/prefect/README.md` is the operator source of truth for bringing up a local server, work pool, queues, workers, and deployments.
+- Re-applying deployments is expected and safe; it is how job env defaults for artifacts are refreshed.
+
 Override defaults (optional):
 - `TVSCREENER_PREFECT_HOST`, `TVSCREENER_PREFECT_PORT`
 - `TVSCREENER_PREFECT_WORK_POOL`

@@ -54,6 +54,12 @@ Operators SHOULD be able to start Prefect server/workers using a repo-local defa
 - **THEN** the documented steps create a server, work pool, queues, workers, and deployments reproducibly
 - **AND** the runbook lives at `workflows/prefect/README.md`
 
+#### Scenario: Deployments can be safely re-applied
+- **GIVEN** deployments have already been applied
+- **WHEN** an operator applies them again
+- **THEN** the deployments update in place (no duplicates)
+- **AND** job env defaults for artifact publishing are refreshed
+
 #### Scenario: Prefect vs app settings are separated
 - **GIVEN** the repo provides `prefect.yaml`
 - **WHEN** operators configure the system
