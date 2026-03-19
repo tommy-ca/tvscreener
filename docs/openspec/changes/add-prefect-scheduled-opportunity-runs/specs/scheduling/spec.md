@@ -21,6 +21,44 @@ The system SHOULD support registering deployments against a Prefect work pool so
 - **WHEN** `prefect worker start --pool tvscreener` is running
 - **THEN** scheduled flow runs are picked up and executed by the worker
 
+### Requirement: Data and analytics can run on separate worker queues
+The system SHOULD allow routing `data` and `analytics` deployments to different work queues.
+
+#### Scenario: Dedicated writer vs reader queues
+- **GIVEN** a work pool has two work queues (`data`, `analytics`)
+- **WHEN** deployments are applied
+- **THEN** `*-data` deployments use `work_queue_name=data`
+- **AND** `*-analytics` deployments use `work_queue_name=analytics`
+
+### Requirement: Prefect defaults are centralized
+Operators SHOULD be able to start Prefect server/workers using a repo-local default configuration.
+
+#### Scenario: Operator uses centralized config
+- **GIVEN** the repo provides `workflows/prefect/config.py` and `workflows/prefect/prefectctl.py`
+- **WHEN** an operator starts server/workers
+- **THEN** commands consistently use the same `PREFECT_HOME`, `PREFECT_API_URL`, work pool, and queue names
+
+#### Scenario: Central config reads dotenv
+- **GIVEN** the repo provides `.env` (gitignored) and `.env.example`
+- **WHEN** an operator runs `prefectctl.py`
+- **THEN** `.env` is loaded and settings are parsed consistently
+
+#### Scenario: Prefect project config is committed
+- **GIVEN** the repo uses Prefect
+- **WHEN** deployments are applied
+- **THEN** `prefect.yaml` and `.prefectignore` exist in the repo to provide a standard Prefect project configuration
+
+#### Scenario: Prefect vs app settings are separated
+- **GIVEN** the repo provides `prefect.yaml`
+- **WHEN** operators configure the system
+- **THEN** Prefect-native defaults are stored in `prefect.yaml`
+- **AND** TVScreener and runtime settings are stored in `.env` and parsed via `pydantic-settings`
+
+#### Scenario: Prefect defaults live in prefect.yaml
+- **GIVEN** `prefect.yaml` is committed
+- **WHEN** operators apply deployments
+- **THEN** the default work pool and default queue are defined in `prefect.yaml`
+
 ### Requirement: Workers run against a local repo checkout
 For Prefect `process` workers, scheduled deployments SHOULD assume the repo is already present on the worker machine.
 
@@ -66,6 +104,18 @@ Operators SHOULD wait for the Prefect API to be ready before applying deployment
 - **WHEN** an operator attempts to apply schedules or trigger deployments immediately
 - **THEN** transient API failures (e.g. `503`) may occur
 - **AND** operators SHOULD gate on `GET /api/ready` before proceeding
+
+#### Scenario: Operator can verify scheduled runs without triggering
+- **GIVEN** a Prefect work pool and work queue exist
+- **WHEN** an operator wants to confirm schedules are active
+- **THEN** they can query the Prefect API for the next scheduled runs (no manual deployment run required)
+
+#### Scenario: Operator can verify worker/queue health
+- **GIVEN** a Prefect work pool exists
+- **WHEN** an operator wants to confirm scheduled runs will be picked up
+- **THEN** they verify:
+  - the work queue is not paused
+  - at least one worker has a recent heartbeat/last-seen
 
 ### Requirement: Scheduled data runs fail on persistence errors
 Scheduled `data` runs SHOULD NOT report success when Iceberg persistence fails.
@@ -134,6 +184,21 @@ When running under Prefect, analytics result rows SHOULD be published as a Prefe
 - **THEN** it is derived from a query over `tvscreener.signals_batch` filtered by the `data` params hash
 - **AND** it falls back to per-run parquet outputs only if the Iceberg query fails
 
+### Requirement: Artifact tables are deduplicated and consistent
+The system SHOULD deduplicate per-run decision outputs so table artifacts and matrix previews do not show conflicting duplicates.
+
+#### Scenario: Top rows are unique per PAIR
+- **GIVEN** a run writes multiple rows for the same `PAIR`
+- **WHEN** the top-rows artifact is generated
+- **THEN** it deduplicates by `PAIR` (choosing the best row by confluence/score)
+
+#### Scenario: Artifact health is reported
+- **GIVEN** a run publishes artifacts under Prefect
+- **WHEN** artifacts are generated
+- **THEN** the matrix Markdown artifact includes a small health/lineage block
+- **AND** it includes duplicate and conflict counts (pairs with >1 row, and pairs with both directions)
+- **AND** it includes a small ROC sanity check (e.g. `ROC_SCORE=0` while any `ROC_<tf>` is non-zero)
+
 #### Scenario: Analytics run publishes a grade summary
 - **GIVEN** a Prefect flow run executed `pipeline_mode=analytics`
 - **WHEN** matrix-relevant attributes exist (e.g. `GRADE`, `DIRECTION`)
@@ -148,6 +213,11 @@ When running under Prefect, analytics result rows SHOULD be published as a Prefe
 - **GIVEN** one artifact per run spec is the default
 - **WHEN** `TVSCREENER_PUBLISH_TABLE_ARTIFACTS` is not set to `1`
 - **THEN** no per-run Table artifacts are published
+
+#### Scenario: Scheduled analytics deployments enable tables
+- **GIVEN** analytics deployments run on a Prefect work pool
+- **WHEN** the deployment sets `job_variables.env.TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`
+- **THEN** both the Markdown matrix artifact and the per-run Table artifact are published
 
 ### Requirement: `ROC_SCORE` is derived from canonical ROC columns
 The system SHOULD compute `ROC_SCORE` from canonical ROC columns (e.g. `ROC_15`, `ROC_60`, `ROC_240`) when present.
@@ -177,16 +247,40 @@ The system SHOULD support defining a semantic model (dimensions + measures/metri
 - **THEN** semantic model validation runs (schema + query compilation)
 - **AND** changes to the model are code-reviewed like any other change
 
+#### Scenario: Model audit is non-interactive
+- **GIVEN** CI is non-interactive
+- **WHEN** semantic model validation runs
+- **THEN** it uses a non-interactive validation command (e.g. `uv run python3 semantic/audit_sidemantic.py`)
+
 #### Scenario: Sidemantic integration is gated by licensing
 - **GIVEN** Sidemantic is AGPL-3.0
 - **WHEN** the project evaluates adopting it
 - **THEN** the decision is recorded and approved before adding Sidemantic as a required dependency
 
-#### Scenario: Sidemantic is used only when enabled
+#### Scenario: Sidemantic is optional (not required)
+- **GIVEN** the repo is installed without `--extra semantic`
+- **WHEN** semantic queries are executed (e.g. for Prefect artifacts)
+- **THEN** they execute via the built-in DuckDB/Iceberg SQL path
+
+#### Scenario: Sidemantic is the default when installed
 - **GIVEN** Sidemantic is installed as an optional extra
+- **WHEN** `TVSCREENER_SEMANTIC_RUNTIME` is unset (auto)
+- **THEN** semantic queries use Sidemantic
+
+#### Scenario: Operator can force Sidemantic
+- **GIVEN** Sidemantic is installed
 - **WHEN** `TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
-- **THEN** analytics table artifacts are generated from Sidemantic semantic queries
-- **AND** when not enabled, they are generated via the built-in DuckDB/Iceberg SQL
+- **THEN** semantic queries use Sidemantic
+
+#### Scenario: SQL fallback works without Sidemantic
+- **GIVEN** Sidemantic is not installed
+- **WHEN** `TVSCREENER_SEMANTIC_RUNTIME` is unset (auto)
+- **THEN** semantic queries fall back to the built-in DuckDB/Iceberg SQL
+
+#### Scenario: Operator can force a runtime
+- **GIVEN** an operator wants explicit control
+- **WHEN** `TVSCREENER_SEMANTIC_RUNTIME=sql`
+- **THEN** semantic queries use the built-in DuckDB/Iceberg SQL
 
 ### Requirement: Run metadata persistence can be strict
 When strict persistence is enabled, failing to append `tvscreener.runs` SHOULD fail the run.

@@ -149,7 +149,7 @@ Recommended integration shape (minimal infra):
 
 Acceptance criteria:
 - Prefect results tables are generated from semantic queries (not from ad-hoc column lists).
-- Semantic validation can run in CI.
+- Semantic validation can run in CI (non-interactive).
 - The semantic runtime does not require a long-running service for local usage.
 
 License gate:
@@ -157,7 +157,10 @@ License gate:
 
 Enablement:
 - Install: `uv sync --extra semantic`
-- Enable runtime: `export TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
+- Default runtime: if Sidemantic is installed, it is used automatically.
+- Force runtime:
+  - `export TVSCREENER_SEMANTIC_RUNTIME=sidemantic`
+  - `export TVSCREENER_SEMANTIC_RUNTIME=sql`
 
 Python compatibility:
 - Sidemantic currently requires Python >= 3.11.
@@ -212,6 +215,15 @@ Proposed next steps:
 3) Implement a thin wrapper that can execute semantic queries via DuckDB against Iceberg tables.
 4) Switch Prefect table artifacts to be generated from semantic queries (not raw parquet reads) once the model is stable.
 
+Model audit (non-interactive):
+```bash
+uv sync --extra semantic
+uv run python3 semantic/audit_sidemantic.py
+```
+
+Note:
+- `uv run sidemantic validate` launches an interactive TUI and is not suitable for CI.
+
 Semantic model files (initial draft):
 - `semantic/models/tvscreener_runs.yml`
 - `semantic/models/opportunity_matrix.yml`
@@ -242,21 +254,21 @@ Latest validated matrices:
 
 Validated at (UTC):
 - Data freshness validated via `tvscreener.runs`; latest `pipeline_mode_executed='data'` start times:
-  - forex majors: 2026-03-18 11:15:02
-  - forex minors: 2026-03-18 11:17:28
-  - crypto majors spot: 2026-03-18 11:25:13
-  - crypto majors perp: 2026-03-18 11:27:29
-  - crypto minors spot: 2026-03-18 11:29:38
-  - crypto minors perp: 2026-03-18 11:31:56
-  - market risk: 2026-03-18 11:45:07
+  - forex majors: 2026-03-19 15:15:16
+  - forex minors: 2026-03-19 15:17:48
+  - crypto majors spot: 2026-03-19 15:13:42
+  - crypto majors perp: 2026-03-19 15:25:57
+  - crypto minors spot: 2026-03-19 15:28:33
+  - crypto minors perp: 2026-03-19 15:31:13
+  - market risk: 2026-03-19 15:30:09
 - Analytics matrices rerendered from Iceberg at:
-  - forex majors: 2026-03-18 11:40:04
-  - forex minors: 2026-03-18 11:40:12
-  - crypto majors spot: 2026-03-18 11:50:17
-  - crypto majors perp: 2026-03-18 11:50:28
-  - crypto minors spot: 2026-03-18 11:48:17
-  - crypto minors perp: 2026-03-18 11:48:26
-  - market risk: 2026-03-18 11:49:18
+  - forex majors: 2026-03-19 15:27:27
+  - forex minors: 2026-03-19 15:28:42
+  - crypto majors spot: 2026-03-19 15:30:30
+  - crypto majors perp: 2026-03-19 15:31:47
+  - crypto minors spot: 2026-03-19 15:33:14
+  - crypto minors perp: 2026-03-19 15:34:37
+  - market risk: 2026-03-19 15:37:08
 
 Validation note:
 - Verified scheduled `data` runs were recent (within the last hour) before rerendering the analytics matrices.
@@ -343,6 +355,15 @@ To schedule `analytics` rerenders (matrix-only, read-only with respect to signal
 uv run python3 workflows/prefect/deploy_schedules.py --apply --mode analytics --engine worker --work-pool tvscreener
 ```
 
+Artifact publishing note:
+- Analytics worker deployments set `job_variables.env.TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` so table artifacts are published alongside the Markdown artifact.
+- They do not force a semantic runtime; the runtime auto-selects Sidemantic when installed, otherwise falls back to SQL.
+
+Lineage and health:
+- The matrix Markdown artifact includes a `## Health` JSON block derived from the same Iceberg source table used for table artifacts.
+- Health checks track duplicate/conflicting pairs and a ROC sanity check (`ROC_SCORE=0` while raw ROC_* are non-zero).
+- Table artifacts are deduplicated to match the matrix (partition by `PAIR`, choose best row by confluence/score).
+
 To create them paused first:
 ```bash
 uv run python3 workflows/prefect/deploy_schedules.py --apply --paused --engine worker --work-pool tvscreener
@@ -408,3 +429,62 @@ Expected lakehouse metadata:
 ```bash
 uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe, pipeline_mode_executed, success, result_count, started_at_utc FROM df WHERE asset_type='stock' ORDER BY started_at_utc DESC LIMIT 8"
 ```
+- Readiness check (no manual triggers):
+  - Confirms Prefect API readiness and prints the next scheduled runs for the pool/queue:
+    - `PREFECT_API_URL="http://127.0.0.1:4200/api" uv run python3 workflows/prefect/check_schedules.py --pool=tvscreener --work-queue=data,analytics --limit=10 --lookahead-minutes=90`
+
+Worker queues (recommended split):
+- Create two work queues in the `tvscreener` pool:
+  - `data` (writers)
+  - `analytics` (read-mostly)
+- Apply deployments with queue routing:
+  - `uv run python3 workflows/prefect/deploy_schedules.py --apply --mode data --engine worker --work-pool tvscreener --data-work-queue data`
+  - `uv run python3 workflows/prefect/deploy_schedules.py --apply --mode analytics --engine worker --work-pool tvscreener --analytics-work-queue analytics`
+- Start workers:
+  - writer: `uv run prefect worker start --pool tvscreener --work-queue data --limit 1 --no-prompt`
+  - reader: `uv run prefect worker start --pool tvscreener --work-queue analytics --limit 4 --no-prompt`
+- Update the readiness checker to monitor both:
+  - `PREFECT_API_URL="http://127.0.0.1:4200/api" uv run python3 workflows/prefect/check_schedules.py --pool=tvscreener --work-queue=data,analytics --limit=10 --lookahead-minutes=90`
+  - Also reports:
+    - work-queue paused state
+    - last-seen timestamps for active workers
+### Central Prefect config
+
+To keep local/server/worker commands consistent, use the repo-local config and helper:
+- Config defaults: `workflows/prefect/config.py`
+- CLI helper: `workflows/prefect/prefectctl.py`
+
+Config loading:
+- `workflows/prefect/config.py` loads `.env` via `python-dotenv` and parses settings via `pydantic-settings`.
+
+Prefect project config:
+- `prefect.yaml` (generated by `prefect init`) is committed as the standard Prefect project config.
+
+Settings split:
+- Prefect-native project/deployment defaults live in `prefect.yaml` (work pool / default queue / job variables template).
+- Runtime connection and repo-specific defaults live in `.env` and `workflows/prefect/config.py` (parsed via `pydantic-settings`).
+
+Dotenv defaults:
+- `TVSCREENER_PREFECT_HOST` and `TVSCREENER_PREFECT_PORT` are the source of truth for the local server bind address.
+
+Common commands:
+```bash
+# Server
+uv run python3 workflows/prefect/prefectctl.py server start --background
+
+# Workers
+uv run python3 workflows/prefect/prefectctl.py worker --queue data --limit 1
+uv run python3 workflows/prefect/prefectctl.py worker --queue analytics --limit 4
+
+# Apply deployments (routes to queues)
+uv run python3 workflows/prefect/prefectctl.py apply --mode data
+uv run python3 workflows/prefect/prefectctl.py apply --mode analytics
+
+# Readiness (no triggers)
+uv run python3 workflows/prefect/prefectctl.py check --limit 10 --lookahead-minutes 90
+```
+
+Override defaults (optional):
+- `TVSCREENER_PREFECT_HOST`, `TVSCREENER_PREFECT_PORT`
+- `TVSCREENER_PREFECT_WORK_POOL`
+- `TVSCREENER_PREFECT_DATA_QUEUE`, `TVSCREENER_PREFECT_ANALYTICS_QUEUE`
