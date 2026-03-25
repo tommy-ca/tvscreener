@@ -35,6 +35,6 @@ deployments:
   work_pool:
     # Defaults for this repo; programmatic deployments may override.
     name: tvscreener
-    work_queue_name: data
+    work_queue_name: default
     job_variables:
       working_dir: .

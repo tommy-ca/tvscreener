@@ -4,6 +4,7 @@ artifacts/
 .env
 .prefect-home/
 .prefect-home.bak*/
+.tvscreener/
 *.parquet
 *.meta.json
 .tmp/
@@ -62,6 +63,11 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+
+# Extensions (standalone uv project)
+extensions/.venv/
+extensions/uv.lock
+extensions/src/**/*.egg-info/
 
 # Translations
 *.mo
