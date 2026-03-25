@@ -3,6 +3,337 @@
 date: 2026-03-07
 branch: feat/forex-strategy-scanner
 
+## 2026-03-25: Essential pipelines validation (Prefect server)
+
+Target:
+- Rerun **data + analytics** (`--pipeline both`) using the Iceberg catalog.
+- Rerender **analytics-only** matrices (`--pipeline analytics`) to validate the read path.
+
+Prefect:
+```bash
+cp .env.example .env
+uv run python3 workflows/prefect/prefectctl.py server start --background
+uv run python3 workflows/prefect/prefectctl.py check --limit 5 --lookahead-minutes 30
+```
+
+Analytics-only rerenders (`--pipeline analytics --matrix --limit 50`):
+- Forex majors: `artifacts/runs/70696cd35fb6f9f781e621a79fe0df995e70adb6925ed81052ba9aaad8fcc890/run_result.json`
+- Forex minors: `artifacts/runs/2ed6f942ae981b9c26606953e7a5a679efc1ed5526bbae63953cebc35517393f/run_result.json`
+- Crypto spot majors: `artifacts/runs/b966754797cb6428bfe242b903c82119bcd923224be60299f8c3c8c6883d1e8e/run_result.json`
+- Crypto perp majors: `artifacts/runs/02cdbd5ea6d54772f41e63878f3ece1df983038d485d12daf1d44212a99d984b/run_result.json`
+- Crypto spot minors: `artifacts/runs/3f18bd080d54f2118eeee02be0f79f9eab605cfe95d8977de244d7051a577388/run_result.json`
+- Crypto perp minors: `artifacts/runs/6b1f70993b3d2628e7f67014a74e41b1d6073ebc1c038fd18153e89bee97d5ed/run_result.json`
+- Market risk basket: `artifacts/runs/504ad7c6595b6e54d95243e9919d623e0bc7503acb42151fa5eab432c28dbaf1/run_result.json`
+
+Full refresh (`--pipeline both --matrix --limit 50`), verified Iceberg writes to:
+`tvscreener.bronze`, `tvscreener.silver`, `tvscreener.gold`, `tvscreener.signals_batch`, `tvscreener.signals_latest`, and audit appends to `tvscreener.runs`.
+
+- Forex majors: `artifacts/runs/b0621cdacfc9e3f4c2180c479b9cba5f6132525c33f83e512c440caea350fb0d/run_result.json`
+- Forex minors: `artifacts/runs/b5f5d2522b7ce46250203f4e81e86079fb2287f630b73e289407a3f2cf090c09/run_result.json`
+- Crypto spot majors: `artifacts/runs/08612e192e148ce072ef2c3cd070fb932b200f445d41662cfd0506f11a44672f/run_result.json`
+- Crypto perp majors: `artifacts/runs/d2a32c39ba1c443342705ac45c3befc996917c8b08c25d437743728f3404bec3/run_result.json`
+- Crypto spot minors: `artifacts/runs/676161ff4943e75fdeb2eabf6dc440b19fe5edf24b63e2db216aebffa53febfa/run_result.json`
+- Crypto perp minors: `artifacts/runs/b21f48952ba7b6efa086281ac58b87b6fd05662a1b8abc65aec9ed2e02c9c6d6/run_result.json`
+- Market risk basket: `artifacts/runs/742c343a8e2440a17409d1fbe6e6f332ec71998f9dd4c575c850a0414dad8b2e/run_result.json`
+
+Next validation steps:
+- Worker engine: apply deployments and run `data` + `analytics` workers; validate scheduled runs appear in `prefectctl.py check`.
+- Iceberg/DuckDB: run a small set of `tvscreener-scan query ...` checks against `tvscreener.runs` and `tvscreener.signals_latest`.
+- Packaging: extract workflows + custom orchestration into an extensions distribution that depends on installed upstream `tvscreener`.
+
+### 2026-03-25: Extensions execution plan (upstream-first)
+
+Goal:
+- Ship `extensions/` as a standalone uv project (`tvscreener-ext`).
+- Ensure extension CLIs resolve upstream `tvscreener` from site-packages even when invoked inside this repo.
+- Provide operator runset + Prefect scheduling helpers.
+
+Progress:
+- [x] Added `extensions/pyproject.toml` and `extensions/src/tvscreener_ext/*`.
+- [x] Added upstream-import guard: `extensions/src/tvscreener_ext/upstream.py`.
+- [x] Added CLIs:
+  - `tvscreener-ext-scan` (delegates to upstream `tvscreener-scan` entrypoint)
+  - `tvscreener-prefectctl` (server/pool/worker/check)
+  - `tvscreener-deploy-schedules` (runner/worker deployments using bundled batches)
+  - `tvscreener-ext-validate` (essential runset via upstream `tvscreener-scan --runner prefect`)
+
+Next:
+- [ ] Validate upstream resolution from repo root:
+  - `uv run --project extensions python -c "from tvscreener_ext.upstream import ensure_upstream_tvscreener; ensure_upstream_tvscreener(); import tvscreener; print(tvscreener.__file__)"`
+- [ ] Validate Prefect helpers from extensions:
+  - `uv run --project extensions --extra prefect tvscreener-prefectctl server start --background`
+  - `uv run --project extensions --extra prefect tvscreener-prefectctl pool`
+  - `uv run --project extensions --extra prefect tvscreener-prefectctl check --limit 5 --lookahead-minutes 30`
+- [ ] Validate essential runset from extensions:
+  - `uv run --project extensions --extra prefect tvscreener-ext-validate --mode both`
+  - `uv run --project extensions --extra prefect tvscreener-ext-validate --mode analytics`
+
+Blocker discovered:
+- The installed package-index `tvscreener==0.2.1` does not ship `tvscreener-scan` or `tvscreener.lib.*`.
+- Current extensions Prefect batch flow (`extensions/src/tvscreener_ext/prefect/run_batch.py`) still imports
+  `tvscreener.lib.pipeline_runner` and therefore requires an upstream version that includes those modules.
+
+Rescheduled plan (two tracks):
+
+- Track A: thin-wrapper extensions (preferred if upstream publishes workflows)
+  - [ ] Pin/choose an upstream `tvscreener` version that ships the required pipeline + CLI surface area
+  - [ ] Re-run essential pipelines via `uv run --project extensions --extra prefect tvscreener-ext-validate`
+  - [ ] Apply deployments via `uv run --project extensions --extra prefect tvscreener-deploy-schedules --apply --engine worker --mode both`
+  - [ ] Start workers via `uv run --project extensions --extra prefect tvscreener-prefectctl worker ...`
+
+- Track B: extensions-owned pipelines (if upstream stays lightweight)
+  - [x] Implement `PipelineRunSpec` + runner inside `tvscreener-ext`
+  - [x] Implement Iceberg persistence + DuckDB analytics inside `tvscreener-ext`
+  - [x] Wire Prefect flow(s) to extensions runner
+  - [ ] Re-run essential pipelines and scheduled deployments using extensions-only code
+
+Track B runbook (extensions-owned pipelines):
+
+```bash
+uv run --project extensions --extra prefect tvscreener-prefectctl server start --background
+uv run --project extensions --extra prefect tvscreener-prefectctl pool
+
+# In-process Prefect validation (creates flow runs in server)
+uv run --project extensions --extra prefect tvscreener-ext-validate --runner prefect --mode both --limit 10
+uv run --project extensions --extra prefect tvscreener-ext-validate --runner prefect --mode analytics --limit 10
+
+# Worker engine scheduling
+uv run --project extensions --extra prefect tvscreener-deploy-schedules --apply --engine worker --mode both --work-pool tvscreener
+uv run --project extensions --extra prefect tvscreener-prefectctl worker --queue data --limit 1
+uv run --project extensions --extra prefect tvscreener-prefectctl worker --queue analytics --limit 2
+
+uv run --project extensions --extra prefect tvscreener-prefectctl check --limit 10 --lookahead-minutes 90
+```
+
+Track B smoke validation (2026-03-25):
+- Local runner (Iceberg writes + DuckDB analytics):
+  - Forex majors `both`: `artifacts/runs/f152e8e9c9178de625ece694a2013c00eb216c77553724d227a26874983e8e46/run_result.json`
+  - Forex majors `analytics`: `artifacts/runs/afe0ccb8be89e2342b6f09171e57b9a63450d53703d8b52214543b95b5e1fb51/run_result.json`
+- Prefect runner (server-backed flow runs) essential runset `analytics` with `limit=5`:
+  - `artifacts/runs/bb2d341dd44fb67821f0431e80695eeb491610871080c558ae1345dbe6a035a0/run_result.json`
+  - `artifacts/runs/e3605228a6957fa9966c7cb06ab2f334373487b278f720d55829450fdc6ced26/run_result.json`
+  - `artifacts/runs/a7762f7bfa362dc29a991c571192af332dbd0ec8b55c68d63e910cfffa5b4897/run_result.json`
+  - `artifacts/runs/4e0799f4b69a775d4201d7fac62fabd89e6b4f35d16bcca7244be1e98d01b745/run_result.json`
+  - `artifacts/runs/0e292f9ed8410b7167548959a7b202b3cad0516f523a33694cf67030b7de91ca/run_result.json`
+  - `artifacts/runs/49d59cf639a14371d61aa8fcca09f99c2a731b89cc16a6c53586cdafeb0913e3/run_result.json`
+  - `artifacts/runs/e931f3d361481841c17196dc63fc7eeac77f141043a111a90862a235d407f871/run_result.json`
+
+Track B rerun (2026-03-25):
+- Prefect runner essential runset `both` with `limit=50`:
+  - `artifacts/runs/2787c4cf270e9ea0b31f4b537cbe6bfabb2705ded0fa3e252c6767db90026704/run_result.json`
+  - `artifacts/runs/e40acdba96de4fae70fbd1728b4abab744e714c015188fc51c4edc86e1fca3a3/run_result.json`
+  - `artifacts/runs/a231a20f1002c1726050b7983d2a70979084594c46406f30c92359d8a9ffab64/run_result.json`
+  - `artifacts/runs/e407620d411cacf6c929c60401ca6c679a65fab2a855745d81286429dd263093/run_result.json`
+  - `artifacts/runs/0b67507caf12ee7301768afa8812753791d3a57c56acc458770ab27c066028f6/run_result.json`
+  - `artifacts/runs/d9b6ab9e575170e95fb4028a5a0c45c78a2497e7373376e2ef840b67262b62d5/run_result.json`
+  - `artifacts/runs/481967a19f2cf08e1a427228b03a808af036d2cb81d260a2a7cce6c6ad0c5f9c/run_result.json`
+
+Track B reschedule attempt (Prefect worker engine):
+- Applied `mode=both` deployments to work pool `tvscreener`.
+- Prefect check shows deployments exist but `status=NOT_READY` and `scheduled_runs=count 0`.
+- Root cause: Prefect 3 requires an image or remote storage strategy for worker deployments; file-path deployments
+  without storage/image do not become READY.
+- Next: pick a deployment packaging strategy (docker image or remote storage pull steps) and re-apply deployments.
+
+Update (2026-03-25):
+- Confirmed Prefect worker deployments remain `status=NOT_READY` even when using `entrypoint_type=MODULE_PATH`.
+- Confirmed that `prefect.runner.Runner.start` is a coroutine and must be awaited (fixed in
+  `extensions/src/tvscreener_ext/deploy_schedules.py`).
+- `Runner.start(run_once=True)` pauses deployments on exit; avoid using it as a scheduling verification step.
+
+Update (2026-03-25): Prefect server + scheduling reset
+- Discovered a stale Prefect server process from a different checkout was bound to port 4200.
+- Discovered Prefect OSS server on SQLite can hit `database is locked` / HTTP 503 when multiple Prefect processes
+  share the same `PREFECT_HOME` and the DB grows large.
+- Recovery: stop/kill Prefect workers + runner + server, move `.prefect-home/` aside, recreate it, and restart the
+  server.
+- After reset, worker-engine scheduling started materializing scheduled flow runs:
+  - `uv run --project extensions --extra prefect tvscreener-prefectctl check --pool tvscreener --work-queue data,analytics --limit 10 --lookahead-minutes 180`
+  - Example output: `scheduled_runs=count 6` (forex/crypto) and later market-risk also appeared after scheduler loop.
+
+Track B rerun (2026-03-25, fresh Prefect server):
+- Analytics-only essential runset `limit=10` completed:
+  - `artifacts/runs/ea728a862ccf4cde62a9e7ba809915d90dbfea9a980a222def5e305947ec5bcc/run_result.json`
+  - `artifacts/runs/fd14db205290c808eb9e5fed1af32564d95d16df7ba56397d2e44009b57d383f/run_result.json`
+  - `artifacts/runs/48b3cab2071ab65e5d6f7e675d7c0396afc2bd84dbc40c5fd3d15d4a5f60d052/run_result.json`
+  - `artifacts/runs/ad8b6a3d05aedc13ec44b6954a9117f6e1dd7c3d3980eec907b93483ee0523ef/run_result.json`
+  - `artifacts/runs/aebe081b44106d1503d05f8ca5d902b6c653371e558e1b38d6012af3b7909d9e/run_result.json`
+  - `artifacts/runs/334ab4655c995dea0f45332100e2bbafa17a79702222ec0b45f01115a77094ee/run_result.json`
+  - `artifacts/runs/3906797c45ec66db2ce956ba8e173b209aa027e5d10325970226eb1e9e22d148/run_result.json`
+
+Track B reschedule (2026-03-25, fresh Prefect server + scheduler):
+- Applied worker deployments (mode=both):
+  - Forex both: deployment id `59a10416-f93c-4f48-9c2a-5b8d5f48f351`
+  - Crypto both: deployment id `8820d787-fd56-4cbc-b1d0-6f4f20f37c03`
+  - Market risk both: deployment id `e0bb42e1-ac4a-45c4-a260-982d78099c40`
+- Verified scheduled runs materialize in work queues via `tvscreener-prefectctl check`.
+
+Track B reschedule execution (2026-03-25):
+- Ran a `ProcessWorker` once (`--run-once`) to execute one scheduled run.
+- First attempt failed immediately due to Prefect flow run naming: `tvscreener-batch` used
+  `flow_run_name="tvscreener-batch-{batch_id}"` but `batch_id` is not a flow parameter, causing `KeyError: 'batch_id'`.
+  - Worker log: `artifacts/prefect/worker-data-runonce.log`
+  - Fix: update `extensions/src/tvscreener_ext/prefect/run_batch.py` to use a parameter-based flow run name.
+
+- After the fix, a worker successfully executed one scheduled run end-to-end (market risk, `both`):
+  - Worker log: `artifacts/prefect/worker-data-runonce-2.log`
+  - Run artifacts: `artifacts/runs/481967a19f2cf08e1a427228b03a808af036d2cb81d260a2a7cce6c6ad0c5f9c/run_result.json`
+
+Environment parity updates (2026-03-25):
+- Added `TVSCREENER_PREFECT_WORK_QUEUE=default` defaults and routed worker deployments to it.
+- Added extensions default lakehouse base dir: `TVSCREENER_LAKEHOUSE_BASE_DIR=.tvscreener/lakehouse` (repo-local).
+
+Prefect worker parity verification (2026-03-25):
+- Re-applied worker deployments targeting the `default` queue and confirmed deployments are `status=READY`:
+  - `uv run --project extensions --extra prefect tvscreener-deploy-schedules --apply --engine worker --mode both --work-pool tvscreener --work-queue default`
+  - `uv run --project extensions --extra prefect tvscreener-prefectctl check --pool tvscreener --work-queue default --limit 10 --lookahead-minutes 180`
+
+Lakehouse audit (repo-local base dir):
+- Ran a local Track B run with explicit base dir:
+  - `artifacts/runs/e09d25516610af9d888d144fe8f2618d20a0f82c00a37485ef0cc1dbbe9a2a29/run_result.json`
+- Audited `signals_latest` grouping (repo-local lakehouse):
+  - `TVSCREENER_LAKEHOUSE_BASE_DIR=.tvscreener/lakehouse uv run --project extensions tvscreener-ext-audit --groups 50`
+- Repo-local table inventory after a single market-risk run:
+  - `tvscreener.bronze` rows=12
+  - `tvscreener.signals_latest` rows=4
+  - `tvscreener.runs` rows=1
+
+Analytics-only read-only check (repo-local lakehouse):
+- Verified `signals_latest` `max(fetched_at_utc)` for stock/market_risk is unchanged by an analytics-only rerender.
+
+Essential data pipeline check (2026-03-25, repo-local lakehouse):
+- Ran data pipelines for:
+  - forex majors/minors
+  - crypto binance spot/perp majors/minors
+- Verified `signals_latest` groups updated via `tvscreener-ext-audit`.
+
+Analytics rerender + artifacts (2026-03-25):
+- Ran analytics-only rerenders under Prefect for the essential runset (`limit=50`) with:
+  - `TVSCREENER_PUBLISH_RESULTS_SUMMARY=1`
+  - `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`
+- Verified per-run `matrix.md` is written under run artifacts:
+  - `artifacts/runs/cc8c29c4a4de6158b357a68cfaabad04bc63524e452cfc3cb84ca562a95f0ae9/matrix.md`
+  - `artifacts/runs/31e57d209cfa72b62c9890c388004dee662cee6b0bcf1af8d2829b832554189c/matrix.md`
+  - `artifacts/runs/9a704781b4ad44da15d169c1c8db28eede98bda2f049e8df466d885d2998d4e4/matrix.md`
+  - `artifacts/runs/ffb4402010132b077bad7099083f9aac25290d14722d68e1482bf907fe979516/matrix.md`
+  - `artifacts/runs/7cfa07eeb8c6cd744f289da6da2dc8ed2d26f269415194cdda2d3a0efcb0d3cb/matrix.md`
+  - `artifacts/runs/82ecf11ac72bfbe432d70853ee224c21af557d017cccdfc8c8107404b5a75d9c/matrix.md`
+  - `artifacts/runs/ca42e453033023826290fb083b0e0f4a30f0f5eae9a93db0d650880d0c069fbd/matrix.md`
+
+Prefect split deployments plan (2026-03-25):
+- Deploy data pipelines separately for:
+  - forex majors, forex minors
+  - binance crypto spot majors, perp majors, spot minors, perp minors
+- Deploy analytics pipelines separately for the same universes/instruments.
+- Analytics deployments publish Prefect markdown + table artifacts.
+
+Prefect split deployments applied (2026-03-25):
+- Applied split data deployments (all on `default` queue):
+  - `opportunity-forex-majors-data` id `4e060511-9e77-4d18-8cf3-2999ec0424b5`
+  - `opportunity-forex-minors-data` id `81be130f-ee29-4692-aca5-b9b096767a65`
+  - `opportunity-crypto-binance-spot-majors-data` id `558ddf6d-d880-4c34-b325-5bae1d781b37`
+  - `opportunity-crypto-binance-perp-majors-data` id `44757527-d429-4664-b9c8-4001b23f9410`
+  - `opportunity-crypto-binance-spot-minors-data` id `3b49c5c8-d90f-4507-9d23-2230a7f441de`
+  - `opportunity-crypto-binance-perp-minors-data` id `27607c31-754e-4e01-bcd2-504b30a93212`
+- Applied split analytics deployments (publish Prefect markdown + table artifacts):
+  - `opportunity-forex-majors-analytics` id `05eb28b3-f5f6-48f3-9de2-dcb028464a4b`
+  - `opportunity-forex-minors-analytics` id `bfd3eacd-3638-4eaa-b191-4c6263146f12`
+  - `opportunity-crypto-binance-spot-majors-analytics` id `027752ee-802a-4369-9fc2-aef78bac367d`
+  - `opportunity-crypto-binance-perp-majors-analytics` id `71392916-0eef-486f-b246-224affd13c49`
+  - `opportunity-crypto-binance-spot-minors-analytics` id `0678640a-ae2c-4459-b751-c1c23d713816`
+  - `opportunity-crypto-binance-perp-minors-analytics` id `ae52c564-9de1-41ea-96e9-65a41bb4909a`
+
+Reschedule + proceed (2026-03-25):
+- Rescheduled split deployments by re-applying `--mode split-data` and `--mode split-analytics`.
+- Verified split deployments schedule onto work queue `default`.
+- Proceeded by running a `process` worker on `default` queue and executing scheduled runs.
+  - Worker log: `artifacts/prefect/worker-default-limit3.log`
+
+Terminology standardization plan (2026-03-25):
+- Add canonical terminology spec (Prefect-native terms + MLOps/DataOps mapping).
+- Update existing specs/design docs to reference canonical `pipeline_mode` semantics.
+- Prefer deterministic identifiers (`params_hash`, artifact keys, deployment names) and avoid citing Prefect-generated
+  whimsical flow run names in docs.
+
+Composable Prefect flows plan (2026-03-25):
+- Audit legacy Prefect deployment scripts in `workflows/prefect/` and map them to extensions.
+- Decompose the extensions Prefect flow into stage tasks:
+  - data stage task
+  - analytics stage task
+- Keep `pipeline_mode=both` as legacy single-task by default; allow composition via `TVSCREENER_PREFECT_COMPOSE_BOTH=1`.
+
+Composable Prefect flows evidence (2026-03-25):
+- Ran a worker with `TVSCREENER_PREFECT_COMPOSE_BOTH=1` and observed explicit stage tasks in logs:
+  - `run_data_stage` followed by `run_analytics_stage`
+  - Worker log: `artifacts/prefect/worker-default-composeboth-limit5.log`
+- Example composed flow run:
+  - Prefect flow run id: `0545dd69-aa2d-416c-bb73-35a49bdb4958`
+
+Cleanup/refactor pass (2026-03-25):
+- Removed repo-root `Dockerfile` (keep `extensions/Dockerfile` as the packaging starting point).
+- Updated `prefect.yaml` default work queue to `default`.
+- Updated `tvscreener-prefectctl check` output to use `flow_run_id` rather than Prefect run names.
+- Extracted Prefect stage tasks into `extensions/src/tvscreener_ext/prefect/stages.py` so flows can import/compose them.
+
+Post-cleanup verification (2026-03-25):
+- Verified `tvscreener-prefectctl check` prints `flow_run_id` (not Prefect run names) for scheduled runs.
+
+Prefect queue hygiene (2026-03-25):
+- Observed that scheduled runs can accumulate and become `Late`, delaying on-demand deployment runs.
+- Added `tvscreener-prefectctl prune-late` and used it to cancel late scheduled runs on `default` queue.
+
+Prefect native commands refactor (2026-03-25):
+- Refactored `tvscreener-prefectctl check` and `prune-late` to use Prefect CLI JSON outputs where possible:
+  - `prefect deployment ls -o json`
+  - `prefect work-queue ls -p tvscreener -o json`
+  - `prefect work-queue preview default -p tvscreener -o json`
+
+Prefect wrappers: no subprocess (2026-03-25):
+- Removed subprocess calls to Prefect CLI from extensions wrappers.
+- `tvscreener-prefectctl` uses Prefect Python APIs:
+  - server management via `prefect.cli.server.start/stop`
+  - pool/queue creation via `PrefectClient.create_work_pool/create_work_queue`
+  - worker execution via `prefect.workers.process.ProcessWorker`
+  - check/prune via `PrefectClient` (`read_deployments`, `read_work_queue_by_name`, `get_scheduled_flow_runs_for_work_pool`, `set_flow_run_state`).
+
+Prefect wrappers audit (2026-03-25):
+- Confirmed `extensions/src/tvscreener_ext/prefect_check.py` no longer uses subprocess.
+- Confirmed `extensions/src/tvscreener_ext/prefectctl.py` no longer shells out to `prefect`.
+
+Prefect artifacts audit plan (2026-03-25):
+- Ensure Prefect server is ready (`tvscreener-prefectctl server ensure --background`).
+- Start `ProcessWorker` for `default` queue in background.
+- Trigger data deployments for:
+  - forex majors/minors
+  - crypto binance spot/perp majors/minors
+- Trigger analytics deployments for the same universes/instruments.
+- List Prefect artifacts via API:
+  - `tvscreener-prefectctl artifacts --type markdown --key-like tvscreener-matrix-%`
+  - `tvscreener-prefectctl artifacts --type table --key-like tvscreener-results-%`
+
+Prefect table artifacts fix (2026-03-25):
+- Observed markdown artifacts existed but no `tvscreener-results-*` table artifacts.
+- Root cause: `TVSCREENER_PUBLISH_TABLE_ARTIFACTS` env injection was not reliably present in process worker runtime.
+- Fix: default Prefect stage tasks to publish table artifacts unless `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=0`.
+- Additional fix: Prefect Table artifacts require JSON-serializable values; datetimes must be coerced to ISO strings.
+
+DuckDB semantic table artifacts (2026-03-25):
+- Updated analytics pipeline to write semantic tables using DuckDB modeled queries:
+  - `results_top_rows.json`
+  - `results_grade_summary.json`
+- Updated Prefect stage tasks to publish Table artifacts from those JSON tables (no pandas/parquet conversion).
+
+Prefect server wrapper (2026-03-25):
+- Observed `tvscreener-prefectctl server start --background` fails if port 4200 is already in use.
+- Updated wrapper to catch Prefect CLI `SystemExit` and return non-zero with an error.
+
+Track B rerun (2026-03-25, rerun #2):
+- Prefect runner essential runset `both` started at ~11:37; last flow run in the sequence was still running when this
+  log entry was written:
+  - `prefect flow-run inspect aff53797-d5db-4af1-8e5c-8f7444f5db0c`
+- The last run (crypto spot minors) appeared to hang; cancelled and reran locally with a smaller limit:
+  - Crypto spot minors `both` (limit=10): `artifacts/runs/abbb384e7b72f2f197e7922b21bf027f727c787e077004b8e6558dd711f705ff/run_result.json`
+
 ## Goals
 - Rerun **data** pipelines for forex `all` universe.
 - Rerun **analytics** pipelines to produce the **matrix view** for forex screeners.

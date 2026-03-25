@@ -25,6 +25,8 @@ Files:
 - `run_result.json`
 - `<scanner_family>_results.parquet` (analytics success)
 - `matrix.txt` (only when `matrix=true`)
+- `results_top_rows.json` (DuckDB semantic; analytics success)
+- `results_grade_summary.json` (DuckDB semantic; analytics success)
 
 Batch dir: `artifacts/runs/batch/<batch_id>/`
 - `batch_result.json`
@@ -42,6 +44,30 @@ Single payload regardless of `pipeline_mode`:
 - `lakehouse` pointers (table names used; optional snapshot identifiers when available)
 
 The goal is to avoid requiring consumers to read logs to find what was produced.
+
+### Current implementation note (2026-03-25)
+The on-disk `run_result.json` payload is currently optimized for pipeline replay and quick inspection:
+
+- Top-level fields include:
+  - `spec_version`, `params_hash`, `scanner_family`
+  - `pipeline_mode_requested`, `pipeline_mode_executed`
+  - `artifacts_dir`, `run_spec_path`, `run_result_path`
+  - `results_path` (when analytics executed)
+  - `matrix_path` (when matrix executed and captured)
+  - `success`
+- Pipeline stage payloads are nested:
+  - `data` for data-only and both-mode runs
+  - `analytics` for analytics-only and both-mode runs (includes `results_path`)
+
+This differs from the target “single flat payload” shape above; consumers should treat the schema as v2 and rely on
+the stable paths (`run_spec.json`, `run_result.json`, `matrix.txt`, `*_results.parquet`) rather than stage-specific JSON
+filenames.
+
+### Prefect artifacts note
+Prefect Table artifacts require JSON-serializable cell values.
+
+- Coerce numpy/pandas scalars to Python primitives.
+- Coerce datetimes to ISO-8601 strings before publishing.
 
 ### Migration
 - Introduce `artifacts/runs/` as the canonical default.

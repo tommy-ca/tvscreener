@@ -20,7 +20,7 @@ library package.
 #### Scenario: Core install does not require engine dependencies
 - **WHEN** a user installs the base `tvscreener` package
 - **THEN** it does not require installing Dagster/Prefect/Temporal/Airflow/Argo SDKs
-- **AND** workflow-engine adapters, if provided, live outside the core library package
+- **AND** workflow-engine adapters, if provided, live outside the core library package (e.g. an extensions distribution)
 
 #### Scenario: Exported spec can be used as engine run configuration
 - **WHEN** `--runner export` is used
@@ -52,3 +52,9 @@ Analytics pipelines SHALL NOT mutate Iceberg tables unless explicitly modeled as
 - **WHEN** an analytics-only run renders the matrix view from Iceberg
 - **THEN** `tvscreener.signals_latest` `max(fetched_at_utc)` remains unchanged by that run
 
+### Requirement: Analytics outputs include a matrix markdown artifact
+Analytics pipelines SHALL render a human-readable matrix view.
+
+#### Scenario: Analytics writes matrix markdown
+- **WHEN** an analytics run completes successfully
+- **THEN** it writes `matrix.md` under the run artifacts directory

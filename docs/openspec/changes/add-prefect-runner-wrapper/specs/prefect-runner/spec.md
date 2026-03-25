@@ -16,6 +16,16 @@ or `pip`.
 - **THEN** the system executes the run via Prefect without requiring an intermediate exported spec file
 - **AND** writes artifacts under `artifacts/runs/<params_hash>/` by default (or the CLI-provided `--artifacts-dir`)
 
+Extensions-owned pipelines note:
+- When upstream `tvscreener` from the package index does not ship `tvscreener-scan`, the equivalent CLI is
+  `uv run --project extensions --extra prefect tvscreener-ext-scan --runner prefect ...`.
+
+#### Scenario: Extensions runner executes Iceberg + DuckDB pipelines
+- **GIVEN** upstream `tvscreener` provides TradingView API screeners (`tvscreener.core.*`)
+- **WHEN** an operator runs `tvscreener-ext-scan --runner prefect --pipeline both ...`
+- **THEN** the data stage writes Iceberg tables
+- **AND** the analytics stage reads from Iceberg and writes results parquet + matrix artifacts
+
 Legacy compatibility: `--artifacts-dir artifacts/prefect` continues to work during migration.
 
 #### Scenario: Prefect is the default workflow runner for scanner commands
@@ -91,6 +101,10 @@ When executing under Prefect, the system SHALL persist the matrix output as an a
 The Prefect wrapper SHALL execute pipeline modes in a way that preserves the architecture boundary between data and
 analytics.
 
+Terminology:
+- `pipeline_mode=data`: ingestion + feature engineering + Iceberg writes
+- `pipeline_mode=analytics`: reporting + Iceberg reads + artifact writes
+
 #### Scenario: Data pipeline task is allowed to write Iceberg
 - **WHEN** the wrapper executes a run with `pipeline_mode == "data"`
 - **THEN** it executes the data pipeline only (fetch → Iceberg writes)
@@ -104,6 +118,39 @@ analytics.
 - **WHEN** the wrapper executes a run with `pipeline_mode == "both"`
 - **THEN** it runs the data task first
 - **AND** runs the analytics task second using the canonical lakehouse outputs
+
+#### Scenario: Prefect tasks have bounded runtime
+- **GIVEN** upstream API calls or Iceberg writes can hang
+- **WHEN** a run executes under Prefect
+- **THEN** the Prefect task has a finite timeout
+- **AND** operators can configure the timeout via `TVSCREENER_PREFECT_TASK_TIMEOUT_SECONDS`
+- **AND** if the task runs in a worker thread, the timeout MAY only be enforced after blocking calls return
+
+#### Scenario: Scheduled batch runs do not crash on flow run naming
+- **GIVEN** `tvscreener-batch` is deployed for worker execution
+- **WHEN** the deployment creates a scheduled flow run
+- **THEN** the flow run starts successfully under a worker
+- **AND** the flow run name template references only declared flow parameters
+
+#### Scenario: Prefect publishes matrix and results artifacts
+- **GIVEN** a run completes with `matrix.md` and a results parquet
+- **WHEN** `TVSCREENER_PUBLISH_RESULTS_SUMMARY=1`
+- **THEN** Prefect publishes a markdown artifact for the matrix
+- **AND** Prefect publishes a table artifact preview of results by default
+- **AND** when `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=0`, Prefect does not publish the table artifact
+
+#### Scenario: Table artifacts come from DuckDB semantic tables
+- **GIVEN** an analytics run writes DuckDB semantic tables under the run directory
+- **WHEN** Prefect publishes table artifacts
+- **THEN** it reads `results_top_rows.json` and publishes `tvscreener-results-*`
+- **AND** it reads `results_grade_summary.json` and publishes `tvscreener-results-*-summary`
+
+#### Scenario: Both mode writes Iceberg then renders via analytics engine
+- **GIVEN** the lakehouse catalog is configured (local or remote)
+- **WHEN** a `pipeline_mode == "both"` run executes under Prefect
+- **THEN** the data task writes the canonical tables in order (Bronze -> Silver -> Gold -> signals)
+- **AND** the analytics task reads from Iceberg snapshots (no upstream fetch)
+- **AND** the run writes `run_spec.json`, `run_result.json`, `matrix.txt` (when requested), and a results parquet
 
 #### Scenario: Full refresh avoids redundant upstream fetch for strategy
 - **GIVEN** strategy analytics consumes `tvscreener.signals_latest`
@@ -162,3 +209,9 @@ When analytics runs under Prefect, the resulting artifacts SHALL be discoverable
 - **WHEN** the wrapper executes `pipeline_mode == "both"`
 - **THEN** `run_result.json` includes `analytics.results_path`
 - **AND** the file referenced by `analytics.results_path` exists when the analytics task succeeds
+
+#### Scenario: DuckDB-powered analytics is reproducible when installed
+- **GIVEN** the optional analytics/semantic dependencies are installed
+- **WHEN** analytics runs under Prefect
+- **THEN** any DuckDB-powered summaries (semantic layer, audits/reports) can be computed from Iceberg-backed inputs
+- **AND** the outputs do not depend on interactive CLI output

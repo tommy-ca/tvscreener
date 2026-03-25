@@ -4,7 +4,18 @@
 
 We schedule the `tvscreener-batch` Prefect flow (`workflows/prefect/run_batch.py`) with a `batch_path` parameter.
 
+Flow run naming note:
+- `flow_run_name` templates must reference flow parameters; using computed locals (like `batch_id` derived from JSON)
+  can crash worker execution with `KeyError` during flow run context setup.
+
+Operator note:
+- Prefect may assign whimsical flow run names; use `flow_run_id` for deterministic references in docs and tooling.
+
 Default scheduling behavior: **data pipelines only**.
+
+Terminology note:
+- `pipeline_mode=data` is ingestion + feature engineering (Iceberg writes).
+- `pipeline_mode=analytics` is reporting (Iceberg reads + artifact writes).
 
 Analytics runs can be:
 - invoked on demand (recommended), or
@@ -21,6 +32,18 @@ Strict persistence also applies to appending the audit row in `tvscreener.runs`.
 ### Analytics validation (post scheduled data)
 
 After a scheduled data run completes, validate by rerendering the matrix from Iceberg:
+
+If running in extensions-owned pipeline mode (Track B), prefer `tvscreener-ext-scan` / `tvscreener-ext-validate`
+instead of repo-local `tvscreener-scan`.
+
+Track B example (rerender analytics from Iceberg):
+
+```bash
+PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
+  uv run --project extensions --extra prefect tvscreener-ext-scan \
+    --runner prefect --scanner opportunity --pipeline analytics \
+    --asset-type forex --universe majors --timeframes 15,60,240 --matrix --limit 50 --config tvscreener.yaml
+```
 
 ```bash
 PREFECT_HOME="$PWD/.prefect-home" PREFECT_API_URL="http://127.0.0.1:4200/api" \
@@ -53,9 +76,43 @@ Recommended operator policy:
 - Treat data as "fresh" when the latest successful `pipeline_mode_executed='data'` run is within the last 60 minutes.
 - If stale, trigger the `*-data` deployments via a Prefect worker, then rerender analytics.
 
+Prefect 3 worker scheduling note (Track B):
+- Worker-based scheduled flow runs require a Prefect-compatible code distribution strategy.
+- Without remote storage (S3/GCS/Azure) or a container image that includes the extensions code, deployments can
+  remain `status=NOT_READY`.
+- In local OSS server mode, schedules can still materialize flow runs even when deployments are `NOT_READY`.
+  If `scheduled_runs=count 0`, it is often due to server/scheduler issues (server not running, scheduler disabled,
+  or SQLite lock contention) rather than the deployment status alone.
+- Local fallback: run the essential runset in-process under Prefect (`tvscreener-ext-validate --runner prefect`).
+
+Prefect server reliability note (local SQLite):
+- When running Prefect OSS server on SQLite, concurrent server/worker/runner processes sharing the same
+  `PREFECT_HOME` can hit `database is locked` errors.
+- Operator recovery: stop all Prefect processes and reset `PREFECT_HOME` (move `.prefect-home/` aside and start
+  fresh).
+
 Concurrency note:
 - Iceberg writes use optimistic concurrency; concurrent runs can conflict ("branch main has changed").
 - Prefer serial execution for writers: Prefect worker `--limit 1` and batch `data_concurrency=1`.
+
+Environment defaults (extensions):
+- `TVSCREENER_PREFECT_WORK_POOL` default: `tvscreener`
+- `TVSCREENER_PREFECT_WORK_QUEUE` default: `default` (recommended)
+- `TVSCREENER_LAKEHOUSE_BASE_DIR` should be set (recommended: `.tvscreener/lakehouse`) so workers read/write the
+  same Iceberg catalog/warehouse across local and remote deployments.
+
+Recommended deployment split:
+- Data deployments per universe/instrument, followed by analytics deployments that publish Prefect artifacts.
+- This reduces Iceberg write contention and makes failures easier to rerun.
+- For local/remote parity, keep the split deployments on the `default` work queue.
+
+Artifacts (Prefect UI):
+- Matrix markdown: published as a markdown artifact when `TVSCREENER_PUBLISH_RESULTS_SUMMARY=1`.
+- Results preview: published as a table artifact when `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1`.
+
+Composable flow note (extensions):
+- The `tvscreener-batch` flow uses stage tasks for `pipeline_mode=data` and `pipeline_mode=analytics`.
+- Optional: set `TVSCREENER_PREFECT_COMPOSE_BOTH=1` to compose `pipeline_mode=both` from the stage tasks.
 
 Example audit queries:
 ```bash
@@ -64,6 +121,26 @@ uv run tvscreener-scan query tvscreener.runs --sql "SELECT asset_type, universe,
 # Optional: verify a few key symbols are fresh in the analytics read-path.
 uv run tvscreener-scan query tvscreener.signals_latest --sql "SELECT entity_id, strftime(fetched_at_utc,'%Y-%m-%d %H:%M:%S') AS fetched_at_utc, params_hash FROM df WHERE entity_id IN ('BINANCE:BTCUSDT','BINANCE:ETHUSDT') ORDER BY fetched_at_utc DESC LIMIT 10"
 ```
+
+Validation snapshot (2026-03-25, Prefect server at `PREFECT_API_URL=http://127.0.0.1:4200/api`):
+
+- Analytics-only rerender (read-only against medallion/product tables; writes artifacts + appends `tvscreener.runs`):
+  - Forex majors: `artifacts/runs/70696cd35fb6f9f781e621a79fe0df995e70adb6925ed81052ba9aaad8fcc890/run_result.json`
+  - Forex minors: `artifacts/runs/2ed6f942ae981b9c26606953e7a5a679efc1ed5526bbae63953cebc35517393f/run_result.json`
+  - Crypto spot majors: `artifacts/runs/b966754797cb6428bfe242b903c82119bcd923224be60299f8c3c8c6883d1e8e/run_result.json`
+  - Crypto perp majors: `artifacts/runs/02cdbd5ea6d54772f41e63878f3ece1df983038d485d12daf1d44212a99d984b/run_result.json`
+  - Crypto spot minors: `artifacts/runs/3f18bd080d54f2118eeee02be0f79f9eab605cfe95d8977de244d7051a577388/run_result.json`
+  - Crypto perp minors: `artifacts/runs/6b1f70993b3d2628e7f67014a74e41b1d6073ebc1c038fd18153e89bee97d5ed/run_result.json`
+  - Market risk basket: `artifacts/runs/504ad7c6595b6e54d95243e9919d623e0bc7503acb42151fa5eab432c28dbaf1/run_result.json`
+
+- Full refresh `pipeline_mode=both` (fetch -> Iceberg writes -> DuckDB-backed analytics render; strict persist enabled):
+  - Forex majors: `artifacts/runs/b0621cdacfc9e3f4c2180c479b9cba5f6132525c33f83e512c440caea350fb0d/run_result.json`
+  - Forex minors: `artifacts/runs/b5f5d2522b7ce46250203f4e81e86079fb2287f630b73e289407a3f2cf090c09/run_result.json`
+  - Crypto spot majors: `artifacts/runs/08612e192e148ce072ef2c3cd070fb932b200f445d41662cfd0506f11a44672f/run_result.json`
+  - Crypto perp majors: `artifacts/runs/d2a32c39ba1c443342705ac45c3befc996917c8b08c25d437743728f3404bec3/run_result.json`
+  - Crypto spot minors: `artifacts/runs/676161ff4943e75fdeb2eabf6dc440b19fe5edf24b63e2db216aebffa53febfa/run_result.json`
+  - Crypto perp minors: `artifacts/runs/b21f48952ba7b6efa086281ac58b87b6fd05662a1b8abc65aec9ed2e02c9c6d6/run_result.json`
+  - Market risk basket: `artifacts/runs/742c343a8e2440a17409d1fbe6e6f332ec71998f9dd4c575c850a0414dad8b2e/run_result.json`
 
 Artifact contract:
 - Per run (`artifacts/runs/<params_hash>/`):
