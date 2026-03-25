@@ -1,0 +1,12 @@
+{
+  "batch_id": "crypto-binance-spot-minors-data",
+  "defaults": {
+    "asset_type": "crypto",
+    "scanner_family": "opportunity",
+    "pipeline_mode": "data",
+    "timeframes": ["15", "60", "240"],
+    "matrix": false,
+    "instrument_type": "spot"
+  },
+  "runs": [{ "universe": "minors" }]
+}
