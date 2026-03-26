@@ -39,6 +39,10 @@ Composable Prefect stage tasks live in:
   separate extensions distribution that depends on the installed upstream `tvscreener`.
 - Goal: workflows can run without cloning or patching upstream; local development can still use this repo.
 
+Upstream isolation policy:
+- Treat the in-repo `tvscreener/` tree as an upstream mirror; do not apply extensions-driven fixes there.
+- Implement orchestration/lakehouse/analytics behavior in `extensions/` (or update upstream at the source).
+
 Packaging reality check:
 - If the package-index upstream does not ship the workflow/pipeline surface area (e.g. `tvscreener-scan`, pipeline
   runner, Prefect wrapper), extensions MUST own those layers or upstream must publish a compatible version.

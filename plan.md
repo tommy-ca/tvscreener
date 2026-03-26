@@ -3,6 +3,18 @@
 date: 2026-03-07
 branch: feat/forex-strategy-scanner
 
+## 2026-03-26: Audit snapshot (current truth)
+
+This file includes historical notes from earlier iterations. Current validated direction:
+
+- Track B is the active path: extensions-owned pipelines live under `extensions/`.
+- Repo-local `tvscreener/` is treated as an upstream mirror; do not apply extensions-driven fixes there.
+- Prefect orchestration, lakehouse writes, DuckDB analytics, and Prefect artifact publishing live in `extensions/`.
+- When documentation conflicts, prefer the OpenSpec change packages under:
+  - `docs/openspec/changes/refactor-extract-extensions-from-upstream/`
+  - `docs/openspec/changes/refactor-prefect-composable-flows/`
+  - `docs/openspec/changes/update-terminology-and-interfaces/`
+
 ## 2026-03-25: Essential pipelines validation (Prefect server)
 
 Target:
@@ -52,10 +64,10 @@ Progress:
 - [x] Added `extensions/pyproject.toml` and `extensions/src/tvscreener_ext/*`.
 - [x] Added upstream-import guard: `extensions/src/tvscreener_ext/upstream.py`.
 - [x] Added CLIs:
-  - `tvscreener-ext-scan` (delegates to upstream `tvscreener-scan` entrypoint)
+  - `tvscreener-ext-scan` (extensions-owned pipeline runner)
   - `tvscreener-prefectctl` (server/pool/worker/check)
   - `tvscreener-deploy-schedules` (runner/worker deployments using bundled batches)
-  - `tvscreener-ext-validate` (essential runset via upstream `tvscreener-scan --runner prefect`)
+  - `tvscreener-ext-validate` (essential runset)
 
 Next:
 - [ ] Validate upstream resolution from repo root:
@@ -70,8 +82,7 @@ Next:
 
 Blocker discovered:
 - The installed package-index `tvscreener==0.2.1` does not ship `tvscreener-scan` or `tvscreener.lib.*`.
-- Current extensions Prefect batch flow (`extensions/src/tvscreener_ext/prefect/run_batch.py`) still imports
-  `tvscreener.lib.pipeline_runner` and therefore requires an upstream version that includes those modules.
+- This is why Track B (extensions-owned pipelines) is used.
 
 Rescheduled plan (two tracks):
 
