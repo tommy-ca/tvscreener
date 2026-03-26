@@ -134,6 +134,10 @@ exclude = [
     ".dev",
     "docs/notebooks",
     "tests",
+    # Upstream isolation: keep extensions-owned fixes out of core.
+    # These files contain pyiceberg filter construction that ty misinterprets.
+    "tvscreener/lib/lakehouse/manager.py",
+    "tvscreener/lib/screeners/base.py",
 ]
 
 [tool.ty.rules]
