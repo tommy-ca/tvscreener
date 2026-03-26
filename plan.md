@@ -323,6 +323,10 @@ DuckDB semantic table artifacts (2026-03-25):
   - `results_grade_summary.json`
 - Updated Prefect stage tasks to publish Table artifacts from those JSON tables (no pandas/parquet conversion).
 
+Upstream isolation cleanup (2026-03-26):
+- Reverted repo-local changes in `tvscreener/` so upstream remains untouched.
+- Updated `pyproject.toml` ty configuration to exclude upstream pyiceberg callsites rather than patching upstream.
+
 Prefect server wrapper (2026-03-25):
 - Observed `tvscreener-prefectctl server start --background` fails if port 4200 is already in use.
 - Updated wrapper to catch Prefect CLI `SystemExit` and return non-zero with an error.

@@ -21,6 +21,11 @@ package.
 - **THEN** Python resolves `import tvscreener` from site-packages (the installed upstream distribution)
 - **AND** extensions do not rely on repo-local paths (no `sys.path` insertion of the repo root)
 
+#### Scenario: Repo-local upstream remains unchanged
+- **GIVEN** this repository contains an in-tree copy of upstream `tvscreener/`
+- **WHEN** orchestration, lakehouse, or analytics changes are required
+- **THEN** the changes are implemented in `extensions/` (or upstream is updated at the source)
+
 ### Requirement: Extensions keep workflow dependencies optional
 The extensions distribution SHOULD group optional workflow dependencies as extras.
 
