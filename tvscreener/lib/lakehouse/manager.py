@@ -151,10 +151,10 @@ class LakehouseManager:
 
                         col_filter = None
                         if unique_vals:
-                            col_filter = In(term=col, values=set(unique_vals))
+                            col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
 
                         if has_null:
-                            null_filter = IsNull(term=col)
+                            null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
                             col_filter = Or(col_filter, null_filter) if col_filter else null_filter
 
                         if col_filter:
