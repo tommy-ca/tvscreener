@@ -1253,3 +1253,21 @@ Outcomes:
 Next Steps:
 - Apply these robustness principles to future extension patches.
 - Continue tracking matrix rerun pipelines using the validated filter engine.
+
+## 2026-04-01: Root Repository Cleanup (SOLID, KISS, DRY, YAGNI)
+
+Goal: Maintain hygiene in the project root by removing defunct pipelines, old markdown tickets, experimental submodules, and artifact configs left over from the structural refactor (shifting from local pipeline implementations towards using `extensions/src/tvscreener_ext/`).
+
+Outcomes:
+- Removed legacy development and tooling folders: `.dev/`, `.github/`, `todos/`, `app/`, `semantic/`, `workflows/`.
+- Dropped tests targeting deprecated pipeline architectures (`tests/test_analytics_pipeline.py`).
+- Kept `extensions/` containing the validated standalone lakehouse persistence and edge analytics logic.
+- Kept `tests/unit/` containing standard unit tests targeting the upstream `tvscreener` distribution.
+
+Rationale:
+- **YAGNI (You Aren't Gonna Need It)**: Stripped out old notebooks, unmaintained UI app components, deprecated `semantic/` artifacts logic, and defunct github action pipelines. The core system runs completely out of `extensions/` now; there's no need to preserve old iteration remnants in the `feat/forex-strategy-scanner` branch.
+- **KISS (Keep It Simple, Stupid)**: Moving forward, repository operations, documentation, and logic should all exist in clearly demarcated boundaries: `docs/`, `extensions/` (pipeline extensions/monkeypatches), and `tests/`.
+
+Next Steps:
+- Ensure CI and extension validation runs smoothly without the deleted local dependencies.
+- Proceed with scheduled Binance Matrix validation.
