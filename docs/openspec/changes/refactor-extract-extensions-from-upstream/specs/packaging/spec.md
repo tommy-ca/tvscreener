@@ -15,16 +15,33 @@ package.
 - **THEN** the installed upstream version MUST include the required entrypoints/modules
 - **OR** the extensions distribution MUST provide those capabilities itself without importing repo-local sources
 
+#### Scenario: Extensions prefer upstream when available
+- **GIVEN** upstream `tvscreener` ships the pipeline runner + lakehouse + Prefect runner modules
+- **WHEN** the operator installs upstream from the package index
+- **THEN** extensions import and use upstream implementations
+- **AND** extensions do not carry duplicate copies of core pipeline logic
+
 #### Scenario: Extensions do not import repo-local `tvscreener`
 - **GIVEN** an operator runs extensions from within a clone of this repo
 - **WHEN** they execute `uv run --project extensions ...`
 - **THEN** Python resolves `import tvscreener` from site-packages (the installed upstream distribution)
 - **AND** extensions do not rely on repo-local paths (no `sys.path` insertion of the repo root)
 
+#### Scenario: Extensions fail fast on repo-source import
+- **GIVEN** the operator runs extensions from the repo root
+- **WHEN** `import tvscreener` would resolve to `<repo>/tvscreener/...`
+- **THEN** extensions raise a clear error instructing the operator to install upstream and re-run
+
 #### Scenario: Repo-local upstream remains unchanged
 - **GIVEN** this repository contains an in-tree copy of upstream `tvscreener/`
 - **WHEN** orchestration, lakehouse, or analytics changes are required
 - **THEN** the changes are implemented in `extensions/` (or upstream is updated at the source)
+
+#### Scenario: Extensions do not rely on repo-local changes
+- **GIVEN** an operator runs extensions from within a clone of this repo
+- **WHEN** upstream `tvscreener` is installed from the package index
+- **THEN** the behavior of `tvscreener-ext-*` does not depend on modifications to the repo-local `tvscreener/` tree
+- **AND** extensions enforce this by failing fast if `import tvscreener` resolves to `<repo>/tvscreener/...`
 
 ### Requirement: Extensions keep workflow dependencies optional
 The extensions distribution SHOULD group optional workflow dependencies as extras.

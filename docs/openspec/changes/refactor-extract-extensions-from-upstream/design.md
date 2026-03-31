@@ -63,6 +63,37 @@ Track B (extensions-owned pipelines):
 
 Selected approach: Track B.
 
+Sync plan:
+- Track B is a compatibility bridge for the package-index upstream surface-area mismatch.
+- When upstream publishes the pipeline + lakehouse + Prefect runner surface area, extensions SHOULD drop duplicated
+  implementations and become a thin orchestration layer.
+
+Proposed module mapping (for deletion of duplicates):
+- `extensions/src/tvscreener_ext/runner.py` -> `tvscreener/lib/pipeline_runner.py`
+- `extensions/src/tvscreener_ext/lakehouse.py` -> `tvscreener/lib/lakehouse/manager.py`
+- `extensions/src/tvscreener_ext/semantic/*` -> `tvscreener/lib/semantic_artifacts.py`
+- `extensions/src/tvscreener_ext/prefect/*` -> `tvscreener/lib/prefect_runner.py` (or upstream-owned flows)
+- `extensions/src/tvscreener_ext/universes.py` -> `tvscreener/constants/*` and `tvscreener/lib/universe/*`
+
+### Migration plan: stop relying on repo-local `tvscreener/`
+Goal: workflows and operators rely on installed upstream `tvscreener` + `tvscreener-ext`, not the in-repo
+`tvscreener/` source tree.
+
+1) Implement behavior in `extensions/` (Track B)
+- Any orchestration, lakehouse, analytics, or artifact-publishing behavior that previously depended on editing the
+  repo-local `tvscreener/` MUST live in `extensions/`.
+
+2) Enforce upstream-only imports
+- Extensions must call `tvscreener_ext.upstream.ensure_upstream_tvscreener()` at CLI entrypoints.
+- If `import tvscreener` would resolve to `<repo>/tvscreener/...`, extensions MUST fail fast.
+
+3) Update runbooks/docs
+- Operational commands in docs SHOULD use `uv run --project extensions ...` entrypoints.
+- References to repo-local `tvscreener-scan` are acceptable only as development/audit tooling.
+
+4) Verification gate
+- `uv run --project extensions python extensions/tools/check_upstream_tvscreener_resolution.py` MUST return `OK`.
+
 Implementation notes:
 - Data pipeline uses upstream `tvscreener.core.{forex,crypto,stock}.*` screeners for the TradingView POST API.
 - Extensions own table naming and persistence into an Iceberg catalog.

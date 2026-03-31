@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import os
 import sys
 import sysconfig
@@ -70,3 +71,18 @@ def ensure_upstream_tvscreener() -> None:
     # Allow explicit opt-out for local dev.
     if (os.getenv("TVSCREENER_EXT_ALLOW_REPO_IMPORT") or "").strip() == "1":
         return
+
+    # Fail fast if resolution still points at the repo source tree.
+    try:
+        spec = importlib.util.find_spec("tvscreener")
+        origin = Path(spec.origin).resolve() if spec and spec.origin else None
+    except Exception:
+        origin = None
+
+    if origin:
+        repo_src_dir = (repo_root / "tvscreener").resolve()
+        if repo_src_dir in origin.parents:
+            raise RuntimeError(
+                "import tvscreener resolved to repo source tree; "
+                "use an installed upstream package (site-packages)"
+            )

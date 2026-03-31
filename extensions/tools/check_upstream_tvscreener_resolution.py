@@ -8,6 +8,7 @@ def main() -> int:
         from tvscreener_ext.upstream import ensure_upstream_tvscreener
 
         ensure_upstream_tvscreener()
+
         import tvscreener
 
         src = Path(getattr(tvscreener, "__file__", "")).resolve()

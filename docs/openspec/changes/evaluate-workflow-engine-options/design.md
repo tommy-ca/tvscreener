@@ -46,7 +46,7 @@ Nice-to-have:
    - Prototype with Dagu *only if license is acceptable*.
 
 2) If we want “durable queue + strong flow control + permissive license”:
-   - Prototype Hatchet with a minimal worker that executes `PipelineRunSpec` runs (call into existing `LocalRunner`/`PrefectRunner` logic or shell out).
+   - Prototype Hatchet with a minimal worker that executes `PipelineRunSpec` runs (call into `LocalRunner` logic via Python APIs; avoid shelling out as a primary integration).
 
 3) If we want “UI-first internal platform”:
    - Prototype Windmill only after confirming license/compliance posture.

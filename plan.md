@@ -15,6 +15,28 @@ This file includes historical notes from earlier iterations. Current validated d
   - `docs/openspec/changes/refactor-prefect-composable-flows/`
   - `docs/openspec/changes/update-terminology-and-interfaces/`
 
+## 2026-03-26: Migration plan (repo-local -> extensions)
+
+Goal: stop relying on editing the repo-local `tvscreener/` tree for workflows.
+
+1) Enforce upstream-only imports
+- Keep `tvscreener_ext.upstream.ensure_upstream_tvscreener()` strict (fail fast on `<repo>/tvscreener/...`).
+- Verification gate:
+  - `uv run --project extensions python extensions/tools/check_upstream_tvscreener_resolution.py`
+
+2) Move workflow-critical behavior into `extensions/`
+- Prefect flows, deployments, workers, and artifacts live under `extensions/src/tvscreener_ext/prefect/`.
+- DuckDB semantic table generation for Prefect table artifacts lives under `extensions/src/tvscreener_ext/semantic/`.
+- Lakehouse contract and writes are owned by `extensions/src/tvscreener_ext/lakehouse.py`.
+
+3) Update docs/runbooks
+- Prefer `uv run --project extensions ...` commands for operator workflows.
+- Treat repo-local `tvscreener-scan` usage as development/audit-only.
+
+4) Sync-back strategy
+- When upstream publishes equivalent pipeline/lakehouse/Prefect runner surface area, delete duplicated core pipeline
+  code from `extensions/` and keep only orchestration templates + ops CLIs.
+
 ## 2026-03-25: Essential pipelines validation (Prefect server)
 
 Target:
@@ -294,10 +316,8 @@ Prefect queue hygiene (2026-03-25):
 - Added `tvscreener-prefectctl prune-late` and used it to cancel late scheduled runs on `default` queue.
 
 Prefect native commands refactor (2026-03-25):
-- Refactored `tvscreener-prefectctl check` and `prune-late` to use Prefect CLI JSON outputs where possible:
-  - `prefect deployment ls -o json`
-  - `prefect work-queue ls -p tvscreener -o json`
-  - `prefect work-queue preview default -p tvscreener -o json`
+- Historical note: this was an intermediate step.
+- Current direction: extensions wrappers do not shell out; they use the Prefect Python API client and worker classes.
 
 Prefect wrappers: no subprocess (2026-03-25):
 - Removed subprocess calls to Prefect CLI from extensions wrappers.
@@ -337,6 +357,15 @@ DuckDB semantic table artifacts (2026-03-25):
 Upstream isolation cleanup (2026-03-26):
 - Reverted repo-local changes in `tvscreener/` so upstream remains untouched.
 - Updated `pyproject.toml` ty configuration to exclude upstream pyiceberg callsites rather than patching upstream.
+
+Extensions upstream import guard (2026-03-26):
+- Hardened `tvscreener_ext.upstream.ensure_upstream_tvscreener()` to fail fast if resolution points at repo source.
+- Updated `extensions/tools/check_upstream_tvscreener_resolution.py` to validate the guard.
+
+Sync plan (2026-03-26):
+- Treat extensions-owned pipelines as a bridge until upstream publishes equivalent modules.
+- When upstream provides the pipeline runner + lakehouse + Prefect runner surface area, refactor extensions into a
+  thin orchestration layer (deployments/batches/ops CLIs) and delete duplicate pipeline code.
 
 Prefect server wrapper (2026-03-25):
 - Observed `tvscreener-prefectctl server start --background` fails if port 4200 is already in use.

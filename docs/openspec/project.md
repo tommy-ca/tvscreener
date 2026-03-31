@@ -43,6 +43,10 @@ Upstream isolation policy:
 - Treat the in-repo `tvscreener/` tree as an upstream mirror; do not apply extensions-driven fixes there.
 - Implement orchestration/lakehouse/analytics behavior in `extensions/` (or update upstream at the source).
 
+Migration note:
+- Any workflow-critical behavior MUST be implemented in `extensions/` until upstream ships the required surface area.
+- Repo-local `tvscreener/` changes are not an acceptable deployment mechanism.
+
 Packaging reality check:
 - If the package-index upstream does not ship the workflow/pipeline surface area (e.g. `tvscreener-scan`, pipeline
   runner, Prefect wrapper), extensions MUST own those layers or upstream must publish a compatible version.
