@@ -83,11 +83,14 @@ Local screeners often import from `tvscreener` internals. These MUST be refactor
 1.  Use only public APIs from the `tvscreener` package.
 2.  If internal logic is required (e.g., `ExportMixin`), extensions must carry a copy or implement a compatible version.
 
-#### Phase 3: Total Reversion
-Once extensions are verified feature-complete against the installed `tvscreener-0.2.1`:
-1.  Run `git checkout v0.2.1 -- tvscreener/`.
-2.  Delete `tvscreener/lib/`, `tvscreener/score.py`, etc.
-3.  Ensure `tvscreener/` contains only what is in the official release.
+#### Phase 4: Production Verification (Prefect)
+The final validation of the Zero-Fork architecture MUST be performed using the production orchestration stack (Verified ✅).
+
+#### Phase 5: Local Source Removal
+To complete the decoupling, the repo-local `tvscreener/` mirror is removed:
+1.  **Delete Directory:** `rm -rf tvscreener/`.
+2.  **Update Config:** Ensure `pyproject.toml` and `.gitignore` reflect the purely external nature of the library.
+3.  **Final Resolution Audit:** Verify that `import tvscreener` continues to resolve to the installed package in the virtual environment.
 
 Goal: workflows and operators rely on installed upstream `tvscreener` + `tvscreener-ext`, not the in-repo
 `tvscreener/` source tree.

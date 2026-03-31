@@ -41,17 +41,22 @@ Composable Prefect stage tasks live in:
 
 ## Zero-Fork Policy (Mandatory)
 - **Goal:** This repository MUST NOT maintain a local fork of `tvscreener`.
-- **Mirroring:** The `tvscreener/` source tree is a pure mirror of the official upstream package (currently `v0.2.1`).
-- **No Local Patches:** Any modifications, fixes, or enhancements to core screening logic MUST be contributed upstream or implemented as a wrapper in `extensions/`.
-- **Workflow Isolation:** All orchestration, lakehouse persistence, analytics, and custom screeners MUST reside in `extensions/src/tvscreener_ext/`.
-- **Import Guard:** All extension entry points MUST call `ensure_upstream_tvscreener()` to prevent accidental resolution to the repo-local mirror during development.
-- **Verification:** CI and local validation MUST run against the installed upstream package in `site-packages`.
+- **Dependency:** `tvscreener` is treated as an external library resolved from `site-packages`.
+- **No Local Source:** The `tvscreener/` source tree has been removed from the repository to prevent shadowing and accidental local patching.
+- **Workflow Isolation:** All orchestration, lakehouse persistence, analytics, and custom screeners reside in `extensions/src/tvscreener_ext/`.
+- **Import Guard:** Extension entry points call `ensure_upstream_tvscreener()` to verify resolution from `site-packages`.
+- **Verification:** All validation runs against the installed upstream package.
 
 Packaging reality check:
 - If the package-index upstream does not ship the workflow/pipeline surface area (e.g. `tvscreener-scan`, pipeline
   runner, Prefect wrapper), extensions MUST own those layers or upstream must publish a compatible version.
 
 ## Conventions
+- **Verification Standard:**
+  - **Unit Tests:** `uv run python -m pytest tests/` (verified against site-packages).
+  - **Orchestration:** `uv run --project extensions tvscreener-ext-validate --runner prefect` (requires Prefect server + worker).
+  - **Import Audit:** `uv run --project extensions python extensions/tools/check_upstream_tvscreener_resolution.py`.
+  - **Pure Upstream:** `git diff v0.2.1 -- tvscreener/` MUST be empty or only contain non-logic files.
 - Favor canonical columns in persisted tables: `asset_type`, `entity_id`, `signal_date`,
   `run_id`, `fetched_at_utc`, `timeframes`, `timeframe_set_id`, `source`, `scanner_family`.
 - Iceberg tables are canonical; on-disk snapshots are optional debug artifacts only.
