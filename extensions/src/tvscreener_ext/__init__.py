@@ -92,41 +92,9 @@ def _patch_screeners():
         if hasattr(self, "add_misc"):
             self.add_misc("symbols", {"tickers": tks})
 
-    def set_symbol_types(self, *symbol_types):
-        from tvscreener import FilterOperator, StockField
-        from tvscreener.field import SymbolType, Type
-
-        for symbol_type in symbol_types:
-            if symbol_type == SymbolType.COMMON_STOCK:
-                self.add_filter(StockField.TYPE, FilterOperator.EQUAL, Type.STOCK.value)
-                self.add_filter(
-                    StockField.SUBTYPE,
-                    FilterOperator.IN_RANGE,
-                    SymbolType.COMMON_STOCK.value + SymbolType.DEPOSITORY_RECEIPT.value,
-                )
-            elif symbol_type == SymbolType.DEPOSITORY_RECEIPT:
-                self.add_filter(StockField.TYPE, FilterOperator.EQUAL, Type.STOCK.value)
-                self.add_filter(
-                    StockField.SUBTYPE, FilterOperator.IN_RANGE, SymbolType.DEPOSITORY_RECEIPT.value
-                )
-            elif symbol_type in (
-                SymbolType.ETF,
-                SymbolType.ETN,
-                SymbolType.MUTUAL_FUND,
-                SymbolType.PREFERRED_STOCK,
-                SymbolType.REIT,
-                SymbolType.STRUCTURED,
-                SymbolType.UIT,
-            ):
-                self.add_filter(StockField.TYPE, FilterOperator.EQUAL, Type.FUND.value)
-                self.add_filter(StockField.SUBTYPE, FilterOperator.IN_RANGE, symbol_type.value)
-
     for cls in (StockScreener, CryptoScreener, ForexScreener):
         cls.set_tickers = set_tickers
         cls.set_symbols = set_symbols
-
-    StockScreener.set_symbol_types = set_symbol_types
-    StockScreener.set_symbols_types = set_symbol_types
 
 
 def _patch_where():

@@ -68,8 +68,7 @@ def test_prefect_flow_writes_expected_artifacts(tmp_path, monkeypatch):
 
     # Create dummy batch file
     batch_file = tmp_path / "test_batch.json"
-    batch_file.write_text(json.dumps([spec.model_dump()]))
-
+    batch_file.write_text(json.dumps([spec.model_dump(mode="json")]))
     # Call the underlying flow function directly
     res = pr.prefect_run_flow.fn(  # type: ignore[attr-defined]
         batch_path=str(batch_file),

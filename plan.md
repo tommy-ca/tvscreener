@@ -1271,3 +1271,17 @@ Rationale:
 Next Steps:
 - Ensure CI and extension validation runs smoothly without the deleted local dependencies.
 - Proceed with scheduled Binance Matrix validation.
+
+## 2026-04-01: Validation Results
+
+Goal: Verify tests and extension logic after root project cleanup.
+
+Outcomes:
+- Removed a failing obsolete test (`test_batch_expansion_determinism.py`) which relied on the deleted `workflows/` module.
+- Dropped the `StockScreener.set_symbol_types` monkeypatch from `tvscreener_ext/__init__.py` because the upstream version of the library inherently handles SubType mapping perfectly. Doing so fixed 7 failures in `test_filters.py`.
+- Fixed JSON datetime serialization inside the local mock of Prefect runner for `test_prefect_runner_smoke.py` by relying on `spec.model_dump(mode='json')` instead of the default `.model_dump()`.
+- Successfully ran all 335 unit tests under the extension's environment flag.
+- Validation scripts passed `check_upstream_tvscreener_resolution.py`.
+- `tvscreener-ext-validate --runner local --matrix` ran the matrix data fetch successfully, evaluating technicals for Forex Majors & Minors, Crypto Base & Perpetuals, and Stock pairs.
+
+Status: Refactoring complete. The application and orchestration are decoupled, running stable, and the test suite is passing securely.
