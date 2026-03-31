@@ -31,11 +31,11 @@ class LakehouseRemoteCatalogSettings(BaseModel):
 
     # SQLAlchemy URI for the Iceberg SQL catalog (pyiceberg "sql" catalog).
     # Example: postgresql+psycopg://user:pass@host:5432/iceberg
-    uri: str
+    uri: str = Field(min_length=1)
 
     # Warehouse location for table data.
     # Examples: file:///mnt/warehouse, s3://bucket/prefix, abfs://...
-    warehouse: str
+    warehouse: str = Field(min_length=1)
 
     @field_validator("uri", "warehouse", mode="before")
     @classmethod

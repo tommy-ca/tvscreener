@@ -34,13 +34,9 @@ class LakehouseManager:
 
         # Local catalog defaults/provisioning
         if self._catalog_settings.mode == "local":
-            base_dir = self._settings.lakehouse_local_base_dir()
-            if self._catalog_settings.local.base_dir:
-                base_dir = Path(self._catalog_settings.local.base_dir).expanduser()
-
-            self.base_dir = base_dir
-            self.catalog_db_path = base_dir / self._catalog_settings.local.catalog_db
-            self.warehouse_path = base_dir / self._catalog_settings.local.warehouse_dir
+            self.base_dir = self._settings.lakehouse_local_base_dir()
+            self.catalog_db_path = self.base_dir / self._catalog_settings.local.catalog_db
+            self.warehouse_path = self.base_dir / self._catalog_settings.local.warehouse_dir
 
             self.base_dir.mkdir(parents=True, exist_ok=True)
             self.warehouse_path.mkdir(parents=True, exist_ok=True)
