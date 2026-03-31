@@ -10,14 +10,14 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
-from tvscreener_ext.orchestrator import (
+from tvscreener_ext.models import (
     AssetSelection,
     OutputConfig,
     RiskConfig,
     ScanRequest,
     ScoringConfig,
-    ScreenerController,
 )
+from tvscreener_ext.orchestrator import ScreenerController
 from tvscreener_ext.utils.logic import canonicalize_asset_type, timeframe_set_id
 
 logger = logging.getLogger(__name__)

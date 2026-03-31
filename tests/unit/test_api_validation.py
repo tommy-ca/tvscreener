@@ -2,9 +2,8 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from tvscreener_ext.exceptions import MalformedRequestException
-
 from tvscreener import StockScreener
+from tvscreener.exceptions import MalformedRequestException
 
 
 class TestApiValidation(unittest.TestCase):
@@ -27,7 +26,7 @@ class TestApiValidation(unittest.TestCase):
         # We need to know how many columns are expected.
         # StockScreener defaults to some columns.
         # Let's mock the columns to match our data.
-        with patch("tvscreener.core.base.get_columns_to_request") as mock_cols:
+        with patch("tvscreener.util.get_columns_to_request") as mock_cols:
             mock_cols.return_value = {"price": "Price", "volume": "Volume"}
             df = self.ss.get()
 
@@ -49,7 +48,7 @@ class TestApiValidation(unittest.TestCase):
         }
         mock_post.return_value = mock_response
 
-        with patch("tvscreener.core.base.get_columns_to_request") as mock_cols:
+        with patch("tvscreener.util.get_columns_to_request") as mock_cols:
             mock_cols.return_value = {"price": "Price", "volume": "Volume"}
             _df = self.ss.get()
 
@@ -95,7 +94,7 @@ class TestApiValidation(unittest.TestCase):
 
         with self.assertRaises(MalformedRequestException) as cm:
             self.ss.get()
-        self.assertIn("missing data 'd' key", str(cm.exception))
+        self.assertIn("missing data 's' or 'd' key", str(cm.exception))
 
     @patch("requests.post")
     def test_validate_column_length_mismatch(self, mock_post):
@@ -107,7 +106,7 @@ class TestApiValidation(unittest.TestCase):
         }
         mock_post.return_value = mock_response
 
-        with patch("tvscreener.core.base.get_columns_to_request") as mock_cols:
+        with patch("tvscreener.util.get_columns_to_request") as mock_cols:
             mock_cols.return_value = {"p": "Price", "v": "Vol"}  # Expects 2 values
             with self.assertRaises(MalformedRequestException) as cm:
                 self.ss.get()

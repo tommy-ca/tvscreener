@@ -57,6 +57,10 @@ Packaging reality check:
   - **Orchestration:** `uv run --project extensions tvscreener-ext-validate --runner prefect` (requires Prefect server + worker).
   - **Import Audit:** `uv run --project extensions python extensions/tools/check_upstream_tvscreener_resolution.py`.
   - **Pure Upstream:** `git diff v0.2.1 -- tvscreener/` MUST be empty or only contain non-logic files.
+- **Testing & Mocking:**
+  - **Extension Imports:** Test modules relying on extension patches MUST explicitly import the extension module (`import tvscreener_ext`), ensuring mock validations override external boundaries.
+  - **Data Shape Validation:** API and dataframe mocks must accurately reflect the library's implicit row/column augmentations (e.g. prepended structural identifiers like `Symbol`).
+  - **Enum Subclasses:** Magic method patches (`__eq__`, `__gt__`) applied to base Enums must iterate through all active subclasses (`FieldWithInterval`, `FieldWithHistory`) and evaluate equivalence using rigid literal criteria to avoid truthy collision bugs in filter aggregations.
 - Favor canonical columns in persisted tables: `asset_type`, `entity_id`, `signal_date`,
   `run_id`, `fetched_at_utc`, `timeframes`, `timeframe_set_id`, `source`, `scanner_family`.
 - Iceberg tables are canonical; on-disk snapshots are optional debug artifacts only.

@@ -1237,3 +1237,19 @@ Build status:
 - Strategy analytics matrix (Prefect server): rendered to logs and persisted as `matrix.txt`.
   - Log: `artifacts/matrix/forex_all_strategy_analytics_prefect_server_2.log`
   - Artifact: `artifacts/prefect/2609f3a93d1ecdceab2312c110626d48d9d8d576e39e2da1753578377365135d/matrix.txt`
+
+## 2026-04-01: API Validation & Testing Architecture Fixes
+
+Goal: Address hanging tests, API validation mismatches, and filter collision bugs caused by incomplete monkeypatching.
+
+Outcomes:
+- **Test Environment Integrity**: Fixed hanging tests by ensuring `tvscreener_ext` is explicitly imported in test suites (`test_api_validation.py`). This guarantees monkeypatches (like the API data mock) take precedence over real external network calls, preventing 10-minute timeouts. Also corrected mock target paths to point to `tvscreener.util.get_columns_to_request` instead of obsolete locations.
+- **DataFrame Column Validation**: Corrected the response validation logic in `_patch_get` to account for implicitly prepended columns. The expected row length is now correctly calculated as `len(requested_columns) + 1` (accounting for the 'Symbol' string injected from the JSON `s` key), fixing `Data length mismatch` errors when constructing the `ScreenerDataFrame`.
+- **Dynamic API Pagination (Range)**: Implemented autosizing for the API `range` parameter. When a user supplies an explicit list of tickers, the `range` upper bound now dynamically scales to `len(tickers)` instead of defaulting to a hardcoded `150`, preventing silent truncation of requested universes.
+- **Pythonic Filter Operators & Enum Equality**: 
+  - Extended magic method monkeypatching (`__gt__`, `__lt__`, etc.) to cover indicator subclasses (`FieldWithInterval`, `FieldWithHistory`), unbreaking the Pythonic filter syntax for multi-timeframe fields.
+  - Fixed a critical filter collision bug where `__eq__` and `__ne__` were returning truthy `FieldCondition` objects instead of booleans. This previously caused `StockField.PRICE == StockField.VOLUME` to evaluate as `True`, leading to silent filter overwrites during `Screener._merge_filters()`. The equality logic now strictly compares object identity or `field_name` strings for Enum matching.
+
+Next Steps:
+- Apply these robustness principles to future extension patches.
+- Continue tracking matrix rerun pipelines using the validated filter engine.

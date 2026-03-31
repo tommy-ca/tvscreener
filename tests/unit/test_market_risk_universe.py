@@ -1,9 +1,8 @@
-from tvscreener_ext.orchestrator import ScreenerController
-
-from tvscreener.constants.market_risk import (
+from tvscreener_ext.constants.market_risk import (
     MARKET_RISK_FUTURES_TICKERS,
     MARKET_RISK_PROXY_TICKERS,
 )
+from tvscreener_ext.orchestrator import ScreenerController
 
 
 def test_market_risk_universe_resolves_stock_proxies() -> None:

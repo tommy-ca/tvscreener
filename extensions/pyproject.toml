@@ -23,6 +23,8 @@ dependencies = [
   "minijinja>=2.16.0",
   "pyiceberg[sql-sqlite,pyarrow]>=0.7.0",
   "rich>=13.0.0",
+  "pytest>=9.0.2",
+  "pytest-cov>=7.0.0",
 ]
 
 [project.optional-dependencies]

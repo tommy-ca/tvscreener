@@ -254,7 +254,7 @@ class EdgeQueryClient:
                     self._setup_remote_access(path_str)
 
                 # Security: Validate path before reading
-                from tvscreener.util import validate_path
+                from tvscreener_ext.utils.logic import validate_path
 
                 valid_path = validate_path(path_str)
 

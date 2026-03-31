@@ -1,4 +1,4 @@
-from tvscreener.constants.forex import DEFAULT_FOREX_PAIRS, FOREX_MAJORS, FOREX_MINORS
+from tvscreener_ext.constants.forex import DEFAULT_FOREX_PAIRS, FOREX_MAJORS, FOREX_MINORS
 
 
 def test_forex_majors_are_fixed_and_usd_based() -> None:

@@ -100,7 +100,7 @@ def test_score_no_replay(mock_catalog, mock_write_iceberg):
 
     # Mock ScoringEngine class method instead of instance method
     with patch(
-        "tvscreener.score.ScoringEngine.rank_opportunities", return_value=input_df
+        "tvscreener_ext.scoring.ScoringEngine.rank_opportunities", return_value=input_df
     ) as mock_rank:
         df = screener._score(input_df)
         assert not df.empty
@@ -127,7 +127,7 @@ def test_score_writes_long_form_when_enabled(mock_catalog, mock_write_iceberg):
         }
     )
 
-    with patch("tvscreener.score.ScoringEngine.rank_opportunities", return_value=input_df):
+    with patch("tvscreener_ext.scoring.ScoringEngine.rank_opportunities", return_value=input_df):
         _ = screener._score(input_df)
 
     calls = [(c.args, c.kwargs) for c in mock_write_iceberg.call_args_list]

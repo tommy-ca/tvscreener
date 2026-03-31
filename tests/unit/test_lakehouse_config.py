@@ -18,7 +18,7 @@ def reset_manager_singleton():
 
 
 def test_lakehouse_initializes_with_default_config():
-    with patch("tvscreener.config.loader.load_settings") as mock_load:
+    with patch("tvscreener_ext.config.load_settings") as mock_load:
         mock_settings = MagicMock()
         mock_settings.lakehouse.catalog.mode = "local"
         mock_settings.lakehouse.catalog.local.catalog_db = "catalog.db"
@@ -43,7 +43,7 @@ def test_lakehouse_initializes_with_custom_config(tmp_path):
 
     # Note: load_settings will actually load the file if we don't mock it,
     # but we want to test that get_manager passes the path correctly.
-    with patch("tvscreener.config.loader.load_settings") as mock_load:
+    with patch("tvscreener_ext.config.load_settings") as mock_load:
         mock_settings = MagicMock()
         mock_settings.lakehouse.catalog.mode = "local"
         mock_settings.lakehouse.catalog.local.catalog_db = "catalog.db"
@@ -58,7 +58,7 @@ def test_lakehouse_initializes_with_custom_config(tmp_path):
 
 
 def test_lakehouse_singleton_ignores_subsequent_config():
-    with patch("tvscreener.config.loader.load_settings") as mock_load:
+    with patch("tvscreener_ext.config.load_settings") as mock_load:
         mock_settings = MagicMock()
         mock_settings.lakehouse.catalog.mode = "local"
         mock_load.return_value = mock_settings
@@ -74,8 +74,7 @@ def test_lakehouse_singleton_ignores_subsequent_config():
 
 def test_lakehouse_remote_config_validation():
     from pydantic import ValidationError
-
-    from tvscreener.config.settings import ScreenerSettings
+    from tvscreener_ext.config.settings import ScreenerSettings
 
     # Valid remote config
     valid_remote = {
@@ -115,7 +114,7 @@ def test_lakehouse_remote_config_validation():
 
 
 def test_lakehouse_env_override(monkeypatch):
-    from tvscreener.config.settings import ScreenerSettings
+    from tvscreener_ext.config.settings import ScreenerSettings
 
     # Mock environment variables
     monkeypatch.setenv("TVSCREENER_LAKEHOUSE_CATALOG_MODE", "remote")

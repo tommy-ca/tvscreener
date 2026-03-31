@@ -9,8 +9,8 @@ from typing import Any
 
 import pandas as pd
 
-from tvscreener.lib.pipeline_runner import PipelineRunSpec
 from tvscreener_ext.query import EdgeQueryClient
+from tvscreener_ext.runner import PipelineRunSpec
 
 logger = logging.getLogger(__name__)
 

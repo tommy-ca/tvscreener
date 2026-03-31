@@ -24,12 +24,14 @@ class TradingViewDataSource:
 
     def fetch_batch(self, *, screener: Any, tickers: list[str]) -> pd.DataFrame:
         if hasattr(screener, "set_tickers"):
+            # This should call our monkeypatch if present
             screener.set_tickers(*tickers)
         elif hasattr(screener, "set_symbols"):
             screener.set_symbols(*tickers)
         else:
             # Fallback for v0.2.1 style if no helper exists
-            screener.symbols = {"symbolset": tickers}
+            # v0.2.1 uses {"tickers": [...]} in build_payload
+            screener.symbols = {"tickers": [t.upper() for t in tickers]}
 
         df = screener.get()
         if df is None:
