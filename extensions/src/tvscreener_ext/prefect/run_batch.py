@@ -337,25 +337,46 @@ def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult,
     return res, matrix_text
 
 
-@flow(name="tvscreener-run", flow_run_name="tvscreener-{params_hash}")  # type: ignore[misc]
+@flow(name="tvscreener-run", flow_run_name="tvscreener-batch-{batch_path}")  # type: ignore[misc]
 def prefect_run_flow(
-    spec_payload: dict[str, Any], params_hash: str, artifacts_dir: str = "artifacts/runs"
+    batch_path: str,
+    artifacts_dir: str = "artifacts/runs",
+    data_concurrency: int = 1,
+    analytics_concurrency: int = 8,
+    rate_limit: dict[str, Any] | None = None,
+    skip_existing: bool = False,
 ) -> dict:
-    spec = PipelineRunSpec.model_validate(spec_payload).normalized()
+    """Batch entrypoint for Prefect deployments."""
+    from tvscreener_ext.orchestrator import ScreenerController
 
-    base_dir = _resolve_base_dir(artifacts_dir)
-    run_dir = base_dir / params_hash
-    _ensure_dir(run_dir)
+    controller = ScreenerController(console=None)
 
-    # Resolve universe/pairs once for determinism and persist universe.json
-    # into the run artifacts directory when applicable.
-    controller = None
-    with contextlib.suppress(Exception):
-        from tvscreener_ext.orchestrator import ScreenerController
+    # Load batch from JSON
+    full_batch_path = Path(batch_path)
+    if not full_batch_path.is_absolute():
+        # Search relative to package or CWD
+        import tvscreener_ext.prefect
 
-        controller = ScreenerController(console=None)
+        pkg_root = Path(tvscreener_ext.prefect.__file__).parent
+        if (pkg_root / "batches" / full_batch_path.name).exists():
+            full_batch_path = pkg_root / "batches" / full_batch_path.name
 
-    if controller is not None:
+    with open(full_batch_path) as f:
+        specs_raw = json.load(f)
+
+    if isinstance(specs_raw, dict):
+        specs_raw = [specs_raw]
+
+    results = []
+    for raw in specs_raw:
+        spec = PipelineRunSpec.model_validate(raw).normalized()
+        params_hash = spec.params_hash or "unknown"
+
+        base_dir = _resolve_base_dir(artifacts_dir)
+        run_dir = base_dir / params_hash
+        _ensure_dir(run_dir)
+
+        # Resolve universe/pairs for determinism
         previous = os.environ.get("TVSCREENER_RUN_DIR")
         os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
         try:
@@ -375,99 +396,46 @@ def prefect_run_flow(
             else:
                 os.environ["TVSCREENER_RUN_DIR"] = previous
 
-    analytics_output = spec.output
-    if spec.pipeline_mode in ("analytics", "both") and not analytics_output:
-        analytics_output = str(_default_results_path(run_dir, spec))
-        spec = spec.model_copy(update={"output": analytics_output}).normalized()
-    _write_json(run_dir / "run_spec.json", spec.model_dump())
+        analytics_output = spec.output
+        if spec.pipeline_mode in ("analytics", "both") and not analytics_output:
+            analytics_output = str(_default_results_path(run_dir, spec))
+            spec = spec.model_copy(update={"output": analytics_output}).normalized()
 
-    with tags(  # type: ignore[misc]
-        f"params_hash:{params_hash}",
-        f"scanner:{spec.scanner_family}",
-        f"pipeline:{spec.pipeline_mode}",
-        f"asset_type:{spec.asset_type}",
-    ):
-        if spec.pipeline_mode == "data":
-            res, matrix_text = _run_data_task(spec, str(run_dir))
-            matrix_path = None
-            if matrix_text:
-                _write_matrix_artifact(run_dir, matrix_text)
-                _maybe_publish_prefect_matrix_artifact(
-                    spec=spec, params_hash=params_hash, matrix_text=matrix_text
-                )
-                matrix_path = str(run_dir / "matrix.txt")
-            payload = {
-                "spec_version": spec.spec_version,
-                "params_hash": params_hash,
-                "scanner_family": spec.scanner_family,
-                "pipeline_mode_requested": spec.pipeline_mode,
-                "pipeline_mode_executed": "data",
-                "artifacts_dir": str(run_dir),
-                "run_spec_path": str(run_dir / "run_spec.json"),
-                "run_result_path": str(run_dir / "run_result.json"),
-                "matrix_path": matrix_path,
-                "data": res.model_dump(),
-                "success": bool(res.success),
-            }
-            _write_json(run_dir / "run_result.json", payload)
-            return payload
+        _write_json(run_dir / "run_spec.json", spec.model_dump())
 
-        if spec.pipeline_mode == "analytics":
-            res, matrix_text = _run_analytics_task(spec, str(run_dir))
-            matrix_path = None
-            if matrix_text:
-                _write_matrix_artifact(run_dir, matrix_text)
-                _maybe_publish_prefect_matrix_artifact(
-                    spec=spec, params_hash=params_hash, matrix_text=matrix_text
-                )
-                matrix_path = str(run_dir / "matrix.txt")
+        # Execute stages
+        data_res: RunResult | None = None
+        analytics_res: RunResult | None = None
+        data_matrix: str | None = None
+        analytics_matrix: str | None = None
 
-            _maybe_publish_prefect_results_table_artifact(
-                spec=spec, params_hash=params_hash, results_path=analytics_output
-            )
-            payload = {
-                "spec_version": spec.spec_version,
-                "params_hash": params_hash,
-                "scanner_family": spec.scanner_family,
-                "pipeline_mode_requested": spec.pipeline_mode,
-                "pipeline_mode_executed": "analytics",
-                "artifacts_dir": str(run_dir),
-                "run_spec_path": str(run_dir / "run_spec.json"),
-                "run_result_path": str(run_dir / "run_result.json"),
-                "results_path": analytics_output,
-                "matrix_path": matrix_path,
-                "analytics": {**res.model_dump(), "results_path": analytics_output},
-                "success": bool(res.success),
-            }
-            _write_json(run_dir / "run_result.json", payload)
-            return payload
+        if spec.pipeline_mode in ("data", "both"):
+            data_res, data_matrix = _run_data_task(spec, str(run_dir))
 
-        data_res, data_matrix_text = _run_data_task(spec, str(run_dir))
-        analytics_res, analytics_matrix_text = _run_analytics_task(spec, str(run_dir))
+        if spec.pipeline_mode in ("analytics", "both"):
+            analytics_res, analytics_matrix = _run_analytics_task(spec, str(run_dir))
 
-        matrix_path = None
-        matrix_text = analytics_matrix_text or data_matrix_text
+        # Artifacts
+        matrix_text = analytics_matrix or data_matrix
         if matrix_text:
             _write_matrix_artifact(run_dir, matrix_text)
             _maybe_publish_prefect_matrix_artifact(
                 spec=spec, params_hash=params_hash, matrix_text=matrix_text
             )
-            matrix_path = str(run_dir / "matrix.txt")
+
+        if analytics_output:
+            _maybe_publish_prefect_results_table_artifact(
+                spec=spec, params_hash=params_hash, results_path=analytics_output
+            )
 
         payload = {
-            "spec_version": spec.spec_version,
-            "params_hash": spec.params_hash,
-            "scanner_family": spec.scanner_family,
-            "pipeline_mode_requested": spec.pipeline_mode,
-            "pipeline_mode_executed": "both",
-            "artifacts_dir": str(run_dir),
-            "run_spec_path": str(run_dir / "run_spec.json"),
-            "run_result_path": str(run_dir / "run_result.json"),
-            "results_path": analytics_output,
-            "matrix_path": matrix_path,
-            "data": data_res.model_dump(),
-            "analytics": {**analytics_res.model_dump(), "results_path": analytics_output},
-            "success": bool(data_res.success and analytics_res.success),
+            "params_hash": params_hash,
+            "success": bool(
+                (data_res.success if data_res else True)
+                and (analytics_res.success if analytics_res else True)
+            ),
         }
         _write_json(run_dir / "run_result.json", payload)
-        return payload
+        results.append(payload)
+
+    return {"results": results}

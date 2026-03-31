@@ -228,7 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     # even if the upstream package lacks workflow modules.
     run_batch = None
     if args.apply or args.start_runner:
-        from tvscreener_ext.prefect.run_batch import run_batch as _run_batch
+        from tvscreener_ext.prefect.run_batch import prefect_run_flow as _run_batch
 
         run_batch = _run_batch
 
