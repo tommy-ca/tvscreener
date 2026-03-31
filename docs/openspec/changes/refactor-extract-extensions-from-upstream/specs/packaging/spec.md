@@ -43,8 +43,26 @@ package.
 - **THEN** the behavior of `tvscreener-ext-*` does not depend on modifications to the repo-local `tvscreener/` tree
 - **AND** extensions enforce this by failing fast if `import tvscreener` resolves to `<repo>/tvscreener/...`
 
-### Requirement: Extensions keep workflow dependencies optional
-The extensions distribution SHOULD group optional workflow dependencies as extras.
+### Requirement: Zero-Fork Policy
+The repository MUST NOT maintain a local fork of `tvscreener`.
+
+#### Scenario: Local mirror is a pure copy
+- **GIVEN** a developer clones the repository
+- **WHEN** they inspect the `tvscreener/` directory
+- **THEN** it MUST exactly match the official upstream version (e.g. `v0.2.1`)
+- **AND** it MUST NOT contain any `lib/`, `score.py`, or other custom enhancements
+
+#### Scenario: All enhancements live in extensions
+- **GIVEN** a requirement for a new screening feature or orchestration logic
+- **WHEN** the developer implements the change
+- **THEN** the implementation MUST reside in `extensions/src/tvscreener_ext/`
+- **AND** it MUST NOT modify any file under `tvscreener/`
+
+#### Scenario: Import Guard enforcement
+- **GIVEN** an extension entry point (e.g. `tvscreener-ext-scan`)
+- **WHEN** it executes
+- **THEN** it MUST call `ensure_upstream_tvscreener()`
+- **AND** it MUST fail if `import tvscreener` resolves to the local mirror instead of `site-packages`
 
 #### Scenario: Prefect is an optional extra
 - **GIVEN** an operator installs the extensions distribution without extras

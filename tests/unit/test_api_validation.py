@@ -2,8 +2,9 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
+from tvscreener_ext.exceptions import MalformedRequestException
+
 from tvscreener import StockScreener
-from tvscreener.exceptions import MalformedRequestException
 
 
 class TestApiValidation(unittest.TestCase):

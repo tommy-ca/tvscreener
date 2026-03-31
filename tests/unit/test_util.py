@@ -1,8 +1,9 @@
 import math
 import unittest
 
+from tvscreener_ext.utils.logic import _is_nan
+
 from tvscreener import StockField, get_columns_to_request, get_recommendation, millify
-from tvscreener.util import _is_nan
 
 
 class TestUtil(unittest.TestCase):

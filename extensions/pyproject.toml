@@ -11,11 +11,16 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "tvscreener>=0.2.1",
   "pydantic>=2.7.0",
+  "pydantic-settings>=2.0.0",
   "pyyaml>=6.0.0",
   "python-dotenv>=1.0.0",
   "pandas>=2.2.0",
+  "numpy>=1.26.0",
+  "narwhals>=1.27.0",
+  "pandera>=0.20.0",
   "pyarrow>=23.0.1",
   "duckdb>=1.4.4",
+  "minijinja>=2.16.0",
   "pyiceberg[sql-sqlite,pyarrow]>=0.7.0",
   "rich>=13.0.0",
 ]

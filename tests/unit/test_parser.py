@@ -1,6 +1,5 @@
 import pytest
-
-from tvscreener.lib.screeners.parser import MTFExpressionParser
+from tvscreener_ext.screeners.parser import MTFExpressionParser
 
 
 def test_parser_basic_mapping():

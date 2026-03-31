@@ -93,14 +93,14 @@ class Field(Enum):
         return [f for f in cls if f.interval]
 
     @classmethod
-    def historical_fields(cls) -> list:
+    def with_history(cls) -> list:
         """
         Get all fields that support historical lookback.
 
         :return: List of fields with historical=True
 
         Example:
-            >>> StockField.historical_fields()
+            >>> StockField.with_history()
             [<StockField.RSI: ...>, <StockField.VOLUME: ...>, ...]
         """
         return [f for f in cls if f.historical]
@@ -502,11 +502,11 @@ class Rating(Enum):
 
     @classmethod
     def names(cls):
-        return [c.name for c in cls]
+        return list(map(lambda c: c.name, cls))
 
     @classmethod
     def values(cls):
-        return [c.value for c in cls]
+        return list(map(lambda c: c.value, cls))
 
 
 class Country(Enum):
@@ -871,11 +871,11 @@ class Market(Enum):
 
     @classmethod
     def names(cls):
-        return [c.name for c in cls]
+        return list(map(lambda c: c.name, cls))
 
     @classmethod
     def values(cls):
-        return [c.value for c in cls]
+        return list(map(lambda c: c.value, cls))
 
 
 class Region(Enum):

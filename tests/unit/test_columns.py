@@ -1,8 +1,9 @@
 import unittest
 
+from tvscreener_ext.utils.logic import format_historical_field
+
 from tvscreener import StockField
 from tvscreener.field import add_historical
-from tvscreener.util import format_historical_field
 
 
 class TestColumns(unittest.TestCase):

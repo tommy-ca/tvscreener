@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-
-from tvscreener.lib.screeners.registry import (
+from tvscreener_ext.screeners.registry import (
     ScreenerFamilyRegistry,
     compose_stages,
     filter_expr,

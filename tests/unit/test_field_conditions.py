@@ -1,7 +1,8 @@
 """Tests for the new Pythonic comparison operator syntax on Fields."""
 
+from tvscreener_ext.screeners.filters import FieldCondition
+
 from tvscreener import FilterOperator, StockField, StockScreener
-from tvscreener.filter import FieldCondition
 
 
 class TestFieldCondition:

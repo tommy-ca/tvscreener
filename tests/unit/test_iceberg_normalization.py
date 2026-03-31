@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.lib.screeners.base import normalize_iceberg_count_like_columns
+from tvscreener_ext.screeners.base import normalize_iceberg_count_like_columns
 
 
 def test_normalize_iceberg_count_like_columns_rounds_and_int_casts():

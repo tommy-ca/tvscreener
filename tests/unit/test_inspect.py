@@ -1,7 +1,6 @@
 import pandas as pd
-
-from tvscreener.lib.inspect_utils import inspect_parquet
-from tvscreener.lib.screeners.metadata_utils import MetadataCollector
+from tvscreener_ext.inspect_utils import inspect_parquet
+from tvscreener_ext.screeners.metadata_utils import MetadataCollector
 
 
 def test_inspect_parquet_no_file(capsys):

@@ -2,506 +2,437 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
-from dataclasses import dataclass
+import subprocess
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Protocol
 
-import duckdb
-import pandas as pd
 from pydantic import BaseModel, Field
 
-from tvscreener_ext.lakehouse import LakehouseManager
-from tvscreener_ext.universes import resolve_universe
-from tvscreener_ext.upstream import ensure_upstream_tvscreener
+from tvscreener_ext.orchestrator import (
+    AssetSelection,
+    OutputConfig,
+    RiskConfig,
+    ScanRequest,
+    ScoringConfig,
+    ScreenerController,
+)
+from tvscreener_ext.utils.logic import canonicalize_asset_type, timeframe_set_id
 
-PipelineMode = Literal["data", "analytics", "both"]
-
-
-class PipelineRunSpec(BaseModel):
-    spec_version: str = "1"
-
-    scanner_family: str = "opportunity"
-    pipeline_mode: PipelineMode = "both"
-    asset_type: str
-    instrument_type: str | None = None
-    universe: str
-    timeframes: list[str] = Field(default_factory=lambda: ["240", "60", "15"])
-
-    limit: int = 50
-    matrix: bool = True
-
-    config_path: str | None = None
-    artifacts_dir: str = "artifacts/runs"
-    output: str | None = None
-
-    params_hash: str | None = None
-
-    def normalized(self) -> PipelineRunSpec:
-        tf = [str(t).strip() for t in self.timeframes if str(t).strip()]
-        tf = list(dict.fromkeys(tf))
-        tf = sorted(tf, key=lambda s: int(s) if s.isdigit() else 999999, reverse=True)
-        out = self.model_copy(
-            update={
-                "scanner_family": str(self.scanner_family).strip().lower(),
-                "pipeline_mode": str(self.pipeline_mode).strip().lower(),
-                "asset_type": str(self.asset_type).strip().lower(),
-                "instrument_type": str(self.instrument_type).strip().lower()
-                if self.instrument_type
-                else None,
-                "universe": str(self.universe).strip().lower(),
-                "timeframes": tf,
-            }
-        )
-        if not out.params_hash:
-            out = out.model_copy(update={"params_hash": stable_params_hash(out)})
-        return out
-
-
-def stable_params_hash(spec: PipelineRunSpec) -> str:
-    payload = spec.model_dump(exclude={"params_hash"}, mode="json")
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
-
-
-@dataclass(frozen=True, slots=True)
-class RunResult:
-    params_hash: str
-    pipeline_mode_requested: str
-    pipeline_mode_executed: str
-    artifacts_dir: str
-    success: bool
-    result_count: int
-    results_path: str | None
-    matrix_path: str | None
-    matrix_md_path: str | None
-    results_table_path: str | None
-    grade_summary_table_path: str | None
-    errors: list[str]
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> datetime:
     return datetime.now(tz=UTC)
 
 
-def _ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
+def _canonical_json(obj: Any) -> str:
+    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
-def _write_json(path: Path, payload: object) -> None:
-    _ensure_dir(path.parent)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+def _resolve_code_version() -> str:
+    env_version = (os.getenv("TVSCREENER_CODE_VERSION") or "").strip()
+    if env_version:
+        return env_version
 
-
-def _load_field(enum_cls: Any, name: str) -> Any | None:
     try:
-        return getattr(enum_cls, name)
+        raw = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if raw:
+            return raw
     except Exception:
-        return None
+        pass
+    return "unknown"
 
 
-def _fetch_upstream_snapshot(
-    *,
-    asset_type: str,
-    instrument_type: str | None,
-    tickers: list[str],
-    timeframes: list[str],
-    limit: int,
-) -> pd.DataFrame:
-    ensure_upstream_tvscreener()
+def _persist_run_record(spec: PipelineRunSpec, result: RunResult) -> None:
+    from tvscreener_ext.lakehouse import write_iceberg
 
-    at = (asset_type or "").strip().lower()
-    _ = (instrument_type or "").strip().lower() if instrument_type else None
+    ingest_date = result.started_at_utc.astimezone(UTC).strftime("%Y-%m-%d")
+    payload = {
+        "run_id": spec.params_hash,
+        "params_hash": result.params_hash,
+        "code_version": spec.code_version or "unknown",
+        "scanner_family": result.scanner_family,
+        "pipeline_mode_requested": spec.pipeline_mode,
+        "pipeline_mode_executed": result.pipeline_mode_executed,
+        "asset_type": spec.asset_type,
+        "timeframes": ",".join(spec.timeframes or []),
+        "timeframe_set_id": spec.timeframe_set_id or "",
+        "source": "tradingview",
+        "universe": spec.universe or "",
+        "instrument_type": spec.instrument_type or "",
+        "pairs_count": len(spec.pairs or []),
+        "config_path": spec.config_path or "",
+        "started_at_utc": result.started_at_utc,
+        "finished_at_utc": result.finished_at_utc,
+        "success": result.success,
+        "result_count": result.result_count,
+        "exit_code": result.exit_code,
+        "errors_json": json.dumps(result.errors, sort_keys=True),
+        "ingest_date": ingest_date,
+    }
 
-    if at == "forex":
-        from tvscreener.core.forex import ForexScreener
-        from tvscreener.field.forex import ForexField as F
+    try:
+        import pandas as pd
 
-        s = ForexScreener()
-        # ForexScreener injects a misc `symbols` key which overrides `self.symbols`.
-        s.misc.pop("symbols", None)
-    elif at == "crypto":
-        from tvscreener.core.crypto import CryptoScreener
-        from tvscreener.field.crypto import CryptoField as F
+        write_iceberg(
+            pd.DataFrame([payload]),
+            "tvscreener.runs",
+            mode="append",
+            partition_by=["asset_type", "ingest_date"],
+        )
+    except Exception as exc:
+        if (os.getenv("TVSCREENER_STRICT_PERSIST") or "").strip() == "1":
+            raise
 
-        s = CryptoScreener()
-    elif at == "stock":
-        from tvscreener.core.stock import StockScreener
-        from tvscreener.field.stock import StockField as F
-
-        s = StockScreener()
-    else:
-        raise ValueError(f"Unsupported asset_type: {asset_type}")
-
-    # Restrict to explicit tickers.
-    s.symbols = {"query": {"types": []}, "tickers": list(tickers)}
-
-    fields: list[Any] = []
-    fields += [F.NAME]
-    for tf in timeframes:
-        for base in ("CLOSE", "EMA20", "RSI10", "ROC"):
-            fld = _load_field(F, f"{base}_{tf}")
-            if fld is not None:
-                fields.append(fld)
-
-    # Ensure at least one price field exists.
-    if not any(getattr(f, "name", "").startswith("CLOSE_") for f in fields):
-        close_any = _load_field(F, "PRICE")
-        if close_any is not None:
-            fields.append(close_any)
-
-    s.select(*fields)
-    s.set_range(0, max(int(limit), len(tickers)))
-    df = s.get()
-    return pd.DataFrame(df)
+        logger.debug("Run metadata persistence failed: %s", exc)
 
 
-def _to_bronze(df: pd.DataFrame, *, spec: PipelineRunSpec, fetched_at: datetime) -> pd.DataFrame:
-    fetched_at_naive = fetched_at.astimezone(UTC).replace(tzinfo=None)
-    rows: list[dict[str, Any]] = []
-    for _, r in df.iterrows():
-        entity_id = str(r.get("Symbol") or "").strip()
-        name = str(r.get("Name") or "").strip()
-        for tf in spec.timeframes:
-            rec: dict[str, Any] = {
-                "entity_id": entity_id,
-                "name": name,
-                "asset_type": spec.asset_type,
-                "instrument_type": spec.instrument_type or "",
-                "universe": spec.universe,
-                "timeframe": tf,
-                "fetched_at_utc": fetched_at_naive,
-                "params_hash": spec.params_hash,
+class PipelineRunSpec(BaseModel):
+    """Serializable contract for defining a pipeline run.
+
+    This model is intended to be engine-agnostic. External workflow engines should treat it as their run config.
+    """
+
+    spec_version: int = 1
+
+    scanner_family: str = Field(description="opportunity | strategy")
+    pipeline_mode: str = Field(default="both", description="data | analytics | both")
+
+    asset_type: str = "forex"
+    universe: str | None = None
+    pairs: list[str] | None = None
+
+    timeframes: list[str] = Field(default_factory=list)
+    timeframe_set_id: str | None = None
+
+    # Asset/scanner parameters
+    strategy: str | None = None
+    contract_type: str | None = None
+    instrument_type: str | None = None
+    min_volume: float | None = None
+    max_atr: float | None = None
+    min_ma_score: float | None = None
+    min_roc: float | None = None
+    min_rvol: float | None = None
+    require_volume_spike: bool | None = None
+    include_atr: bool | None = None
+    include_rsi: bool | None = None
+
+    # Scoring / strategy thresholds
+    direction: str | None = None
+    min_confluence: int | None = None
+    trend_threshold: float | None = None
+    mr_threshold: float | None = None
+    rsi_lower: float | None = None
+    rsi_upper: float | None = None
+    mr_signal: list[str] = Field(default_factory=list)
+    min_tf_alignment: int | None = None
+    require_momentum: bool | None = None
+    opportunity_trend_weight: float | None = None
+    opportunity_ma_weight: float | None = None
+    opportunity_osc_weight: float | None = None
+    opportunity_roc_weight: float | None = None
+    opportunity_timeframe_weights: str | None = None
+
+    # Risk controls
+    risk_per_trade: float | None = None
+    atr_multiplier: float | None = None
+    min_risk_reward: float | None = None
+    account_balance: float | None = None
+
+    # Analytics filters
+    sql: str | None = None
+    sql_params: dict[str, Any] = Field(default_factory=dict)
+    filters: list[str] = Field(default_factory=list)
+
+    # Output controls
+    output: str | None = None
+    detailed: bool | None = None
+    matrix: bool | None = None
+    limit: int | None = None
+    head: int | None = None
+    metadata_only: bool | None = None
+    show_risk: bool | None = None
+    confluence_grade: str | None = None
+    min_opportunity_confluence: int | None = None
+
+    # Config pointer + reproducibility
+    config_path: str | None = None
+    created_at_utc: datetime = Field(default_factory=_utc_now)
+    params_hash: str | None = None
+    code_version: str | None = None
+
+    def _hash_payload(self) -> dict[str, Any]:
+        """Payload used for stable hashing (exclude volatile/runtime fields)."""
+        return self.model_dump(
+            exclude={
+                "created_at_utc",
+                "params_hash",
+                "code_version",
+            },
+            exclude_none=True,
+        )
+
+    def compute_params_hash(self) -> str:
+        payload = self._hash_payload()
+        raw = _canonical_json(payload).encode("utf-8")
+        return hashlib.sha256(raw).hexdigest()
+
+    def normalized(self) -> PipelineRunSpec:
+        """Return a normalized copy with derived fields populated."""
+        tf = [str(t).strip() for t in self.timeframes if str(t).strip()]
+        at = canonicalize_asset_type(self.asset_type)
+        scanner = (self.scanner_family or "").strip().lower()
+        pipeline = (self.pipeline_mode or "both").strip().lower()
+        tfs_id = self.timeframe_set_id
+        if tf and not tfs_id:
+            tfs_id = timeframe_set_id(tf)
+        spec = self.model_copy(
+            update={
+                "asset_type": at,
+                "scanner_family": scanner or self.scanner_family,
+                "pipeline_mode": pipeline or self.pipeline_mode,
+                "timeframes": tf,
+                "timeframe_set_id": tfs_id,
             }
-            for col, out_key in (
-                (f"Close|{tf}", "close"),
-                (f"Ema20|{tf}", "ema20"),
-                (f"Rsi10|{tf}", "rsi10"),
-                (f"Roc|{tf}", "roc"),
-            ):
-                if col in df.columns:
-                    rec[out_key] = pd.to_numeric(r.get(col), errors="coerce")
-            rows.append(rec)
-    return pd.DataFrame(rows)
+        )
+        if not spec.params_hash:
+            spec = spec.model_copy(update={"params_hash": spec.compute_params_hash()})
+        if not spec.code_version:
+            spec = spec.model_copy(update={"code_version": _resolve_code_version()})
+        return spec
 
-
-def _compute_signals_latest(bronze: pd.DataFrame, *, spec: PipelineRunSpec) -> pd.DataFrame:
-    if bronze.empty:
-        return pd.DataFrame()
-
-    pivot_cols = [
-        "entity_id",
-        "name",
-        "asset_type",
-        "instrument_type",
-        "universe",
-        "params_hash",
-        "fetched_at_utc",
-    ]
-    out_rows: list[dict[str, Any]] = []
-    for _entity_id, g in bronze.groupby("entity_id", dropna=False):
-        row: dict[str, Any] = {}
-        head = g.iloc[0]
-        for c in pivot_cols:
-            row[c] = head.get(c)
-
-        bulls = 0
-        total = 0
-
-        for tf in spec.timeframes:
-            gg = g.loc[g["timeframe"] == tf]
-            if gg.empty:
-                continue
-            rr = gg.iloc[0]
-            close = rr.get("close")
-            ema20 = rr.get("ema20")
-            rsi10 = rr.get("rsi10")
-            roc = rr.get("roc")
-
-            def _flag(val: Any) -> str:
-                if val is None or (isinstance(val, float) and pd.isna(val)):
-                    return "neutral"
-                try:
-                    return "bull" if float(val) > 0 else "bear"
-                except Exception:
-                    return "neutral"
-
-            trend = _flag(roc)
-            ma = "neutral"
-            if (
-                close is not None
-                and ema20 is not None
-                and not pd.isna(close)
-                and not pd.isna(ema20)
-            ):
-                ma = "bull" if float(close) >= float(ema20) else "bear"
-            osc = "neutral"
-            if rsi10 is not None and not pd.isna(rsi10):
-                osc = "bull" if float(rsi10) >= 50.0 else "bear"
-            roc_flag = trend
-
-            row[f"trend_{tf}"] = trend
-            row[f"ma_{tf}"] = ma
-            row[f"osc_{tf}"] = osc
-            row[f"roc_{tf}"] = roc_flag
-
-            for flag in (trend, ma, osc, roc_flag):
-                if flag == "neutral":
-                    continue
-                total += 1
-                if flag == "bull":
-                    bulls += 1
-
-        score = (bulls / total) if total > 0 else 0.0
-        row["bull_count"] = int(bulls)
-        row["total_count"] = int(total)
-        row["score"] = float(score)
-
-        if score >= 0.90:
-            grade = "A+"
-        elif score >= 0.80:
-            grade = "A"
-        elif score >= 0.70:
-            grade = "B"
-        elif score >= 0.60:
-            grade = "C"
+    @classmethod
+    def from_cli_args(cls, args: Any) -> PipelineRunSpec:
+        tfs: list[str]
+        if getattr(args, "timeframes", None):
+            tfs = [t.strip() for t in str(args.timeframes).split(",") if t.strip()]
         else:
-            grade = "D"
-        row["grade"] = grade
-        row["direction"] = "bull" if bulls >= max(1, total - bulls) else "bear"
+            tfs = []
 
-        out_rows.append(row)
+        detailed = getattr(args, "detailed", None)
+        matrix = getattr(args, "matrix", None)
+        if bool(detailed) is False and bool(matrix) is False:
+            # Match CLI/orchestrator behavior: default to matrix view if neither is explicitly set.
+            matrix = True
 
-    return pd.DataFrame(out_rows)
+        spec = cls(
+            scanner_family=str(getattr(args, "scanner", "strategy")),
+            pipeline_mode=str(getattr(args, "pipeline", "both")),
+            asset_type=str(getattr(args, "asset_type", "forex")),
+            universe=getattr(args, "universe", None),
+            pairs=getattr(args, "pairs", None),
+            timeframes=tfs,
+            strategy=getattr(args, "strategy", None),
+            contract_type=getattr(args, "contract_type", None),
+            instrument_type=getattr(args, "instrument_type", None),
+            min_volume=getattr(args, "min_volume", None),
+            max_atr=getattr(args, "max_atr", None),
+            min_ma_score=getattr(args, "min_ma_score", None),
+            min_roc=getattr(args, "min_roc", None),
+            min_rvol=getattr(args, "min_rvol", None),
+            require_volume_spike=getattr(args, "require_volume_spike", None),
+            include_atr=getattr(args, "include_atr", None),
+            include_rsi=getattr(args, "include_rsi", None),
+            direction=getattr(args, "direction", None),
+            min_confluence=getattr(args, "min_confluence", None),
+            trend_threshold=getattr(args, "trend_threshold", None),
+            mr_threshold=getattr(args, "mr_threshold", None),
+            rsi_lower=getattr(args, "rsi_lower", None),
+            rsi_upper=getattr(args, "rsi_upper", None),
+            mr_signal=getattr(args, "mr_signal", []) or [],
+            min_tf_alignment=getattr(args, "min_tf_alignment", None),
+            require_momentum=getattr(args, "require_momentum", None),
+            opportunity_trend_weight=getattr(args, "opportunity_trend_weight", None),
+            opportunity_ma_weight=getattr(args, "opportunity_ma_weight", None),
+            opportunity_osc_weight=getattr(args, "opportunity_osc_weight", None),
+            opportunity_roc_weight=getattr(args, "opportunity_roc_weight", None),
+            opportunity_timeframe_weights=getattr(args, "opportunity_timeframe_weights", None),
+            risk_per_trade=getattr(args, "risk_per_trade", None),
+            atr_multiplier=getattr(args, "atr_multiplier", None),
+            min_risk_reward=getattr(args, "min_risk_reward", None),
+            account_balance=getattr(args, "account_balance", None),
+            sql=getattr(args, "sql", None),
+            sql_params=getattr(args, "sql_params", {}) or {},
+            filters=getattr(args, "filter", []) or [],
+            output=getattr(args, "output", None),
+            detailed=detailed,
+            matrix=matrix,
+            limit=getattr(args, "limit", None),
+            head=getattr(args, "head", None),
+            metadata_only=getattr(args, "metadata_only", None),
+            show_risk=getattr(args, "show_risk", None),
+            confluence_grade=getattr(args, "confluence_grade", None),
+            min_opportunity_confluence=getattr(args, "min_opportunity_confluence", None),
+            config_path=getattr(args, "config", None),
+        )
+        return spec.normalized()
+
+    def to_scan_request(self) -> ScanRequest:
+        tfs_str = ",".join(self.timeframes) if self.timeframes else None
+        return ScanRequest(
+            assets=AssetSelection(
+                scanner=self.scanner_family,
+                pipeline=self.pipeline_mode,
+                strategy=self.strategy or "all",
+                asset_type=self.asset_type,
+                universe=self.universe,
+                pairs=self.pairs,
+                timeframes=tfs_str,
+                contract_type=self.contract_type,
+                instrument_type=self.instrument_type,
+                min_volume=self.min_volume,
+                max_atr=self.max_atr,
+                min_ma_score=self.min_ma_score,
+                min_roc=self.min_roc,
+                min_rvol=self.min_rvol,
+                require_volume_spike=bool(self.require_volume_spike)
+                if self.require_volume_spike is not None
+                else False,
+                include_atr=bool(self.include_atr) if self.include_atr is not None else False,
+                include_rsi=bool(self.include_rsi) if self.include_rsi is not None else False,
+            ),
+            scoring=ScoringConfig(
+                opportunity_trend_weight=self.opportunity_trend_weight,
+                opportunity_ma_weight=self.opportunity_ma_weight,
+                opportunity_osc_weight=self.opportunity_osc_weight,
+                opportunity_roc_weight=self.opportunity_roc_weight,
+                opportunity_timeframe_weights=self.opportunity_timeframe_weights,
+                filter_direction=self.direction,
+                min_confluence=self.min_confluence,
+                trend_threshold=self.trend_threshold,
+                mr_threshold=self.mr_threshold,
+                rsi_lower=self.rsi_lower,
+                rsi_upper=self.rsi_upper,
+                mr_signal=self.mr_signal or [],
+                min_tf_alignment=self.min_tf_alignment,
+                require_momentum=bool(self.require_momentum)
+                if self.require_momentum is not None
+                else False,
+            ),
+            risk=RiskConfig(
+                risk_per_trade_pct=self.risk_per_trade,
+                atr_multiplier=self.atr_multiplier,
+                min_risk_reward_ratio=self.min_risk_reward,
+                account_balance=self.account_balance,
+            ),
+            output=OutputConfig(
+                output=self.output,
+                detailed=bool(self.detailed) if self.detailed is not None else False,
+                matrix=bool(self.matrix) if self.matrix is not None else False,
+                limit=self.limit,
+                head=self.head,
+                metadata_only=bool(self.metadata_only) if self.metadata_only is not None else False,
+                show_risk=bool(self.show_risk) if self.show_risk is not None else False,
+                sql=self.sql,
+                sql_params=self.sql_params or {},
+                filters=self.filters or [],
+                confluence_grade=self.confluence_grade,
+                min_opportunity_confluence=self.min_opportunity_confluence,
+                config_path=self.config_path,
+            ),
+        )
 
 
-def _render_matrix(df: pd.DataFrame, *, spec: PipelineRunSpec) -> str:
-    if df is None or df.empty:
-        return "(no rows)"
+class RunResult(BaseModel):
+    spec_version: int = 1
 
-    def _pick(*candidates: str) -> str | None:
-        for c in candidates:
-            if c in df.columns:
-                return c
-        return None
+    params_hash: str
+    scanner_family: str
+    pipeline_mode_executed: str
 
-    entity_col = _pick("entity_id", "Symbol") or "entity_id"
-    grade_col = _pick("grade", "grade_1", "GRADE")
-    direction_col = _pick("direction", "direction_1", "DIRECTION")
+    started_at_utc: datetime
+    finished_at_utc: datetime
 
-    cols: list[str] = [entity_col]
-    if direction_col:
-        cols.append(direction_col)
-    if grade_col:
-        cols.append(grade_col)
+    success: bool
+    result_count: int
+    exit_code: int
+    errors: list[str] = Field(default_factory=list)
 
-    for tf in spec.timeframes:
-        cols += [
-            _pick(f"trend_{tf}", f"trend_{tf}_1", f"TREND_{tf}") or f"trend_{tf}",
-            _pick(f"ma_{tf}", f"ma_{tf}_1", f"MA_{tf}") or f"ma_{tf}",
-            _pick(f"osc_{tf}", f"osc_{tf}_1", f"OSC_{tf}") or f"osc_{tf}",
-            _pick(f"roc_{tf}", f"roc_{tf}_1", f"ROC_{tf}") or f"roc_{tf}",
-        ]
-
-    view = df.copy()
-    for c in cols:
-        if c not in view.columns:
-            view[c] = None
-    return view[cols].to_string(index=False)
+    # Optional audit fields (best-effort)
+    tables_read: list[str] = Field(default_factory=list)
+    tables_written: list[str] = Field(default_factory=list)
 
 
-def _render_matrix_markdown(matrix_text: str, *, spec: PipelineRunSpec) -> str:
-    title = (
-        f"Matrix: {spec.scanner_family} {spec.asset_type}"
-        + (f" {spec.instrument_type}" if spec.instrument_type else "")
-        + f" {spec.universe}"
-    )
-    return "\n".join(
-        [
-            f"# {title}",
-            "",
-            f"- `pipeline_mode`: `{spec.pipeline_mode}`",
-            f"- `timeframes`: `{','.join(spec.timeframes)}`",
-            f"- `limit`: `{spec.limit}`",
-            "",
-            "```text",
-            matrix_text.rstrip(),
-            "```",
-            "",
-        ]
-    )
+class PipelineRunner(Protocol):
+    def run(self, spec: PipelineRunSpec) -> RunResult: ...
 
 
 class LocalRunner:
+    """In-process runner that delegates to the existing orchestrator."""
+
+    def __init__(self, console: Any | None = None):
+        self._console = console
+
     def run(self, spec: PipelineRunSpec) -> RunResult:
-        spec = spec.normalized()
-        params_hash = spec.params_hash or stable_params_hash(spec)
-
-        artifacts_base = Path(spec.artifacts_dir)
-        run_dir = artifacts_base / params_hash
-        _ensure_dir(run_dir)
-
         started = _utc_now()
-        errors: list[str] = []
-        results_path: str | None = None
-        matrix_path: str | None = None
-        matrix_md_path: str | None = None
-        results_table_path: str | None = None
-        grade_summary_table_path: str | None = None
-        result_count = 0
-        success = False
-        pipeline_mode_executed: str = spec.pipeline_mode
+        spec = spec.normalized()
+        env_run_id = spec.params_hash or spec.compute_params_hash()
 
-        _write_json(run_dir / "run_spec.json", spec.model_dump(mode="json"))
+        previous_env = {
+            "TVSCREENER_RUN_ID": os.environ.get("TVSCREENER_RUN_ID"),
+            "TVSCREENER_PARAMS_HASH": os.environ.get("TVSCREENER_PARAMS_HASH"),
+            "TVSCREENER_CODE_VERSION": os.environ.get("TVSCREENER_CODE_VERSION"),
+            "TVSCREENER_INSTRUMENT_TYPE": os.environ.get("TVSCREENER_INSTRUMENT_TYPE"),
+        }
+        os.environ["TVSCREENER_RUN_ID"] = env_run_id
+        os.environ["TVSCREENER_PARAMS_HASH"] = env_run_id
+        os.environ["TVSCREENER_CODE_VERSION"] = spec.code_version or "unknown"
+        if spec.instrument_type:
+            os.environ["TVSCREENER_INSTRUMENT_TYPE"] = spec.instrument_type
+
+        # Ensure lakehouse config is initialized consistently for this process.
+        from tvscreener_ext.lakehouse import get_manager
+
+        get_manager(spec.config_path)
+
+        controller = ScreenerController(console=self._console)
+
+        # Keep renderer registration lazy and optional: only needed when using the rich console.
+        if self._console is not None:
+            try:
+                from tvscreener_ext.screeners.renderers.rich_console import register_renderers
+
+                register_renderers()
+
+            except Exception:
+                # Rendering is optional; avoid blocking non-interactive runners.
+                pass
 
         try:
-            lh = LakehouseManager(config_path=spec.config_path)
-
-            if spec.pipeline_mode in {"data", "both"}:
-                uni = resolve_universe(
-                    asset_type=spec.asset_type,
-                    universe=spec.universe,
-                    instrument_type=spec.instrument_type,
-                )
-                fetched_at = _utc_now()
-                snap = _fetch_upstream_snapshot(
-                    asset_type=spec.asset_type,
-                    instrument_type=spec.instrument_type,
-                    tickers=uni.tickers,
-                    timeframes=spec.timeframes,
-                    limit=spec.limit,
-                )
-                bronze = _to_bronze(snap, spec=spec, fetched_at=fetched_at)
-                lh.write_table(bronze, "tvscreener.bronze", mode="append")
-
-                latest = _compute_signals_latest(bronze, spec=spec)
-                lh.write_table(
-                    latest,
-                    "tvscreener.signals_latest",
-                    mode="overwrite",
-                    partition_by=["asset_type", "instrument_type", "universe"],
-                )
-                result_count = int(len(latest))
-                pipeline_mode_executed = "data" if spec.pipeline_mode == "data" else "both"
-
-            if spec.pipeline_mode in {"analytics", "both"}:
-                arrow = lh.read_table_arrow("tvscreener.signals_latest")
-                con = duckdb.connect(database=":memory:")
-                con.register("signals_latest", arrow)
-
-                where = [f"asset_type = '{spec.asset_type}'", f"universe = '{spec.universe}'"]
-                if spec.instrument_type:
-                    where.append(f"instrument_type = '{spec.instrument_type}'")
-                sql = (
-                    "SELECT * FROM signals_latest WHERE "
-                    + " AND ".join(where)
-                    + " ORDER BY score DESC"
-                )
-                out_df = con.execute(sql).df()
-                if spec.limit:
-                    out_df = out_df.head(int(spec.limit))
-                result_count = int(len(out_df))
-
-                results_path = spec.output or str(
-                    run_dir / f"{spec.scanner_family}_results.parquet"
-                )
-                Path(results_path).parent.mkdir(parents=True, exist_ok=True)
-                out_df.to_parquet(results_path, index=False)
-
-                # Semantic (DuckDB) tables for Prefect Table artifacts.
-                try:
-                    from tvscreener_ext.semantic.sidemantic_duckdb import write_semantic_tables
-
-                    results_table_path = str(run_dir / "results_top_rows.json")
-                    grade_summary_table_path = str(run_dir / "results_grade_summary.json")
-                    write_semantic_tables(
-                        results_parquet_path=str(results_path),
-                        out_top_rows_json_path=str(results_table_path),
-                        out_grade_summary_json_path=str(grade_summary_table_path),
-                        top_rows_limit=25,
-                    )
-                except Exception as exc:
-                    results_table_path = None
-                    grade_summary_table_path = None
-                    if os.getenv("TVSCREENER_SEMANTIC_DEBUG", "0").strip() == "1":
-                        errors.append(f"semantic_tables_error: {exc}")
-
-                if bool(spec.matrix):
-                    matrix_text = _render_matrix(out_df, spec=spec)
-                    (run_dir / "matrix.txt").write_text(matrix_text, encoding="utf-8")
-                    matrix_path = str(run_dir / "matrix.txt")
-
-                    matrix_md = _render_matrix_markdown(matrix_text, spec=spec)
-                    (run_dir / "matrix.md").write_text(matrix_md, encoding="utf-8")
-                    matrix_md_path = str(run_dir / "matrix.md")
-
-                pipeline_mode_executed = (
-                    "analytics" if spec.pipeline_mode == "analytics" else "both"
-                )
-
-            success = True
-        except Exception as exc:
-            errors.append(str(exc))
+            count = controller.run_scan(spec.to_scan_request())
+            success = count >= 0
+            exit_code = 0 if success else 2
+            errors: list[str] = []
+        except Exception as e:
+            count = -1
             success = False
+            exit_code = 2
+            errors = [str(e)]
+        finally:
+            for key, previous in previous_env.items():
+                if previous is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = previous
 
         finished = _utc_now()
-        run_payload = {
-            "spec_version": spec.spec_version,
-            "params_hash": params_hash,
-            "scanner_family": spec.scanner_family,
-            "pipeline_mode_requested": spec.pipeline_mode,
-            "pipeline_mode_executed": pipeline_mode_executed,
-            "started_at_utc": started.isoformat(),
-            "finished_at_utc": finished.isoformat(),
-            "success": bool(success),
-            "result_count": int(result_count),
-            "errors": list(errors),
-            "artifacts_dir": str(run_dir),
-            "run_spec_path": str(run_dir / "run_spec.json"),
-            "run_result_path": str(run_dir / "run_result.json"),
-            "results_path": results_path,
-            "matrix_path": matrix_path,
-            "matrix_md_path": matrix_md_path,
-            "results_table_path": results_table_path,
-            "grade_summary_table_path": grade_summary_table_path,
-        }
-        _write_json(run_dir / "run_result.json", run_payload)
-
-        # Best-effort audit table.
-        try:
-            lh = LakehouseManager(config_path=spec.config_path)
-            audit = pd.DataFrame(
-                [
-                    {
-                        "params_hash": params_hash,
-                        "asset_type": spec.asset_type,
-                        "instrument_type": spec.instrument_type or "",
-                        "universe": spec.universe,
-                        "pipeline_mode_requested": spec.pipeline_mode,
-                        "pipeline_mode_executed": pipeline_mode_executed,
-                        "started_at_utc": started.astimezone(UTC).replace(tzinfo=None),
-                        "finished_at_utc": finished.astimezone(UTC).replace(tzinfo=None),
-                        "success": bool(success),
-                        "result_count": int(result_count),
-                    }
-                ]
-            )
-            lh.write_table(audit, "tvscreener.runs", mode="append")
-        except Exception:
-            pass
-
-        return RunResult(
-            params_hash=params_hash,
-            pipeline_mode_requested=spec.pipeline_mode,
-            pipeline_mode_executed=pipeline_mode_executed,
-            artifacts_dir=str(run_dir),
-            success=bool(success),
-            result_count=int(result_count),
-            results_path=results_path,
-            matrix_path=matrix_path,
-            matrix_md_path=matrix_md_path,
-            results_table_path=results_table_path,
-            grade_summary_table_path=grade_summary_table_path,
+        result = RunResult(
+            params_hash=spec.params_hash or spec.compute_params_hash(),
+            scanner_family=spec.scanner_family,
+            pipeline_mode_executed=spec.pipeline_mode,
+            started_at_utc=started,
+            finished_at_utc=finished,
+            success=success,
+            result_count=max(0, int(count)),
+            exit_code=exit_code,
             errors=errors,
         )
+        _persist_run_record(spec, result)
+        return result

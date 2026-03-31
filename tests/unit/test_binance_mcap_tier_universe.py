@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.lib.universe import binance_crypto as bc
+from tvscreener_ext.universe import binance_crypto as bc
 
 
 def test_mcap_tier_universe_selects_rank_slice_and_applies_liquidity_and_history(monkeypatch):

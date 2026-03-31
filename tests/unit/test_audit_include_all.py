@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from tvscreener.lib.orchestrator import ScreenerController
+from tvscreener_ext.orchestrator import ScreenerController
 
 
 def test_audit_defaults_to_screener_universes(tmp_path: Path):

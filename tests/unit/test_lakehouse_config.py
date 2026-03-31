@@ -3,15 +3,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
-
-from tvscreener.lib.lakehouse import get_manager
-from tvscreener.lib.lakehouse.manager import LakehouseManager
+from tvscreener_ext.lakehouse import get_manager
+from tvscreener_ext.lakehouse.manager import LakehouseManager
 
 
 @pytest.fixture(autouse=True)
 def reset_manager_singleton():
     """Reset the LakehouseManager singleton before and after each test."""
-    import tvscreener.lib.lakehouse.manager as manager_mod
+    import tvscreener_ext.lakehouse.manager as manager_mod
 
     manager_mod._MANAGER_INSTANCE = None
     yield

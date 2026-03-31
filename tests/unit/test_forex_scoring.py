@@ -1,12 +1,11 @@
 import pandas as pd
-
-from tvscreener.filter import RocFilter, ScoreFilter
-from tvscreener.lib.screeners.forex_opportunity import (
+from tvscreener_ext.scoring import ScoringConfig
+from tvscreener_ext.screeners.filters import RocFilter, ScoreFilter
+from tvscreener_ext.screeners.forex_opportunity import (
     ForexOpportunityScreener,
     ForexScreenerConfig,
 )
-from tvscreener.lib.screeners.forex_strategy import ForexStrategyScanner, StrategyConfig
-from tvscreener.score import ScoringConfig
+from tvscreener_ext.screeners.forex_strategy import ForexStrategyScanner, StrategyConfig
 
 
 class TestScoringConfig:
@@ -110,7 +109,7 @@ class TestEnsembleScoring:
 
         result = screener._engine.rank_opportunities(mock_df)
 
-        from tvscreener.core.enums import Direction
+        from tvscreener_ext.enums import Direction
 
         assert result.iloc[0]["DIRECTION"] == Direction.LONG.value
 
@@ -130,7 +129,7 @@ class TestEnsembleScoring:
 
         result = screener._engine.rank_opportunities(mock_df)
 
-        from tvscreener.core.enums import Direction
+        from tvscreener_ext.enums import Direction
 
         assert result.iloc[0]["DIRECTION"] == Direction.SHORT.value
 

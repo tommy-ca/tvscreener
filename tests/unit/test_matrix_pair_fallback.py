@@ -1,7 +1,6 @@
 import pandas as pd
-
-from tvscreener.lib.screeners.base import ScreenerConfig
-from tvscreener.lib.screeners.factory import GenericOpportunityScreener
+from tvscreener_ext.screeners.base import ScreenerConfig
+from tvscreener_ext.screeners.factory import GenericOpportunityScreener
 
 
 def test_prepare_enriched_data_adds_pair_for_crypto_from_symbol():

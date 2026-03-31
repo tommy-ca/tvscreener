@@ -1,6 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from tvscreener.lib.screeners.metadata_utils import MetadataCollector
+from tvscreener_ext.screeners.metadata_utils import MetadataCollector
 
 
 def test_metadata_collector_thread_safety():

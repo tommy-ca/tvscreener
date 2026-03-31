@@ -3,9 +3,9 @@ from unittest.mock import ANY, MagicMock, patch
 import pandas as pd
 import pytest
 from pyiceberg.exceptions import NoSuchTableError
+from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
 
 from tvscreener.core.base import Screener
-from tvscreener.lib.screeners.base import BaseOpportunityScreener, ScreenerConfig
 
 
 class MockScreener(BaseOpportunityScreener):
@@ -21,13 +21,13 @@ class MockScreener(BaseOpportunityScreener):
 
 @pytest.fixture
 def mock_catalog():
-    with patch("tvscreener.lib.screeners.base.get_catalog") as mock:
+    with patch("tvscreener_ext.screeners.base.get_catalog") as mock:
         yield mock
 
 
 @pytest.fixture
 def mock_write_iceberg():
-    with patch("tvscreener.lib.screeners.base.write_iceberg") as mock:
+    with patch("tvscreener_ext.screeners.base.write_iceberg") as mock:
         yield mock
 
 

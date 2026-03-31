@@ -39,7 +39,10 @@ class StockScreener(Screener):
         return payload
 
     def _add_types(self, *types: Type):
-        operator = FilterOperator.IN_RANGE if len(types) > 1 else FilterOperator.EQUAL
+        if len(types) > 1:
+            operator = FilterOperator.IN_RANGE
+        else:
+            operator = FilterOperator.EQUAL
 
         for type_ in types:
             self.add_filter(StockField.TYPE, operator, type_.value)
@@ -83,6 +86,6 @@ class StockScreener(Screener):
         :return: None
         """
         if Market.ALL in markets:
-            self.markets = list(Market)
+            self.markets = [market for market in Market]
         else:
-            self.markets = list(markets)
+            self.markets = [market for market in markets]

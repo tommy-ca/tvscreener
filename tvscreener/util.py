@@ -1,97 +1,12 @@
-import hashlib
 import math
-import os
-from pathlib import Path
-from typing import Any
 
 from tvscreener.field import (
+    Field,
     add_historical,
     add_historical_to_label,
     add_rec,
     add_rec_to_label,
 )
-
-
-def to_scalar(val: Any) -> float:
-    """Convert a potential Series to a float scalar."""
-    if hasattr(val, "iloc"):
-        return float(val.iloc[0])
-    try:
-        return float(val)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def validate_path(
-    path_str: str, base_dir: Path | None = None, allow_tmp: bool | None = None
-) -> Path:
-    """
-    Validate that a path is safe and within the allowed directory.
-
-    :param path_str: Path string to validate
-    :param base_dir: Base directory to restrict the path to (defaults to CWD)
-    :param allow_tmp: Whether to allow paths in /tmp. If None, it's allowed only in test environments.
-    :return: Resolved absolute Path object
-    :raises ValueError: If path is invalid or outside allowed directory
-    """
-    if allow_tmp is None:
-        # Default to True only in test environments via explicit env var
-        allow_tmp = os.getenv("TVSCREENER_TEST_MODE") == "1"
-
-    try:
-        requested_path = Path(path_str).absolute()
-        # Security: Resolve both paths to handle symlinks and redundant separators
-        cwd = base_dir.resolve() if base_dir else Path.cwd().resolve()
-        resolved_path = requested_path.resolve()
-    except Exception as e:
-        raise ValueError(f"Invalid path: {path_str}") from e
-
-    # Check for path traversal or escape from allowed directory
-    try:
-        resolved_path.relative_to(cwd)
-    except ValueError:
-        # Security: Only allow /tmp bypass if explicitly enabled
-        tmp_dir = Path("/tmp").resolve()
-        if allow_tmp and resolved_path.is_relative_to(tmp_dir):
-            return resolved_path
-
-        raise ValueError(
-            f"Path traversal detected or path outside allowed directory: {path_str}"
-        ) from None
-
-    return resolved_path
-
-
-def load_dotenv_file(path: str = ".env", *, override: bool = False) -> None:
-    """Best-effort loader for simple KEY=VALUE pairs.
-
-    This is intentionally lightweight (no dependency on python-dotenv) and is
-    used so `.env` can also configure third-party libraries like Prefect.
-    """
-    env_path = Path(path)
-    if not env_path.exists() or not env_path.is_file():
-        return
-
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-
-        if "=" not in line:
-            continue
-
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
-            value = value[1:-1]
-
-        if not override and key in os.environ:
-            continue
-        os.environ[key] = value
 
 
 def format_historical_field(field_, historical=1):
@@ -102,7 +17,6 @@ def format_historical_field(field_, historical=1):
     :return: Formatted field name
     :raises ValueError: If field is not a historical field
     """
-
     # Fixed: Use proper exception instead of assert
     if not field_.historical:
         raise ValueError(f"{field_} is not a historical field")
@@ -111,10 +25,10 @@ def format_historical_field(field_, historical=1):
     return formatted_technical_field
 
 
-def get_columns_to_request(fields_):
+def get_columns_to_request(fields_: type[Field]):
     """
     Assemble the technical columns for the request
-    :param fields_: list of fields to be requested
+    :param fields_: type of fields to be requested (StockField, ForexField, CryptoField)
     :return:
     """
 
@@ -173,35 +87,6 @@ def get_url(subtype):
     return f"https://scanner.tradingview.com/{subtype}/scan"
 
 
-def canonicalize_asset_type(asset_type: str) -> str:
-    """Normalize user-facing asset type strings to internal keys."""
-    at = (asset_type or "").strip().lower()
-    aliases = {
-        "stocks": "stock",
-        "equities": "stock",
-        "equity": "stock",
-        "stock": "stock",
-        "fx": "forex",
-        "forex": "forex",
-        "cryptos": "crypto",
-        "crypto": "crypto",
-        "commodities": "futures",
-        "commodity": "futures",
-        "futures": "futures",
-        "bonds": "bond",
-        "bond": "bond",
-        "coins": "coin",
-        "coin": "coin",
-    }
-    return aliases.get(at, at)
-
-
-def timeframe_set_id(timeframes: list[str]) -> str:
-    """Stable ID for a timeframe set (sorted, comma-separated)."""
-    tf_str = ",".join(sorted(str(t).strip() for t in timeframes if str(t).strip()))
-    return hashlib.blake2s(tf_str.encode("utf-8"), digest_size=8).hexdigest()
-
-
 # Use proper abbreviations including K for thousands
 millnames = ["", "K", "M", "B", "T"]
 
@@ -247,8 +132,8 @@ def get_recommendation(rating):
     """
     try:
         rating = float(rating)
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"Invalid rating: {rating}. Rating should be a number.") from e
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid rating: {rating}. Rating should be a number.")
 
     if rating < 0:
         return "S"  # Sell
@@ -256,29 +141,3 @@ def get_recommendation(rating):
         return "N"  # Neutral
     else:  # rating > 0
         return "B"  # Buy
-
-
-def parse_timeframe_weights(
-    spec: str | None, default: dict[str, float] | None = None
-) -> dict[str, float]:
-    """
-    Parse timeframe weights from a string (format 240:0.2,60:0.3,15:0.5).
-
-    :param spec: Comma-separated string of timeframe:weight pairs
-    :param default: Default weights if spec is empty or invalid
-    :return: Dictionary mapping timeframe to weight
-    """
-    if not spec:
-        return default or {}
-
-    weights: dict[str, float] = {}
-    for entry in spec.split(","):
-        if not entry:
-            continue
-        key, sep, value = entry.partition(":")
-        if sep and value:
-            try:
-                weights[key.strip()] = float(value.strip())
-            except ValueError:
-                continue
-    return weights or (default or {})

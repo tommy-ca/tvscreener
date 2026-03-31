@@ -1,0 +1,1182 @@
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+import random
+import time
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any, Generic, TypeVar, cast
+from uuid import uuid4
+
+import narwhals as nw
+import pandas as pd
+from pyiceberg.exceptions import NoSuchTableError
+
+from tvscreener_ext.data_sources.logic import build_data_source
+from tvscreener_ext.lakehouse import get_catalog, write_iceberg
+from tvscreener_ext.lakehouse.table_ids import (
+    lakehouse_layout,
+    normalize_instrument_type,
+    product_table_id,
+    stage_table_id,
+)
+from tvscreener_ext.scoring import DEFAULT_SCORING_CONFIG, ScoringConfig, ScoringEngine
+from tvscreener_ext.screeners.metadata_utils import MetadataCollector
+from tvscreener_ext.screeners.risk_utils import RISK_DEFAULTS, RiskConfig, RiskEngine
+from tvscreener_ext.utils.logic import (
+    canonicalize_asset_type,
+    timeframe_set_id,
+    to_scalar,
+    validate_path,
+)
+
+if TYPE_CHECKING:
+    from tvscreener.core.base import Screener
+    from tvscreener_ext.screeners.filters import DataFrameFilter
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class SyntheticField:
+    """Field-like object for requesting missing timed columns.
+
+    Some TradingView endpoints accept timed variants like `Recommend.All|240`
+    but the generated field enums may not include the `*_240` members.
+    """
+
+    label: str
+    field_name: str
+    format: str | None = None
+    interval: bool = False
+    historical: bool = False
+
+    def has_recommendation(self) -> bool:
+        return self.format == "recommendation"
+
+
+def normalize_iceberg_count_like_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize count-like columns to integer-compatible pandas dtypes.
+
+    Iceberg schemas are shared across runs in legacy layout; some sources can
+    return float-like values for columns that are semantically counts.
+    """
+
+    if df is None or df.empty:
+        return df
+
+    cols = [
+        "Volume",
+        "VOLUME",
+        "GRID_ALIGNED",
+        "GRID_TOTAL",
+        "GRID_PCT",
+        "TOTAL_CONFLUENCE",
+        "TF_CONFLUENCE_LONG",
+        "TF_CONFLUENCE_SHORT",
+        "FACTOR_BULLISH_COUNT",
+        "FACTOR_BEARISH_COUNT",
+    ]
+
+    out = df
+    for col in cols:
+        if col not in out.columns:
+            continue
+        with contextlib.suppress(Exception):
+            import numpy as np
+
+            raw = pd.to_numeric(out[col], errors="coerce")
+            arr = np.asarray(raw, dtype="float64")
+            out[col] = pd.Series(np.rint(arr), index=out.index).astype("Int64")
+    return out
+
+
+T = TypeVar("T", bound="Screener")
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenerConfig:
+    """Base configuration for all screeners."""
+
+    scoring_config: ScoringConfig = field(default_factory=lambda: DEFAULT_SCORING_CONFIG)
+    timeframe_weights: dict[str, float] = field(default_factory=dict)
+    include_atr: bool = False
+    include_rsi: bool = False
+    min_rvol: float | None = None
+    show_risk: bool = False
+
+    # Risk management parameters (defaults)
+    risk_per_trade_pct: float = RISK_DEFAULTS.risk_per_trade_pct
+    atr_multiplier: float = RISK_DEFAULTS.atr_multiplier
+    min_risk_reward_ratio: float = RISK_DEFAULTS.min_risk_reward_ratio
+    account_balance: float = RISK_DEFAULTS.account_balance
+    pip_value: float = RISK_DEFAULTS.pip_value
+
+    # Volume outlier detection (Todo 182)
+    volume_outlier_detection: bool = False
+    volume_outlier_threshold: float = 3.0
+
+    extra_options: dict[str, Any] = field(default_factory=dict)
+
+    def to_risk_config(self) -> RiskConfig:
+        """Convert screener config to RiskConfig."""
+        return RiskConfig(
+            account_balance=self.account_balance,
+            risk_per_trade_pct=self.risk_per_trade_pct,
+            min_risk_reward_ratio=self.min_risk_reward_ratio,
+            atr_multiplier=self.atr_multiplier,
+            pip_value=self.pip_value,
+        )
+
+
+class ExportMixin(ABC):
+    """Mixin to provide shared export and data enrichment logic to screeners."""
+
+    # These are expected to be available in the class using the mixin
+    timeframes: list[str]
+    metadata: MetadataCollector
+    post_filters: list[DataFrameFilter]
+
+    @abstractmethod
+    def _get_data(self) -> pd.DataFrame:
+        """Get the underlying data for the scanner."""
+        pass
+
+    @nw.narwhalify
+    def _prepare_enriched_data(self, df: Any) -> Any:
+        """Prepare DataFrame with canonical names and human-readable factor columns."""
+        if len(df) == 0:
+            return df
+
+        from tvscreener_ext.screeners.transformer import DataTransformer
+
+        # Matrix view expects a `PAIR` column. Forex pipelines populate it explicitly,
+        # but crypto uses fully-qualified TradingView symbols. Use `symbol` (or
+        # `Symbol` stripped of venue prefix) as a readable fallback.
+        fallback_pair = None
+        if "symbol" in df.columns:
+            fallback_pair = (
+                nw.col("symbol")
+                .fill_null("")
+                .cast(nw.String)
+                .str.replace(r"^.*:", "", literal=False)
+            )
+        elif "Symbol" in df.columns:
+            fallback_pair = (
+                nw.col("Symbol")
+                .fill_null("")
+                .cast(nw.String)
+                .str.replace(r"^.*:", "", literal=False)
+            )
+
+        if fallback_pair is not None:
+            if "PAIR" in df.columns:
+                pair = nw.col("PAIR").fill_null("").cast(nw.String)
+                df = df.with_columns(
+                    PAIR=nw.when(pair == "").then(fallback_pair).otherwise(nw.col("PAIR"))
+                )
+            else:
+                df = df.with_columns(PAIR=fallback_pair)
+
+        # Ensure PAIR is at the front
+        if "PAIR" in df.columns:
+            cols = [c for c in df.columns if c != "PAIR"]
+            df = df.select(["PAIR"] + cols)
+
+        # Standard technical factor and stat renames
+        df = DataTransformer.rename_technical_columns(df, self.timeframes)
+        df = DataTransformer.standardize_stat_columns(df)
+
+        return df
+
+    def export(self, path: str, format_name: str, label: str = "results", **kwargs) -> None:
+        """Export results to various formats."""
+        from tvscreener_ext.screeners.export_helpers import get_export_function
+
+        # Security: Validate path before exporting
+        if format_name.lower() == "iceberg":
+            # For Iceberg, path is used as a table identifier
+            validated_path = path
+        else:
+            try:
+                validated_path = str(validate_path(path))
+            except ValueError as e:
+                logger.error("Cannot export results: %s", e)
+                return
+
+        # Merge manual metadata with collector metadata
+        cli_metadata = kwargs.pop("metadata", {})
+        merged_metadata = {**cli_metadata, **self.metadata.to_dict()}
+
+        get_export_function(format_name)(
+            lambda: self._prepare_enriched_data(self._get_data()),
+            str(validated_path),
+            **kwargs,
+            metadata=merged_metadata,
+            logger=logging.getLogger(self.__class__.__module__),
+            label=label,
+        )
+
+    def print_summary(self, results_df: pd.DataFrame | None = None, **kwargs) -> None:
+        """Print a summary of the results to the console using the default renderer.
+
+        Args:
+            results_df: Optional DataFrame to render instead of the screener's internal data.
+            **kwargs: Additional rendering options (limit, detailed, matrix, etc.)
+        """
+        from tvscreener_ext.screeners.renderers.rich_console import RichConsoleRenderer
+
+        renderer = RichConsoleRenderer()
+        renderer.render(self, results_df=results_df, **kwargs)
+
+
+@dataclass
+class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
+    """Abstract base for high-level asset-specific opportunity screeners."""
+
+    asset_type: str = ""
+    symbols: list[str] = field(default_factory=list)
+    timeframes: list[str] = field(default_factory=lambda: ["15", "60", "240"])
+    config: ScreenerConfig = field(default_factory=ScreenerConfig)
+    metadata: MetadataCollector = field(default_factory=MetadataCollector)
+    post_filters: list[DataFrameFilter] = field(default_factory=list)
+    _cached_data: pd.DataFrame | None = field(init=False, default=None)
+    _risk_engine: RiskEngine = field(init=False)
+    _run_id: str | None = field(init=False, default=None)
+    _fetched_at_utc: datetime | None = field(init=False, default=None)
+
+    def __post_init__(self) -> None:
+        self._validate_inputs()
+
+        if not self.asset_type:
+            name = self.__class__.__name__.lower()
+            if "forex" in name:
+                self.asset_type = "forex"
+            elif "stock" in name:
+                self.asset_type = "stock"
+            elif "crypto" in name:
+                self.asset_type = "crypto"
+            elif "futures" in name or "commodity" in name:
+                self.asset_type = "futures"
+            elif "bond" in name:
+                self.asset_type = "bond"
+            elif "coin" in name:
+                self.asset_type = "coin"
+            else:
+                self.asset_type = "unknown"
+
+        self.asset_type = canonicalize_asset_type(self.asset_type)
+
+        self._engine = ScoringEngine(
+            config=self.config.scoring_config,
+            timeframes=self.timeframes,
+            tf_weights=self.config.timeframe_weights,
+        )
+        self._risk_engine = RiskEngine(self.config.to_risk_config())
+
+        # Force include_atr if show_risk is True
+        if self.config.show_risk and not self.config.include_atr:
+            # We can't modify self.config because it's frozen,
+            # but we can check both in the methods.
+            pass
+
+        self.metadata.set_config(
+            {
+                "symbols_count": len(self.symbols),
+                "timeframes": self.timeframes,
+                "asset_type": self.asset_type,
+                "include_atr": self.config.include_atr or self.config.show_risk,
+                "include_rsi": self.config.include_rsi,
+                "min_rvol": self.config.min_rvol,
+                "show_risk": self.config.show_risk,
+                **self.config.extra_options,
+            }
+        )
+
+    def _get_data(self) -> pd.DataFrame:
+        """Implementation of ExportMixin's _get_data."""
+        if self._cached_data is not None:
+            return self._cached_data
+        return self.get_opportunities(use_cache=True)
+
+    def _validate_inputs(self) -> None:
+        """Validate symbols and timeframes. Can be overridden by subclasses."""
+        pass
+
+    @abstractmethod
+    def _get_screener_instance(self) -> T:
+        """Return an instance of the underlying library Screener (e.g., ForexScreener)."""
+        pass
+
+    @abstractmethod
+    def _get_field_class(self) -> Any:
+        """Return the field class for this asset (e.g., ForexField)."""
+        pass
+
+    def get_opportunities(self, use_cache: bool = False) -> pd.DataFrame:
+        if use_cache and self._cached_data is not None:
+            return self._cached_data
+
+        # Run envelope for auditability + idempotency
+        env_run_id = (os.getenv("TVSCREENER_RUN_ID") or "").strip()
+        env_params_hash = (os.getenv("TVSCREENER_PARAMS_HASH") or "").strip()
+        env_code_version = (os.getenv("TVSCREENER_CODE_VERSION") or "").strip()
+
+        self._run_id = self._run_id or env_run_id or str(uuid4())
+        self._fetched_at_utc = self._fetched_at_utc or datetime.now(timezone.utc)
+        self.metadata.update_config(
+            {
+                "run_id": self._run_id,
+                "params_hash": env_params_hash or self._run_id,
+                "code_version": env_code_version or "unknown",
+                "fetched_at_utc": self._fetched_at_utc.isoformat(),
+                "timeframe_set_id": timeframe_set_id(self.timeframes),
+                "scanner_family": "opportunity",
+                "source": "tradingview",
+            }
+        )
+
+        logger.info(
+            "Scanning %s symbols across %s timeframes",
+            len(self.symbols),
+            len(self.timeframes),
+        )
+
+        # Stage 1: Bronze (Ingestion)
+        df = self._ingest()
+
+        if df.empty:
+            self.metadata.finish(results_count=0)
+            return df
+
+        # Stage 2: Silver (Standardization)
+        df = self._standardize(df)
+
+        if df.empty:
+            self.metadata.finish(results_count=0)
+            return df
+
+        # Stage 3: Gold (Scoring)
+        df = self._score(df)
+
+        # Apply post_filters so all consumers (CLI, MCP, API) get filtered data
+        if self.post_filters:
+            for pf in self.post_filters:
+                df = pf(df)
+                if df.empty:
+                    break
+
+        self._cached_data = df
+        avg_score = 0.0
+        if not df.empty and "ENSEMBLE_SCORE" in df.columns:
+            avg_score = to_scalar(df["ENSEMBLE_SCORE"].mean())
+
+        self.metadata.finish(
+            results_count=len(df),
+            total_scanned=len(self.symbols),
+            average_ensemble=avg_score,
+        )
+        return df
+
+    def _ingest(self) -> pd.DataFrame:
+        """Stage 1: API Ingestion (Bronze)."""
+        return self._resume_or_run("bronze", self._fetch_all_data)
+
+    def _standardize(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Stage 2: Standardization (Silver)."""
+        return self._resume_or_run("silver", lambda: self._apply_standardization(df))
+
+    def _score(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Stage 3: Scoring (Gold)."""
+        return self._resume_or_run("gold", lambda: self._apply_scoring(df))
+
+    def _to_long_form(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Convert wide timeframe columns into long-form factor rows."""
+        if df.empty:
+            return df
+
+        base_cols = [
+            c
+            for c in [
+                "run_id",
+                "params_hash",
+                "code_version",
+                "fetched_at_utc",
+                "asset_type",
+                "timeframes",
+                "timeframe_set_id",
+                "source",
+                "scanner_family",
+                "signal_date",
+                "ingest_date",
+                "entity_id",
+                "PAIR",
+                "Symbol",
+                "Name",
+                "ENSEMBLE_SCORE",
+                "GRID_ALIGNED",
+                "GRID_TOTAL",
+                "GRID_PCT",
+                "GRADE",
+                "TF_CONFLUENCE",
+                "FACTOR_CONFLUENCE",
+                "DIRECTION",
+            ]
+            if c in df.columns
+        ]
+
+        factor_patterns = {
+            "trend": "TREND_{tf}",
+            "ma": "MA_{tf}",
+            "osc": "OSC_{tf}",
+            "roc": "ROC_{tf}",
+            "atr": "ATR_{tf}",
+            "rsi": "RSI_{tf}",
+        }
+        fallback_patterns = {
+            "trend": "Recommend All|{tf}",
+            "ma": "Recommend Ma|{tf}",
+            "osc": "Recommend Other|{tf}",
+            "roc": "Roc|{tf}",
+            "atr": "Atr|{tf}",
+            "rsi": "Rsi|{tf}",
+        }
+
+        frames: list[Any] = []
+        for tf in self.timeframes:
+            tf_df: pd.DataFrame = df.loc[:, base_cols].copy()  # type: ignore[assignment]
+            tf_df["timeframe"] = tf
+            has_factor = False
+
+            for out_col, pattern in factor_patterns.items():
+                col = pattern.format(tf=tf)
+                if col not in df.columns:
+                    col = fallback_patterns[out_col].format(tf=tf)
+                if col in df.columns:
+                    tf_df[out_col] = df[col]
+                    has_factor = True
+
+            if has_factor:
+                frames.append(tf_df)
+
+        if not frames:
+            return pd.DataFrame()
+        return pd.concat(cast(list[pd.DataFrame], frames), ignore_index=True)
+
+    def _resume_or_run(
+        self,
+        stage: str,
+        runner_func: Callable[[], pd.DataFrame],
+        persist: bool = True,
+        mode: str | None = None,
+    ) -> pd.DataFrame:
+        """Centralized helper for Medallion stage execution and Iceberg persistence (Todo 167)."""
+        replay = self.config.extra_options.get("replay")
+        layout = lakehouse_layout()
+        dataset_name = "screener_snapshot"
+
+        # For legacy layout, this remains `tvscreener.{stage}`.
+        table_name = stage_table_id(
+            stage=stage,
+            dataset=dataset_name,
+            asset_type=self.asset_type,
+            instrument_type=normalize_instrument_type(
+                asset_type=self.asset_type,
+                raw=(os.getenv("TVSCREENER_INSTRUMENT_TYPE") or ""),
+            ),
+            layout=layout,
+        )
+
+        if mode is None:
+            # Default to overwrite for Gold and Silver to ensure idempotency
+            mode = "overwrite" if stage in ["gold", "silver"] else "append"
+
+        if replay:
+            try:
+                catalog = get_catalog()
+                table = catalog.load_table(table_name)
+                logger.info("Resuming from %s Iceberg table", stage.capitalize())
+                arrow_table: Any = table.scan().to_arrow()
+                return arrow_table.to_pandas()  # type: ignore[attr-defined]
+            except NoSuchTableError:
+                pass
+            except Exception as e:
+                logger.debug("Failed to load from %s: %s", stage.capitalize(), e)
+
+        df = runner_func()
+
+        # Attach run envelope + canonical columns for persistence
+        if not df.empty:
+            if "run_id" not in df.columns and self._run_id:
+                df["run_id"] = self._run_id
+            if "fetched_at_utc" not in df.columns and self._fetched_at_utc:
+                df["fetched_at_utc"] = self._fetched_at_utc
+            df["asset_type"] = self.asset_type
+
+            # Instrument type is a first-class dimension for scalable table layouts.
+            if layout == "scalable" and "instrument_type" not in df.columns:
+                env_it = (os.getenv("TVSCREENER_INSTRUMENT_TYPE") or "").strip() or None
+                if env_it:
+                    df["instrument_type"] = normalize_instrument_type(
+                        asset_type=self.asset_type, raw=env_it
+                    )
+                elif "Type" in df.columns:
+                    df["instrument_type"] = (
+                        df["Type"]
+                        .astype(str)
+                        .map(lambda v: normalize_instrument_type(asset_type=self.asset_type, raw=v))
+                    )
+                elif "TYPE" in df.columns:
+                    df["instrument_type"] = (
+                        df["TYPE"]
+                        .astype(str)
+                        .map(lambda v: normalize_instrument_type(asset_type=self.asset_type, raw=v))
+                    )
+            df["timeframes"] = ",".join(sorted(self.timeframes))
+            df["timeframe_set_id"] = timeframe_set_id(self.timeframes)
+            df["scanner_family"] = "opportunity"
+            if "source" not in df.columns:
+                df["source"] = self.metadata.config.get("source", "tradingview")
+            if "source_event_id" not in df.columns:
+                df["source_event_id"] = self._run_id or ""
+            df["params_hash"] = (
+                (os.getenv("TVSCREENER_PARAMS_HASH") or "").strip() or self._run_id or ""
+            )
+            df["code_version"] = (os.getenv("TVSCREENER_CODE_VERSION") or "").strip() or "unknown"
+
+        # Write-Audit-Publish (WAP) pattern (Todo 174)
+        # Block Iceberg commits if data health check fails
+        if persist and not self._validate_health(df, stage):
+            logger.error("Health check failed for stage '%s'. Blocking Iceberg commit.", stage)
+            return df
+
+        if persist:
+            try:
+                partition_by = None
+                now_utc = datetime.now(timezone.utc)
+                if stage == "bronze":
+                    if "ingest_date" not in df.columns:
+                        df["ingest_date"] = now_utc.strftime("%Y-%m-%d")
+                    partition_by = ["asset_type", "ingest_date", "timeframe_set_id"]
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        partition_by.insert(1, "instrument_type")
+                elif stage == "silver":
+                    # Use both asset_type and any available date column to prevent historical loss (Todo 183)
+                    if "signal_date" in df.columns:
+                        partition_by = ["asset_type", "signal_date", "timeframe_set_id"]
+                    elif "ingest_date" in df.columns:
+                        partition_by = ["asset_type", "ingest_date", "timeframe_set_id"]
+                    else:
+                        partition_by = ["asset_type", "timeframe_set_id"]
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        partition_by.insert(1, "instrument_type")
+                elif stage == "gold":
+                    if "signal_date" not in df.columns:
+                        df["signal_date"] = now_utc.strftime("%Y-%m-%d")
+
+                    partition_by = ["asset_type", "signal_date", "timeframe_set_id"]
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        partition_by.insert(1, "instrument_type")
+
+                overwrite_filter = None
+                if mode == "overwrite" and stage in {"silver", "gold"} and partition_by:
+                    from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
+
+                    key_col = (
+                        "entity_id"
+                        if "entity_id" in df.columns
+                        else "PAIR"
+                        if "PAIR" in df.columns
+                        else "Symbol"
+                        if "Symbol" in df.columns
+                        else "Name"
+                        if "Name" in df.columns
+                        else None
+                    )
+
+                    overwrite_cols = [c for c in partition_by if c in df.columns]
+                    if key_col:
+                        overwrite_cols.append(key_col)
+
+                    filters = []
+                    for col in dict.fromkeys(overwrite_cols):
+                        raw_vals = df[col].tolist()
+                        unique_vals = sorted({v for v in raw_vals if v is not None})
+                        has_null = any(v is None for v in raw_vals)
+                        # Cleanup safety: if older rows were written before a column existed in the
+                        # table partition spec, those legacy data files may report NULL partition
+                        # metadata and will not be matched by IN(...) filters alone. Always include
+                        # IS NULL for partition columns and for the selected key column.
+                        if col in partition_by:
+                            has_null = True
+
+                        # If older rows were written before the key column existed,
+                        # they will have NULL for that key in the table and would not be matched by
+                        # an IN(...) filter. Always include IS NULL for the selected key column.
+                        if key_col and col == key_col:
+                            has_null = True
+
+                        col_filter = None
+                        if unique_vals:
+                            col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
+                        if has_null:
+                            null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
+                            col_filter = Or(col_filter, null_filter) if col_filter else null_filter
+
+                        if col_filter:
+                            filters.append(col_filter)
+
+                    overwrite_filter = (
+                        AlwaysFalse()
+                        if not filters
+                        else (filters[0] if len(filters) == 1 else And(*filters))
+                    )
+
+                def _persist_group(df_group: pd.DataFrame) -> None:
+                    df_group = normalize_iceberg_count_like_columns(df_group)
+
+                    it = normalize_instrument_type(
+                        asset_type=self.asset_type,
+                        raw=(
+                            df_group["instrument_type"].iloc[0]
+                            if "instrument_type" in df_group.columns and len(df_group)
+                            else os.getenv("TVSCREENER_INSTRUMENT_TYPE")
+                        ),
+                    )
+
+                    group_table = stage_table_id(
+                        stage=stage,
+                        dataset=dataset_name,
+                        asset_type=self.asset_type,
+                        instrument_type=it,
+                        layout=layout,
+                    )
+                    write_iceberg(
+                        df_group,
+                        group_table,
+                        mode=mode,
+                        partition_by=partition_by,
+                        overwrite_filter=overwrite_filter,
+                    )
+
+                if layout == "scalable" and "instrument_type" in df.columns:
+                    for it_val in sorted({str(v) for v in df["instrument_type"].dropna().tolist()}):
+                        df_group: pd.DataFrame = df.loc[
+                            df["instrument_type"].astype(str) == it_val
+                        ].copy()  # type: ignore[assignment]
+                        _persist_group(df_group)
+                else:
+                    _persist_group(df)
+
+                # Fast "latest" table for intraday queries
+                if stage == "gold" and not df.empty:
+                    batch_partition_by = [
+                        c
+                        for c in [
+                            "asset_type",
+                            "signal_date",
+                            "timeframe_set_id",
+                            "scanner_family",
+                            "params_hash",
+                        ]
+                        if c in df.columns
+                    ]
+
+                    def _product_table(name: str, df_group: pd.DataFrame) -> str:
+                        it = normalize_instrument_type(
+                            asset_type=self.asset_type,
+                            raw=(
+                                df_group["instrument_type"].iloc[0]
+                                if "instrument_type" in df_group.columns and len(df_group)
+                                else os.getenv("TVSCREENER_INSTRUMENT_TYPE")
+                            ),
+                        )
+                        return product_table_id(
+                            dataset=name,
+                            asset_type=self.asset_type,
+                            instrument_type=it,
+                            layout=layout,
+                        )
+
+                    def _write_product(name: str, df_group: pd.DataFrame, **kwargs: Any) -> None:
+                        df_group = normalize_iceberg_count_like_columns(df_group)
+                        write_iceberg(df_group, _product_table(name, df_group), **kwargs)
+
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        for it_val in sorted(
+                            {str(v) for v in df["instrument_type"].dropna().tolist()}
+                        ):
+                            df_g: pd.DataFrame = df.loc[
+                                df["instrument_type"].astype(str) == it_val
+                            ].copy()  # type: ignore[assignment]
+                            _write_product(
+                                "signals_batch",
+                                df_g,
+                                mode="overwrite",
+                                partition_by=batch_partition_by,
+                            )
+                    else:
+                        _write_product(
+                            "signals_batch",
+                            df,
+                            mode="overwrite",
+                            partition_by=batch_partition_by,
+                        )
+
+                    if bool(self.config.extra_options.get("long_form_output", False)):
+                        long_df = self._to_long_form(df)
+                        if not long_df.empty:
+                            long_partition_by = [
+                                c
+                                for c in [
+                                    "asset_type",
+                                    "signal_date",
+                                    "timeframe_set_id",
+                                    "timeframe",
+                                    "scanner_family",
+                                    "params_hash",
+                                ]
+                                if c in long_df.columns
+                            ]
+                            _write_product(
+                                "signals_long",
+                                long_df,
+                                mode="overwrite",
+                                partition_by=long_partition_by,
+                            )
+
+                    latest_partition_by = ["asset_type", "timeframe_set_id"]
+                    latest_overwrite_filter = None
+                    if mode == "overwrite":
+                        from pyiceberg.expressions import AlwaysFalse, And, In, IsNull, Or
+
+                        key_col = "entity_id" if "entity_id" in df.columns else None
+                        overwrite_cols = [c for c in latest_partition_by if c in df.columns]
+                        if key_col:
+                            overwrite_cols.append(key_col)
+
+                        filters = []
+                        for col in dict.fromkeys(overwrite_cols):
+                            raw_vals = df[col].tolist()
+                            unique_vals = sorted({v for v in raw_vals if v is not None})
+                            has_null = any(v is None for v in raw_vals)
+                            if col in latest_partition_by:
+                                has_null = True
+                            if key_col and col == key_col:
+                                has_null = True
+
+                            col_filter = None
+                            if unique_vals:
+                                col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
+                            if has_null:
+                                null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
+                                col_filter = (
+                                    Or(col_filter, null_filter) if col_filter else null_filter
+                                )
+
+                            if col_filter:
+                                filters.append(col_filter)
+
+                        latest_overwrite_filter = (
+                            AlwaysFalse()
+                            if not filters
+                            else (filters[0] if len(filters) == 1 else And(*filters))
+                        )
+
+                    if layout == "scalable" and "instrument_type" in df.columns:
+                        for it_val in sorted(
+                            {str(v) for v in df["instrument_type"].dropna().tolist()}
+                        ):
+                            df_g: pd.DataFrame = df.loc[
+                                df["instrument_type"].astype(str) == it_val
+                            ].copy()  # type: ignore[assignment]
+                            _write_product(
+                                "signals_latest",
+                                df_g,
+                                mode="overwrite",
+                                partition_by=latest_partition_by,
+                                overwrite_filter=latest_overwrite_filter,
+                            )
+                    else:
+                        _write_product(
+                            "signals_latest",
+                            df,
+                            mode="overwrite",
+                            partition_by=latest_partition_by,
+                            overwrite_filter=latest_overwrite_filter,
+                        )
+            except Exception as e:
+                strict = str(os.getenv("TVSCREENER_STRICT_PERSIST") or "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }
+                if strict:
+                    logger.error("Iceberg %s persistence failed: %s", stage.capitalize(), e)
+                    raise
+                logger.debug("Iceberg %s persistence failed: %s", stage.capitalize(), e)
+
+        return df
+
+    def _apply_scoring(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Centralized scoring logic for the Gold stage."""
+        if df.empty:
+            return df
+
+        # Scoring logic using ScoringEngine
+        scored_df = self._engine.rank_opportunities(df, copy=False)
+        if self.config.show_risk:
+            scored_df = self._risk_engine.apply(scored_df, copy=False)
+        return scored_df
+
+    def _apply_standardization(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Centralized standardization logic for the Silver stage."""
+        if df.empty:
+            return df
+
+        # Step 1: Enrich with canonical names
+        df = self._prepare_enriched_data(df)
+
+        # Step 1.5: Canonical identity columns (multi-asset safe)
+        from tvscreener_ext.screeners.transformer import DataTransformer
+
+        df = DataTransformer.add_canonical_identity(df, self.asset_type)
+
+        # Step 2: Apply asset-specific filters
+        df = self._apply_asset_filters(df)
+
+        # Step 3: Handle duplicates
+        df = self._merge_duplicates(df)
+
+        # Step 4: Outlier Detection (Todo 182)
+        if self.config.volume_outlier_detection:
+            df = self._detect_volume_outliers(df)
+
+        return df
+
+    def _detect_volume_outliers(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove symbols with abnormal volume spikes using Z-Score."""
+        import numpy as np
+
+        # We prefer RVOL if available, else VOLUME
+        vol_col = (
+            "relative_volume_10d_calc"
+            if "relative_volume_10d_calc" in df.columns
+            else "VOLUME"
+            if "VOLUME" in df.columns
+            else None
+        )
+        if vol_col is None:
+            return df
+
+        # Vectorized Z-Score calculation using log transform to handle positive skew
+        vols = df[vol_col].astype(float)
+        vols_log = np.log1p(vols.clip(lower=0))
+
+        mean = vols_log.mean()
+        std = vols_log.std()
+
+        if std == 0:
+            return df
+
+        z_scores = (vols_log - mean) / std
+        mask = z_scores.abs() <= self.config.volume_outlier_threshold
+
+        removed = len(df) - mask.sum()
+        if removed > 0:
+            logger.info(
+                "Removed %d volume outliers (Threshold: %.1f)",
+                removed,
+                self.config.volume_outlier_threshold,
+            )
+
+        return df.loc[mask]
+
+    def _validate_health(self, df: pd.DataFrame, stage: str) -> bool:
+        """Validate health of the data before committing to the next stage (WAP Pattern).
+
+        Subclasses can override this to implement circuit breakers for bad data.
+        """
+        if df.empty:
+            logger.warning("Data is empty in stage '%s'", stage)
+            return True  # Empty isn't always "unhealthy" but it depends
+
+        # Basic health checks
+        if stage == "gold" and "ENSEMBLE_SCORE" not in df.columns:
+            logger.error("Missing ENSEMBLE_SCORE in Gold stage")
+            return False
+
+        # Check for catastrophic data loss (e.g. >90% nulls in critical columns)
+        if "PRICE" in df.columns:
+            null_pct = df["PRICE"].isna().mean()
+            if null_pct > 0.9:
+                logger.error("Too many null prices (%.1f%%) in stage '%s'", null_pct * 100, stage)
+                return False
+
+        # Coverage gating: do not publish Silver/Gold on partial ingestion
+        if stage in {"silver", "gold"}:
+            ingest_stats = self.metadata.config.get("ingest_stats") or {}
+            expected = ingest_stats.get("requested_tickers_count")
+            coverage_val = ingest_stats.get("coverage")
+            threshold_raw = self.config.extra_options.get("min_ingest_coverage", 0.98)
+            threshold = 0.98
+            if isinstance(threshold_raw, (int, float, str)):
+                try:
+                    threshold = float(threshold_raw)
+                except ValueError:
+                    threshold = 0.98
+
+            coverage: float | None = None
+            if coverage_val is not None:
+                try:
+                    coverage = float(coverage_val)
+                except (TypeError, ValueError):
+                    coverage = None
+
+            if expected and coverage is not None and coverage < threshold:
+                logger.error(
+                    "Ingest coverage %.3f below threshold %.3f (expected=%s). Blocking publish for stage '%s'",
+                    coverage,
+                    threshold,
+                    expected,
+                    stage,
+                )
+                return False
+
+        return True
+
+    def _get_tickers(self) -> list[str]:
+        """Return the list of tickers to fetch. Subclasses can override for prefixing/formatting."""
+        return self.symbols
+
+    def _prepare_screener(self, screener: T, field_class: Any) -> None:
+        """Hook for subclasses to add extra fields or filters to the screener before fetching."""
+        pass
+
+    def _fetch_all_data(self) -> pd.DataFrame:
+        """Fetch data for all symbols in batches."""
+        tickers = self._get_tickers()
+        if not tickers:
+            return pd.DataFrame()
+
+        screener = self._get_screener_instance()
+        field_class = self._get_field_class()
+
+        # Prepare fields
+        select_fields = self._get_base_fields(field_class)
+        for tf in self.timeframes:
+            select_fields.extend(self._get_timeframe_fields(field_class, tf))
+
+        screener.select(*select_fields)
+        self._prepare_screener(screener, field_class)
+
+        data_source_name = str(self.config.extra_options.get("data_source", "tradingview"))
+        adapter = build_data_source(data_source_name)
+        self.metadata.update_config({"source": adapter.source})
+
+        source_policy = dict(
+            self.config.extra_options.get("source_policies", {}).get(adapter.source, {})
+        )
+        min_interval = float(source_policy.get("min_interval_seconds", 0.0) or 0.0)
+        jitter = float(source_policy.get("jitter_seconds", 0.0) or 0.0)
+        max_retries = int(source_policy.get("fetch_max_retries", 2) or 0)
+        retry_base = float(source_policy.get("fetch_retry_base_seconds", 0.5) or 0.0)
+        retry_max = float(source_policy.get("fetch_retry_max_seconds", 10.0) or 0.0)
+        last_fetch_ts = 0.0
+
+        # Batching (TV API usually supports ~500 symbols per request)
+        batch_size = self.config.extra_options.get("batch_size", 500)
+        all_dfs = []
+        failed_batches = 0
+
+        for i in range(0, len(tickers), batch_size):
+            batch_tickers = tickers[i : i + batch_size]
+
+            fetched = False
+            for attempt in range(max_retries + 1):
+                try:
+                    # Source-aware per-worker throttling before each fetch attempt.
+                    if min_interval > 0:
+                        now = time.time()
+                        delay = (last_fetch_ts + min_interval) - now
+                        if delay > 0:
+                            time.sleep(delay)
+                    if jitter > 0:
+                        time.sleep(random.random() * jitter)
+
+                    df = adapter.fetch_batch(screener=screener, tickers=batch_tickers)
+                    last_fetch_ts = time.time()
+
+                    if "api_context" in df.attrs:
+                        ctx = df.attrs["api_context"]
+                        self.metadata.add_api_call(
+                            url=ctx.get("url", ""),
+                            status_code=ctx.get("status_code", 0),
+                            method=ctx.get("method", "GET"),
+                            headers=ctx.get("headers", {}),
+                        )
+                    if not df.empty:
+                        all_dfs.append(df)
+                    fetched = True
+                    break
+                except Exception as e:
+                    if attempt >= max_retries:
+                        logger.error(
+                            "Error fetching batch %s after retries: %s", i // batch_size + 1, e
+                        )
+                        break
+                    sleep_s = min(retry_base * (2**attempt), retry_max)
+                    if jitter > 0:
+                        sleep_s += random.random() * jitter
+                    logger.warning(
+                        "Retrying fetch batch %s (%s/%s) after %.2fs: %s",
+                        i // batch_size + 1,
+                        attempt + 1,
+                        max_retries,
+                        sleep_s,
+                        e,
+                    )
+                    if sleep_s > 0:
+                        time.sleep(sleep_s)
+
+            if not fetched:
+                failed_batches += 1
+
+        if not all_dfs:
+            expected = len(tickers)
+            self.metadata.update_config(
+                {
+                    "ingest_stats": {
+                        "requested_tickers_count": expected,
+                        "returned_unique": 0,
+                        "coverage": 0.0 if expected else 1.0,
+                        "failed_batches": failed_batches,
+                        "batch_size": batch_size,
+                    }
+                }
+            )
+            return pd.DataFrame()
+
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+
+        # Coverage stats for reliability gating
+        returned_unique = 0
+        if "Symbol" in combined_df.columns:
+            returned_unique = combined_df["Symbol"].dropna().astype(str).nunique()
+        elif "Name" in combined_df.columns:
+            returned_unique = combined_df["Name"].dropna().astype(str).nunique()
+        expected = len(tickers)
+        coverage = (returned_unique / expected) if expected else 1.0
+        self.metadata.update_config(
+            {
+                "ingest_stats": {
+                    "requested_tickers_count": expected,
+                    "returned_unique": returned_unique,
+                    "coverage": coverage,
+                    "failed_batches": failed_batches,
+                    "batch_size": batch_size,
+                }
+            }
+        )
+
+        # Enforce PyArrow backend at the Silver boundary for zero-copy efficiency
+        if not combined_df.empty:
+            combined_df = combined_df.convert_dtypes(dtype_backend="pyarrow")
+        return combined_df
+
+    def _get_base_fields(self, field_class: Any) -> list[Any]:
+        """Get base fields for the asset type."""
+        fields = [
+            getattr(field_class, "NAME", None),
+            getattr(field_class, "PRICE", None),
+            getattr(field_class, "SUBTYPE", None),
+        ]
+        # Try to find a volume field
+        volume_fields = [
+            "AVERAGE_VOLUME_10D_CALC",
+            "RELATIVE_VOLUME_10D_CALC",
+            "VOLUME",
+        ]
+        for vf in volume_fields:
+            field = getattr(field_class, vf, None)
+            if field:
+                fields.append(field)
+
+        return [f for f in fields if f is not None]
+
+    def _get_timeframe_fields(self, field_class: Any, tf: str) -> list[Any]:
+        """Get technical fields for a specific timeframe."""
+        fields = []
+        # Support both dot and underscore patterns
+        patterns = [
+            f"RECOMMEND_ALL_{tf}",
+            f"RECOMMEND_MA_{tf}",
+            f"RECOMMEND_OTHER_{tf}",
+            f"ROC_{tf}",
+        ]
+
+        if self.config.include_atr or self.config.show_risk:
+            patterns.append(f"ATR_{tf}")
+        if self.config.include_rsi:
+            patterns.append(f"RSI_{tf}")
+
+        for p in patterns:
+            f = getattr(field_class, p, None)
+            if f:
+                fields.append(f)
+
+        # Fallback: synthesize timed fields from base names if timed enums are missing.
+        # This is primarily used for futures/index endpoints.
+        base_map = {
+            f"RECOMMEND_ALL_{tf}": "RECOMMEND_ALL",
+            f"RECOMMEND_MA_{tf}": "RECOMMEND_MA",
+            f"RECOMMEND_OTHER_{tf}": "RECOMMEND_OTHER",
+            f"ROC_{tf}": "ROC",
+        }
+        for timed_attr, base_attr in base_map.items():
+            if getattr(field_class, timed_attr, None) is not None:
+                continue
+            base = getattr(field_class, base_attr, None)
+            if base is None:
+                continue
+            base_field_name = getattr(base, "field_name", None)
+            base_label = getattr(base, "label", None)
+            if not base_field_name or not base_label:
+                continue
+            if "|" in str(base_field_name):
+                continue
+
+            fields.append(
+                SyntheticField(
+                    label=f"{base_label}|{tf}",
+                    field_name=f"{base_field_name}|{tf}",
+                    format=getattr(base, "format", None),
+                    interval=getattr(base, "interval", False),
+                    historical=getattr(base, "historical", False),
+                )
+            )
+
+        return fields
+
+    def _apply_asset_filters(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Apply asset-specific filters. Default implementation does nothing."""
+        return df
+
+    def _merge_duplicates(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Handle duplicate results (e.g. from different exchanges)."""
+        if df.empty:
+            return df
+        # Default implementation: keep first by canonical identity if present
+        df_nw = nw.from_native(df)
+        if "entity_id" in df_nw.columns:
+            df_nw = df_nw.unique(subset=["entity_id"])
+        elif "Symbol" in df_nw.columns:
+            df_nw = df_nw.unique(subset=["Symbol"])
+        elif "Name" in df_nw.columns:
+            df_nw = df_nw.unique(subset=["Name"])
+        return nw.to_native(df_nw)

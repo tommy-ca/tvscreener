@@ -1,7 +1,6 @@
 import unittest
 
-from tvscreener import beautify
-from tvscreener.beauty import (
+from tvscreener_ext.renderers.beauty import (
     BUY_CHAR,
     COLOR_BLUE_BUY,
     COLOR_GRAY_NEUTRAL,
@@ -14,7 +13,9 @@ from tvscreener.beauty import (
     _percent_colors,
     _rating_colors,
     _rating_letter,
+    beautify,
 )
+
 from tvscreener.field import Rating
 
 

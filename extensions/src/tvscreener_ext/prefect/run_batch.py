@@ -1,149 +1,473 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
-import random
-import threading
-import time
+import re
 from pathlib import Path
 from typing import Any, cast
 
-from prefect import flow
-from prefect.task_runners import ConcurrentTaskRunner
+try:
+    from prefect import flow, tags, task
 
-from tvscreener_ext.prefect.stages import (
-    run_analytics_stage,
-    run_both_stage,
-    run_data_stage,
-)
-from tvscreener_ext.runner import PipelineRunSpec
+    _PREFECT_AVAILABLE = True
+except Exception:  # pragma: no cover
+    # Prefect is an optional dependency; import lazily at runtime.
+    _PREFECT_AVAILABLE = False
+
+    def task(*_args: Any, **_kwargs: Any):  # type: ignore[no-redef]
+        def _decorator(fn):
+            return fn
+
+        return _decorator
+
+    def flow(*_args: Any, **_kwargs: Any):  # type: ignore[no-redef]
+        def _decorator(fn):
+            return fn
+
+        return _decorator
+
+    @contextlib.contextmanager
+    def tags(*_args: Any, **_kwargs: Any):  # type: ignore[no-redef]
+        yield
 
 
-def _resolve_batch_path(batch_path: str) -> Path:
-    p = Path(batch_path)
-    if p.exists():
-        return p
-
-    bundled = Path(__file__).resolve().parent / "batches" / p.name
-    return bundled
+from tvscreener_ext.runner import LocalRunner, PipelineRunSpec, RunResult
 
 
-def _load_batch(path: Path) -> dict[str, Any]:
-    return cast(dict[str, Any], json.loads(path.read_text(encoding="utf-8")))
+def _console_for_spec(spec: PipelineRunSpec):
+    if not bool(spec.matrix):
+        return None
+
+    # Record console output so matrix rendering can be persisted as an artifact
+    # and mirrored into Prefect logs.
+    from rich.console import Console
+
+    # Use a generous width so saved `matrix.txt` artifacts don't truncate
+    # emoji grids into "…" on narrow default consoles.
+    return Console(record=True, width=140, force_terminal=True)
 
 
-def _rate_limit_sleep(rate_limit: dict[str, Any] | None) -> None:
-    cfg = rate_limit or {}
-    if not bool(cfg.get("enabled")):
+def _ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def _default_results_path(run_dir: Path, spec: PipelineRunSpec) -> Path:
+    return run_dir / f"{spec.scanner_family}_results.parquet"
+
+
+def _write_json(path: Path, payload: object) -> None:
+    _ensure_dir(path.parent)
+    path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
+
+
+def _write_matrix_artifact(run_dir: Path, matrix_text: str) -> None:
+    # Keep it ASCII-friendly and stable for diffs.
+    (run_dir / "matrix.txt").write_text(matrix_text, encoding="utf-8")
+
+
+def _prefect_matrix_key(spec: PipelineRunSpec) -> str:
+    def _sanitize(part: str) -> str:
+        cleaned = re.sub(r"[^a-z0-9-]+", "-", part.strip().lower())
+        cleaned = re.sub(r"-+", "-", cleaned).strip("-")
+        return cleaned
+
+    parts: list[str] = [
+        "tvscreener",
+        "matrix",
+        _sanitize(str(spec.scanner_family or "")) or "unknown",
+        _sanitize(str(spec.asset_type or "")) or "unknown",
+    ]
+    if spec.instrument_type:
+        parts.append(_sanitize(str(spec.instrument_type)))
+    if spec.universe:
+        parts.append(_sanitize(str(spec.universe)))
+    if spec.timeframe_set_id:
+        parts.append(_sanitize(str(spec.timeframe_set_id)))
+    return "-".join([p for p in parts if p])
+
+
+def _maybe_publish_prefect_matrix_artifact(
+    *, spec: PipelineRunSpec, params_hash: str, matrix_text: str
+) -> None:
+    if not matrix_text.strip():
         return
-    base = float(cfg.get("min_interval_seconds") or 0.0)
-    jitter = float(cfg.get("jitter_seconds") or 0.0)
-    delay = base + (random.random() * jitter)
-    if delay > 0:
-        time.sleep(delay)
+
+    with contextlib.suppress(Exception):
+        from prefect.artifacts import create_markdown_artifact
+
+        from tvscreener_ext.semantic_artifacts import (
+            resolve_latest_successful_data_params_hash,
+            semantic_opportunity_grade_summary,
+            semantic_opportunity_health,
+            semantic_opportunity_top_rows,
+        )
+
+        def _to_md_table(rows: list[dict[str, Any]], limit: int = 15) -> str:
+            if not rows:
+                return ""
+
+            cols = list(rows[0].keys())
+            cols = cols[:12]
+            header = "| " + " | ".join(cols) + " |"
+            sep = "| " + " | ".join(["---"] * len(cols)) + " |"
+            body = []
+            for r in rows[:limit]:
+                body.append("| " + " | ".join(str(r.get(c, "")) for c in cols) + " |")
+            return "\n".join([header, sep, *body])
+
+        data_params_hash = resolve_latest_successful_data_params_hash(spec)
+        rows = (
+            semantic_opportunity_top_rows(data_params_hash=data_params_hash, limit=30)
+            if data_params_hash
+            else None
+        )
+        summary = (
+            semantic_opportunity_grade_summary(data_params_hash=data_params_hash, limit=50)
+            if data_params_hash
+            else None
+        )
+
+        key = _prefect_matrix_key(spec)
+        blocks: list[str] = [
+            f"**analytics params_hash**: `{params_hash}`",
+        ]
+        if data_params_hash:
+            blocks.append(f"**data params_hash**: `{data_params_hash}`")
+        blocks += [
+            "",
+            "## Matrix",
+            "```text",
+            matrix_text.rstrip(),
+            "```",
+        ]
+
+        if rows:
+            blocks += [
+                "",
+                "## Top Rows",
+                _to_md_table(rows, limit=15),
+            ]
+
+        if data_params_hash:
+            health = semantic_opportunity_health(data_params_hash=data_params_hash)
+            if health:
+                blocks += [
+                    "",
+                    "## Health",
+                    "```json",
+                    json.dumps(health, indent=2, sort_keys=True, default=str),
+                    "```",
+                ]
+
+        if (os.getenv("TVSCREENER_PUBLISH_RESULTS_SUMMARY") or "").strip() == "1" and summary:
+            blocks += [
+                "",
+                "## Grade Summary",
+                _to_md_table(summary, limit=25),
+            ]
+
+        create_markdown_artifact(
+            key=key,
+            markdown="\n".join([b for b in blocks if b is not None]),
+            description="Matrix + decision context (single artifact)",
+        )
 
 
-@flow(
-    name="tvscreener-batch",
-    flow_run_name="tvscreener-batch-{batch_path}",
-    task_runner=ConcurrentTaskRunner(),
-)
-def run_batch(
-    *,
-    batch_path: str,
-    artifacts_dir: str = "artifacts/runs",
-    data_concurrency: int = 1,
-    analytics_concurrency: int = 8,
-    rate_limit: dict[str, Any] | None = None,
-    skip_existing: bool = False,
-) -> dict[str, Any]:
-    batch_file = _resolve_batch_path(batch_path)
-    batch = _load_batch(batch_file)
-    batch_id = str(batch.get("batch_id") or batch_file.stem)
+def _prefect_results_key(spec: PipelineRunSpec) -> str:
+    return _prefect_matrix_key(spec).replace("-matrix-", "-results-", 1)
 
-    defaults = cast(dict[str, Any], batch.get("defaults") or {})
-    runs = cast(list[dict[str, Any]], batch.get("runs") or [])
 
-    # Expand simple matrix definition if present.
-    matrix = cast(dict[str, Any], batch.get("matrix") or {})
-    if matrix:
-        scanners = cast(list[str], matrix.get("scanners") or [])
-        universes = cast(list[str], matrix.get("universes") or [])
-        pipeline_mode = str(matrix.get("pipeline_mode") or defaults.get("pipeline_mode") or "data")
-        for s in scanners:
-            for u in universes:
-                runs.append({"scanner_family": s, "universe": u, "pipeline_mode": pipeline_mode})
+def _maybe_publish_prefect_results_table_artifact(
+    *, spec: PipelineRunSpec, params_hash: str, results_path: str | None
+) -> None:
+    # Prefer one artifact per run-spec total; keep table artifacts opt-in.
+    if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() != "1":
+        return
+    try:
+        from prefect.artifacts import create_table_artifact
 
-    sem = {
-        "data": threading.Semaphore(max(1, int(data_concurrency))),
-        "analytics": threading.Semaphore(max(1, int(analytics_concurrency))),
-    }
+        from tvscreener_ext.semantic_artifacts import (
+            resolve_latest_successful_data_params_hash,
+            semantic_opportunity_grade_summary,
+            semantic_opportunity_top_rows,
+        )
 
-    results: dict[str, Any] = {}
+        data_params_hash = resolve_latest_successful_data_params_hash(spec) or ""
 
-    for r in runs:
-        spec_payload = {**defaults, **r}
-        spec = PipelineRunSpec.model_validate(spec_payload).normalized()
-        spec = spec.model_copy(update={"artifacts_dir": str(artifacts_dir)})
+        semantic_rows = (
+            semantic_opportunity_top_rows(data_params_hash=data_params_hash, limit=30)
+            if data_params_hash
+            else None
+        )
+        rows = semantic_rows
 
-        run_dir = Path(artifacts_dir) / str(spec.params_hash)
-        if skip_existing and (run_dir / "run_result.json").exists():
-            results[str(spec.params_hash)] = {"skipped": True, "params_hash": str(spec.params_hash)}
-            continue
+        if rows is None and results_path:
+            import pandas as pd
 
-        _rate_limit_sleep(rate_limit)
+            def _coerce_cell(value: Any) -> Any:
+                if pd.isna(value):
+                    return None
+                if hasattr(value, "item"):
+                    try:
+                        return value.item()
+                    except Exception:
+                        return value
+                return value
 
-        if spec.pipeline_mode == "data":
-            with sem["data"]:
-                fut = run_data_stage.submit(spec.model_dump(mode="json"))
-                results[str(spec.params_hash)] = fut
-            continue
+            df = pd.read_parquet(results_path)
+            subset = df.head(30)
+            rows = []
+            for _, row in subset.iterrows():
+                rows.append({col: _coerce_cell(row[col]) for col in subset.columns})
 
-        if spec.pipeline_mode == "analytics":
-            with sem["analytics"]:
-                fut = run_analytics_stage.submit(spec.model_dump(mode="json"))
-                results[str(spec.params_hash)] = fut
-            continue
+        if not rows:
+            return
 
-        if os.getenv("TVSCREENER_PREFECT_COMPOSE_BOTH", "0").strip() == "1":
-            with sem["data"]:
-                data_fut = run_data_stage.submit(spec.model_dump(mode="json"))
-            with sem["analytics"]:
-                analytics_fut = run_analytics_stage.submit(
-                    spec.model_dump(mode="json"),
-                    wait_for=data_fut,
+        desc = (
+            f"Top rows from data `{data_params_hash}` (analytics `{params_hash}`)"
+            if semantic_rows is not None
+            else f"Top rows from `{params_hash}`"
+        )
+        create_table_artifact(
+            key=_prefect_results_key(spec),
+            table=rows,
+            description=desc,
+        )
+
+        # Keep artifact volume down by default.
+        if (os.getenv("TVSCREENER_PUBLISH_RESULTS_SUMMARY") or "").strip() == "1":
+            summary = (
+                semantic_opportunity_grade_summary(data_params_hash=data_params_hash, limit=50)
+                if data_params_hash
+                else None
+            )
+            if summary:
+                create_table_artifact(
+                    key=f"{_prefect_results_key(spec)}-summary",
+                    table=summary,
+                    description=f"Grade/direction summary for `{data_params_hash}`",
                 )
-            results[str(spec.params_hash)] = {"data": data_fut, "analytics": analytics_fut}
-        else:
-            # Legacy behavior: a single task executes both.
-            with sem["data"]:
-                fut = run_both_stage.submit(spec.model_dump(mode="json"))
-                results[str(spec.params_hash)] = fut
+    except Exception:
+        return
 
-    # Resolve Prefect futures so results are deterministic and JSON-serializable.
-    resolved_runs: dict[str, Any] = {}
-    for params_hash, v in results.items():
-        if isinstance(v, dict) and "data" in v and "analytics" in v:
-            data_fut = v["data"]
-            analytics_fut = v["analytics"]
-            resolved_runs[params_hash] = {
-                "data": data_fut.result() if hasattr(data_fut, "result") else data_fut,
-                "analytics": (
-                    analytics_fut.result() if hasattr(analytics_fut, "result") else analytics_fut
-                ),
-            }
-        elif hasattr(v, "result"):
-            resolved_runs[params_hash] = v.result()
-        else:
-            resolved_runs[params_hash] = v
 
-    out = {"batch_id": batch_id, "results": resolved_runs}
+def _resolve_base_dir(artifacts_dir: str) -> Path:
+    base_dir = Path(artifacts_dir)
+    if base_dir.is_absolute():
+        return base_dir
+    return Path.cwd() / base_dir
 
-    batch_dir = Path(artifacts_dir) / "batch" / batch_id
-    batch_dir.mkdir(parents=True, exist_ok=True)
-    (batch_dir / "batch_result.json").write_text(
-        json.dumps(out, indent=2, default=str),
-        encoding="utf-8",
+
+def _prefect_required() -> None:
+    if not _PREFECT_AVAILABLE:
+        raise RuntimeError(
+            "Prefect runner requires optional dependency. Install with: uv sync --extra prefect"
+        )
+
+
+def run_prefect(spec: PipelineRunSpec, *, artifacts_dir: str = "artifacts/runs") -> dict:
+    """Execute a PipelineRunSpec via Prefect in-process.
+
+    This is the seamless entrypoint used by `tvscreener-scan --runner prefect`.
+    """
+    _prefect_required()
+    spec = spec.normalized()
+    params_hash: str = spec.params_hash or spec.compute_params_hash()
+    prefect_flow = cast(Any, prefect_run_flow)
+    return prefect_flow(
+        spec_payload=spec.model_dump(),
+        params_hash=params_hash,
+        artifacts_dir=artifacts_dir,
     )
 
-    return out
+
+@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
+def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
+    data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
+    console = _console_for_spec(data_spec)
+    previous = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
+    os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
+    try:
+        res = LocalRunner(console=console).run(data_spec)
+    finally:
+        if previous is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+    matrix_text = console.export_text() if console is not None else None
+    return res, matrix_text
+
+
+@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
+def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
+    analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
+    console = _console_for_spec(analytics_spec)
+    previous = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
+    prev_semantic = os.environ.get("TVSCREENER_SEMANTIC_RUNTIME")
+    os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
+    # Do not force a semantic runtime; default is auto (Sidemantic if installed).
+    try:
+        res = LocalRunner(console=console).run(analytics_spec)
+    finally:
+        if previous is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+
+        if prev_semantic is None:
+            os.environ.pop("TVSCREENER_SEMANTIC_RUNTIME", None)
+        else:
+            os.environ["TVSCREENER_SEMANTIC_RUNTIME"] = prev_semantic
+    matrix_text = console.export_text() if console is not None else None
+    return res, matrix_text
+
+
+@flow(name="tvscreener-run", flow_run_name="tvscreener-{params_hash}")  # type: ignore[misc]
+def prefect_run_flow(
+    spec_payload: dict[str, Any], params_hash: str, artifacts_dir: str = "artifacts/runs"
+) -> dict:
+    spec = PipelineRunSpec.model_validate(spec_payload).normalized()
+
+    base_dir = _resolve_base_dir(artifacts_dir)
+    run_dir = base_dir / params_hash
+    _ensure_dir(run_dir)
+
+    # Resolve universe/pairs once for determinism and persist universe.json
+    # into the run artifacts directory when applicable.
+    controller = None
+    with contextlib.suppress(Exception):
+        from tvscreener_ext.orchestrator import ScreenerController
+
+        controller = ScreenerController(console=None)
+
+    if controller is not None:
+        previous = os.environ.get("TVSCREENER_RUN_DIR")
+        os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
+        try:
+            req = controller.resolve_defaults(spec.to_scan_request())
+            pairs = controller.get_pairs(
+                req.assets.asset_type,
+                req.assets.universe,
+                req.assets.pairs,
+                instrument_type=getattr(req.assets, "instrument_type", None),
+            )
+            spec = spec.model_copy(
+                update={"pairs": pairs, "universe": req.assets.universe}
+            ).normalized()
+        finally:
+            if previous is None:
+                os.environ.pop("TVSCREENER_RUN_DIR", None)
+            else:
+                os.environ["TVSCREENER_RUN_DIR"] = previous
+
+    analytics_output = spec.output
+    if spec.pipeline_mode in ("analytics", "both") and not analytics_output:
+        analytics_output = str(_default_results_path(run_dir, spec))
+        spec = spec.model_copy(update={"output": analytics_output}).normalized()
+    _write_json(run_dir / "run_spec.json", spec.model_dump())
+
+    with tags(  # type: ignore[misc]
+        f"params_hash:{params_hash}",
+        f"scanner:{spec.scanner_family}",
+        f"pipeline:{spec.pipeline_mode}",
+        f"asset_type:{spec.asset_type}",
+    ):
+        if spec.pipeline_mode == "data":
+            res, matrix_text = _run_data_task(spec, str(run_dir))
+            matrix_path = None
+            if matrix_text:
+                _write_matrix_artifact(run_dir, matrix_text)
+                _maybe_publish_prefect_matrix_artifact(
+                    spec=spec, params_hash=params_hash, matrix_text=matrix_text
+                )
+                matrix_path = str(run_dir / "matrix.txt")
+            payload = {
+                "spec_version": spec.spec_version,
+                "params_hash": params_hash,
+                "scanner_family": spec.scanner_family,
+                "pipeline_mode_requested": spec.pipeline_mode,
+                "pipeline_mode_executed": "data",
+                "artifacts_dir": str(run_dir),
+                "run_spec_path": str(run_dir / "run_spec.json"),
+                "run_result_path": str(run_dir / "run_result.json"),
+                "matrix_path": matrix_path,
+                "data": res.model_dump(),
+                "success": bool(res.success),
+            }
+            _write_json(run_dir / "run_result.json", payload)
+            return payload
+
+        if spec.pipeline_mode == "analytics":
+            res, matrix_text = _run_analytics_task(spec, str(run_dir))
+            matrix_path = None
+            if matrix_text:
+                _write_matrix_artifact(run_dir, matrix_text)
+                _maybe_publish_prefect_matrix_artifact(
+                    spec=spec, params_hash=params_hash, matrix_text=matrix_text
+                )
+                matrix_path = str(run_dir / "matrix.txt")
+
+            _maybe_publish_prefect_results_table_artifact(
+                spec=spec, params_hash=params_hash, results_path=analytics_output
+            )
+            payload = {
+                "spec_version": spec.spec_version,
+                "params_hash": params_hash,
+                "scanner_family": spec.scanner_family,
+                "pipeline_mode_requested": spec.pipeline_mode,
+                "pipeline_mode_executed": "analytics",
+                "artifacts_dir": str(run_dir),
+                "run_spec_path": str(run_dir / "run_spec.json"),
+                "run_result_path": str(run_dir / "run_result.json"),
+                "results_path": analytics_output,
+                "matrix_path": matrix_path,
+                "analytics": {**res.model_dump(), "results_path": analytics_output},
+                "success": bool(res.success),
+            }
+            _write_json(run_dir / "run_result.json", payload)
+            return payload
+
+        data_res, data_matrix_text = _run_data_task(spec, str(run_dir))
+        analytics_res, analytics_matrix_text = _run_analytics_task(spec, str(run_dir))
+
+        matrix_path = None
+        matrix_text = analytics_matrix_text or data_matrix_text
+        if matrix_text:
+            _write_matrix_artifact(run_dir, matrix_text)
+            _maybe_publish_prefect_matrix_artifact(
+                spec=spec, params_hash=params_hash, matrix_text=matrix_text
+            )
+            matrix_path = str(run_dir / "matrix.txt")
+
+        payload = {
+            "spec_version": spec.spec_version,
+            "params_hash": spec.params_hash,
+            "scanner_family": spec.scanner_family,
+            "pipeline_mode_requested": spec.pipeline_mode,
+            "pipeline_mode_executed": "both",
+            "artifacts_dir": str(run_dir),
+            "run_spec_path": str(run_dir / "run_spec.json"),
+            "run_result_path": str(run_dir / "run_result.json"),
+            "results_path": analytics_output,
+            "matrix_path": matrix_path,
+            "data": data_res.model_dump(),
+            "analytics": {**analytics_res.model_dump(), "results_path": analytics_output},
+            "success": bool(data_res.success and analytics_res.success),
+        }
+        _write_json(run_dir / "run_result.json", payload)
+        return payload

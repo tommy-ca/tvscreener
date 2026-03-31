@@ -6,7 +6,7 @@ import pandas as pd
 
 
 def test_pipeline_spec_normalized_sets_code_version_from_env(monkeypatch):
-    from tvscreener.lib.pipeline_runner import PipelineRunSpec
+    from tvscreener_ext.runner import PipelineRunSpec
 
     monkeypatch.setenv("TVSCREENER_CODE_VERSION", "v-test-001")
 
@@ -23,7 +23,7 @@ def test_pipeline_spec_normalized_sets_code_version_from_env(monkeypatch):
 
 
 def test_local_runner_persists_runs_metadata(monkeypatch):
-    from tvscreener.lib import pipeline_runner as pr
+    from tvscreener_ext import pipeline_runner as pr
 
     class DummyController:
         def __init__(self, console=None):
@@ -43,8 +43,8 @@ def test_local_runner_persists_runs_metadata(monkeypatch):
 
     monkeypatch.setattr(pr, "ScreenerController", DummyController)
     monkeypatch.setattr(pr, "_utc_now", lambda: datetime(2026, 3, 7, 12, 0, tzinfo=UTC))
-    monkeypatch.setattr("tvscreener.lib.lakehouse.get_manager", lambda _config=None: object())
-    monkeypatch.setattr("tvscreener.lib.lakehouse.write_iceberg", fake_write_iceberg)
+    monkeypatch.setattr("tvscreener_ext.lakehouse.get_manager", lambda _config=None: object())
+    monkeypatch.setattr("tvscreener_ext.lakehouse.write_iceberg", fake_write_iceberg)
 
     spec = pr.PipelineRunSpec(
         scanner_family="opportunity",
@@ -73,7 +73,7 @@ def test_local_runner_persists_runs_metadata(monkeypatch):
 
 
 def test_local_runner_strict_persist_raises_on_run_metadata_failure(monkeypatch):
-    from tvscreener.lib import pipeline_runner as pr
+    from tvscreener_ext import pipeline_runner as pr
 
     class DummyController:
         def __init__(self, console=None):
@@ -88,8 +88,8 @@ def test_local_runner_strict_persist_raises_on_run_metadata_failure(monkeypatch)
     monkeypatch.setenv("TVSCREENER_STRICT_PERSIST", "1")
     monkeypatch.setattr(pr, "ScreenerController", DummyController)
     monkeypatch.setattr(pr, "_utc_now", lambda: datetime(2026, 3, 7, 12, 0, tzinfo=UTC))
-    monkeypatch.setattr("tvscreener.lib.lakehouse.get_manager", lambda _config=None: object())
-    monkeypatch.setattr("tvscreener.lib.lakehouse.write_iceberg", failing_write_iceberg)
+    monkeypatch.setattr("tvscreener_ext.lakehouse.get_manager", lambda _config=None: object())
+    monkeypatch.setattr("tvscreener_ext.lakehouse.write_iceberg", failing_write_iceberg)
 
     spec = pr.PipelineRunSpec(
         scanner_family="opportunity",

@@ -1,8 +1,7 @@
 import narwhals as nw
 import pandas as pd
 import pytest
-
-from tvscreener.lib.query import EdgeQueryClient
+from tvscreener_ext.query import EdgeQueryClient
 
 
 def test_3_step_pipeline():

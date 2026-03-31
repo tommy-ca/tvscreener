@@ -12,8 +12,8 @@ Requirements:
     pip install tvscreener[cli]
 """
 
-from tvscreener.filter import RocFilter, ScoreFilter
-from tvscreener.lib.screeners.forex_opportunity import (
+from tvscreener_ext.screeners.filters import RocFilter, ScoreFilter
+from tvscreener_ext.screeners.forex_opportunity import (
     ForexOpportunityScreener,
     ForexScreenerConfig,
 )

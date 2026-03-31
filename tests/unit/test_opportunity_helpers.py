@@ -2,15 +2,15 @@ import logging
 
 import pandas as pd
 import yaml
-
-from tvscreener.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
-from tvscreener.lib.orchestrator import (
+from tvscreener_ext.orchestrator import (
     AssetSelection,
     ScanRequest,
     ScoringConfig,
     ScreenerController,
 )
-from tvscreener.lib.screeners.export_helpers import export_to_csv, export_to_json
+from tvscreener_ext.screeners.export_helpers import export_to_csv, export_to_json
+
+from tvscreener.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
 
 
 def test_parse_timeframe_weights_valid_string():

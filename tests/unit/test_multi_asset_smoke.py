@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
 
 from tvscreener.core.base import Screener
-from tvscreener.lib.screeners.base import BaseOpportunityScreener, ScreenerConfig
 
 
 class MultiAssetMockScreener(BaseOpportunityScreener):
@@ -31,7 +31,7 @@ class MultiAssetMockScreener(BaseOpportunityScreener):
 def test_multi_asset_standardize_populates_entity_id(asset_type, raw):
     screener = MultiAssetMockScreener(symbols=["X"], asset_type=asset_type, config=ScreenerConfig())
 
-    with patch("tvscreener.lib.screeners.base.write_iceberg"):
+    with patch("tvscreener_ext.screeners.base.write_iceberg"):
         out = screener._standardize(raw)
 
     assert not out.empty
@@ -43,7 +43,7 @@ def test_overwrite_scope_uses_asset_type_and_entity_id():
     screener = MultiAssetMockScreener(symbols=["AAPL"], asset_type="stock", config=ScreenerConfig())
     raw = pd.DataFrame({"Symbol": ["NASDAQ:AAPL"], "Price": [180.0]})
 
-    with patch("tvscreener.lib.screeners.base.write_iceberg") as mock_write:
+    with patch("tvscreener_ext.screeners.base.write_iceberg") as mock_write:
         _ = screener._standardize(raw)
 
     silver_calls = [c for c in mock_write.call_args_list if c.args[1] == "tvscreener.silver"]
@@ -66,7 +66,7 @@ def test_coverage_gating_blocks_partial_silver_publish():
     )
     raw = pd.DataFrame({"Symbol": ["BINANCE:BTCUSDT"], "Price": [60000.0]})
 
-    with patch("tvscreener.lib.screeners.base.write_iceberg") as mock_write:
+    with patch("tvscreener_ext.screeners.base.write_iceberg") as mock_write:
         out = screener._standardize(raw)
 
     assert not out.empty

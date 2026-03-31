@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from tvscreener.lib.reports.binance_universes import generate_binance_universes_report
+from tvscreener_ext.reports.binance_universes import generate_binance_universes_report
 
 
 def test_binance_universe_report_writes_json(tmp_path: Path):

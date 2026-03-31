@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from tvscreener.lib.pipeline_runner import PipelineRunSpec, RunResult, _persist_run_record
+from tvscreener_ext.runner import PipelineRunSpec, RunResult, _persist_run_record
 
 
 def test_persist_run_record_uses_concrete_types(monkeypatch):
@@ -12,7 +12,7 @@ def test_persist_run_record_uses_concrete_types(monkeypatch):
         captured["df"] = df
         captured["table"] = table_name
 
-    monkeypatch.setattr("tvscreener.lib.lakehouse.write_iceberg", _fake_write_iceberg)
+    monkeypatch.setattr("tvscreener_ext.lakehouse.write_iceberg", _fake_write_iceberg)
 
     spec = PipelineRunSpec(
         scanner_family="opportunity",

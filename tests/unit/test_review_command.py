@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from tvscreener.lib.orchestrator import ScreenerController
+from tvscreener_ext.orchestrator import ScreenerController
 
 
 def test_review_runs_audit_then_report(tmp_path: Path):

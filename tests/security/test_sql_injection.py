@@ -1,4 +1,4 @@
-from tvscreener.lib.query import EdgeQueryClient
+from tvscreener_ext.query import EdgeQueryClient
 
 
 def test_sql_injection_s3_credentials(monkeypatch):
@@ -40,7 +40,7 @@ def test_sql_injection_query_params(tmp_path):
 def test_minijinja_rendering():
     """Test that MiniJinja is used for rendering."""
     # This will fail until MiniJinja is integrated
-    from tvscreener.lib.query import EdgeQueryClient
+    from tvscreener_ext.query import EdgeQueryClient
 
     client = EdgeQueryClient(db_path=":memory:")
 

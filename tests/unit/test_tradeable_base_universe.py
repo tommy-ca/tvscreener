@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.lib.universe import binance_crypto as bc
+from tvscreener_ext.universe import binance_crypto as bc
 
 
 def test_tradeable_base_picks_one_per_base_and_prefers_usdt(monkeypatch):

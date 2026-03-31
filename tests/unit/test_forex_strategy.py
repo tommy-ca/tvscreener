@@ -1,7 +1,6 @@
 import pandas as pd
 import pytest
-
-from tvscreener.lib.screeners.forex_strategy import (
+from tvscreener_ext.screeners.forex_strategy import (
     ForexStrategyScanner,
     StrategyConfig,
 )

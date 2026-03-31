@@ -4,8 +4,7 @@ import tempfile
 import unittest
 
 import pandas as pd
-
-from tvscreener.lib.screeners.export_helpers import export_to_xml
+from tvscreener_ext.screeners.export_helpers import export_to_xml
 
 
 class TestExportHelpers(unittest.TestCase):

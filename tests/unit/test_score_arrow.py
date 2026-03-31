@@ -1,7 +1,6 @@
 import pandas as pd
 import pytest
-
-from tvscreener.score import ScoringEngine
+from tvscreener_ext.scoring import ScoringEngine
 
 
 def test_scoring_with_arrow_backend():

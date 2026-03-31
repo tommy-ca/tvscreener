@@ -1,5 +1,5 @@
-from tvscreener.lib.screeners.base import ScreenerConfig
-from tvscreener.lib.screeners.factory import AssetScreenerFactory
+from tvscreener_ext.screeners.base import ScreenerConfig
+from tvscreener_ext.screeners.factory import AssetScreenerFactory
 
 
 def test_generic_opportunity_screener_crypto_sets_asset_type():

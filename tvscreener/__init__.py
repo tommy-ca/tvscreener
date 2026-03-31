@@ -7,7 +7,8 @@ from .core.forex import ForexScreener
 from .core.futures import FuturesScreener
 from .core.stock import StockScreener
 from .exceptions import MalformedRequestException
-from .field import Country, Exchange, Field, IndexSymbol, Industry, Market, Sector
+from .field import *
+from .field import Field, FieldWithHistory, FieldWithInterval, IndexSymbol
 from .field.bond import BondField
 from .field.coin import CoinField
 from .field.crypto import CryptoField
@@ -42,14 +43,9 @@ from .field.presets import (
 )
 from .field.stock import StockField
 from .filter import ExtraFilter, FieldCondition, Filter, FilterOperator
-from .lib.screeners import ForexOpportunityScreener, ForexStrategyScanner
-from .util import get_columns_to_request, get_recommendation, millify
+from .util import *
 
 __all__ = [
-    # Screeners
-    "ForexOpportunityScreener",
-    "ForexStrategyScanner",
-    # Legacy screeners
     "Screener",
     "ScreenerDataFrame",
     "StockScreener",
@@ -77,9 +73,6 @@ __all__ = [
     "Industry",
     "IndexSymbol",
     "beautify",
-    "get_columns_to_request",
-    "get_recommendation",
-    "millify",
     # Field presets
     "get_preset",
     "list_presets",

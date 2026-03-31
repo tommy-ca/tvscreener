@@ -1,160 +1,468 @@
+#!/usr/bin/env python3
+"""CLI for TradingView scanners (Extensions)."""
+
 from __future__ import annotations
 
 import argparse
-import json
-import os
+import contextlib
+import logging
 import sys
-from typing import Literal
 
 from dotenv import load_dotenv
+from rich.console import Console
 
-from tvscreener_ext.runner import LocalRunner, PipelineRunSpec
+from tvscreener_ext.orchestrator import ScreenerController
 from tvscreener_ext.upstream import ensure_upstream_tvscreener
+from tvscreener_ext.utils.logic import load_dotenv_file
 
-RunnerName = Literal["local", "prefect", "export"]
-
-
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    p = argparse.ArgumentParser(prog="tvscreener-ext-scan")
-    p.add_argument("--runner", choices=["local", "prefect", "export"], default="local")
-    p.add_argument("--scanner", dest="scanner_family", default="opportunity")
-    p.add_argument(
-        "--pipeline", dest="pipeline_mode", choices=["data", "analytics", "both"], default="both"
-    )
-    p.add_argument("--asset-type", required=True, choices=["forex", "crypto", "stock"])
-    p.add_argument("--instrument-type", choices=["spot", "perp"], default=None)
-    p.add_argument("--universe", required=True)
-    p.add_argument("--timeframes", default="240,60,15")
-    p.add_argument("--limit", type=int, default=50)
-    p.add_argument("--matrix", action="store_true")
-    p.add_argument("--no-matrix", action="store_true")
-    p.add_argument("--config", dest="config_path", default=None)
-    p.add_argument("--artifacts-dir", default="artifacts/runs")
-    p.add_argument("--output", default=None)
-    p.add_argument("--spec-out", default=None)
-    return p.parse_args(argv)
+console = Console()
+logger = logging.getLogger(__name__)
 
 
-def _spec_from_args(a: argparse.Namespace) -> PipelineRunSpec:
-    tfs = [t.strip() for t in str(a.timeframes).split(",") if t.strip()]
-    matrix = bool(a.matrix)
-    if bool(a.no_matrix):
-        matrix = False
-
-    return PipelineRunSpec(
-        scanner_family=str(a.scanner_family),
-        pipeline_mode=str(a.pipeline_mode),
-        asset_type=str(a.asset_type),
-        instrument_type=str(a.instrument_type) if a.instrument_type else None,
-        universe=str(a.universe),
-        timeframes=tfs,
-        limit=int(a.limit),
-        matrix=matrix,
-        config_path=str(a.config_path) if a.config_path else None,
-        artifacts_dir=str(a.artifacts_dir),
-        output=str(a.output) if a.output else None,
-    ).normalized()
-
-
-def _export_spec(spec: PipelineRunSpec, *, spec_out: str | None) -> int:
-    payload = spec.model_dump(mode="json")
-    txt = json.dumps(payload, indent=2, sort_keys=True)
-    if spec_out:
-        from pathlib import Path
-
-        Path(spec_out).write_text(txt + "\n", encoding="utf-8")
-        return 0
-    sys.stdout.write(txt + "\n")
-    return 0
-
-
-def _run_local(spec: PipelineRunSpec) -> int:
-    res = LocalRunner().run(spec)
-    return 0 if res.success else 2
-
-
-def _run_prefect(spec: PipelineRunSpec) -> int:
-    try:
-        from prefect import flow, task
-    except Exception:
-        print("Prefect is not installed. Run with `--extra prefect`.")
-        return 2
-
-    timeout_seconds = int(os.getenv("TVSCREENER_PREFECT_TASK_TIMEOUT_SECONDS", "1800"))
-
-    @task(timeout_seconds=timeout_seconds)
-    def _task_run(payload: dict[str, object]) -> dict[str, object]:
-        inner = PipelineRunSpec.model_validate(payload).normalized()
-        res = LocalRunner().run(inner)
-
-        if (res.matrix_md_path or res.matrix_path) and os.getenv(
-            "TVSCREENER_PUBLISH_RESULTS_SUMMARY", "0"
-        ).strip() == "1":
-            try:
-                from pathlib import Path
-
-                from prefect.artifacts import create_markdown_artifact
-
-                if res.matrix_md_path:
-                    md = Path(res.matrix_md_path).read_text(encoding="utf-8")
-                else:
-                    matrix_text = Path(str(res.matrix_path)).read_text(encoding="utf-8")
-                    md = f"```text\n{matrix_text.rstrip()}\n```"
-                create_markdown_artifact(
-                    key=f"tvscreener-matrix-{inner.params_hash}",
-                    markdown=md,
-                    description="Matrix (extensions)",
-                )
-            except Exception:
-                pass
-
-        if os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS", "0").strip() == "1" and res.results_path:
-            try:
-                import pandas as pd
-                from prefect.artifacts import create_table_artifact
-
-                df = pd.read_parquet(str(res.results_path)).head(25)
-                df = df.where(pd.notnull(df), None)
-                create_table_artifact(
-                    key=f"tvscreener-results-{inner.params_hash}",
-                    table=df.to_dict(orient="records"),
-                    description="Results preview (extensions)",
-                )
-            except Exception:
-                pass
-
-        return {
-            "success": bool(res.success),
-            "params_hash": res.params_hash,
-            "result_count": int(res.result_count),
-            "results_path": res.results_path,
-            "matrix_path": res.matrix_path,
-            "matrix_md_path": res.matrix_md_path,
-            "errors": list(res.errors),
-        }
-
-    @flow(name="tvscreener-run", flow_run_name="tvscreener-{params_hash}")
-    def _flow_run(payload: dict[str, object], params_hash: str) -> dict[str, object]:
-        return _task_run(payload)
-
-    payload = spec.model_dump(mode="json")
-    out = _flow_run(payload, params_hash=str(spec.params_hash))
-    return 0 if bool(out.get("success")) else 2
+def setup_logging(verbose: bool = False) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
 def main(argv: list[str] | None = None) -> int:
-    load_dotenv(override=False)
     ensure_upstream_tvscreener()
 
-    args = _parse_args((sys.argv if argv is None else argv)[1:])
-    spec = _spec_from_args(args)
+    load_dotenv(override=False)
+    # Best-effort load `.env` so Prefect and other libs
+    # see their config without requiring manual exports.
+    with contextlib.suppress(Exception):
+        load_dotenv_file(".env")
 
-    if str(args.runner) == "export":
-        return _export_spec(spec, spec_out=str(args.spec_out) if args.spec_out else None)
-    if str(args.runner) == "prefect":
-        return _run_prefect(spec)
-    return _run_local(spec)
+    effective_argv = sys.argv if argv is None else argv
+
+    # Handle maintenance subcommand separately to preserve top-level compatibility for scans
+    if len(effective_argv) > 1 and effective_argv[1] == "maintenance":
+        parser = argparse.ArgumentParser(description="Lakehouse maintenance tools")
+        parser.add_argument("command", choices=["maintenance"])
+        parser.add_argument(
+            "--expire-snapshots", action="store_true", help="Expire snapshots older than X days"
+        )
+        parser.add_argument("--days", type=int, default=7, help="Days to keep snapshots")
+        parser.add_argument("--table", default="forex.opportunities", help="Table name")
+        parser.add_argument("--compact", action="store_true", help="Trigger file compaction (Hook)")
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+
+        args = parser.parse_args(effective_argv[1:])
+    elif len(effective_argv) > 1 and effective_argv[1] == "query":
+        parser = argparse.ArgumentParser(description="Query Iceberg tables using DuckDB")
+        parser.add_argument("command", choices=["query"])
+        parser.add_argument("table", help="Table identifier (e.g. forex.opportunities)")
+        parser.add_argument(
+            "--sql",
+            help="SQL query to execute (can use MiniJinja 'df' as the table alias)",
+        )
+        parser.add_argument("--snapshot-id", type=int, help="Iceberg snapshot ID for time-travel")
+        parser.add_argument("--output", "-o", help="Output file (csv/parquet)")
+        parser.add_argument("--head", type=int, default=10, help="Number of rows to show")
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+
+        args = parser.parse_args(effective_argv[1:])
+    elif len(effective_argv) > 1 and effective_argv[1] == "audit":
+        parser = argparse.ArgumentParser(description="Audit universe selection and artifacts")
+        parser.add_argument("command", choices=["audit"])
+        parser.add_argument(
+            "target",
+            choices=["binance-universes"],
+            help="Audit target",
+        )
+        parser.add_argument(
+            "--out-dir",
+            default="artifacts/audits/binance-universes",
+            help="Directory to write audit report(s)",
+        )
+        parser.add_argument(
+            "--include-all",
+            action="store_true",
+            help="Include extended diagnostic universes (mcap_top100, cs_momentum)",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+        args = parser.parse_args(effective_argv[1:])
+    elif len(effective_argv) > 1 and effective_argv[1] == "report":
+        parser = argparse.ArgumentParser(description="Generate DuckDB-backed reports")
+        parser.add_argument("command", choices=["report"])
+        parser.add_argument(
+            "target",
+            choices=["binance-universes"],
+            help="Report target",
+        )
+        parser.add_argument(
+            "--in-dir",
+            default="artifacts/audits/binance-universes",
+            help="Directory containing universe.json audit folders",
+        )
+        parser.add_argument(
+            "--out-dir",
+            default="artifacts/reports/binance-universes",
+            help="Directory to write report outputs",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+        args = parser.parse_args(effective_argv[1:])
+    elif len(effective_argv) > 1 and effective_argv[1] == "review":
+        parser = argparse.ArgumentParser(
+            description="Run audit + DuckDB report pipelines",
+        )
+        parser.add_argument("command", choices=["review"])
+        parser.add_argument(
+            "target",
+            choices=["binance-universes"],
+            help="Review target",
+        )
+        parser.add_argument(
+            "--audit-out-dir",
+            default="artifacts/audits/binance-universes",
+            help="Directory to write audit outputs",
+        )
+        parser.add_argument(
+            "--report-out-dir",
+            default="artifacts/reports/binance-universes",
+            help="Directory to write report outputs",
+        )
+        parser.add_argument(
+            "--strict",
+            action="store_true",
+            help="Exit non-zero if audit reports any errors",
+        )
+        parser.add_argument(
+            "--include-all",
+            action="store_true",
+            help="Include extended diagnostic universes (mcap_top100, cs_momentum)",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+        parser.add_argument("--config", help="Path to YAML config")
+        args = parser.parse_args(effective_argv[1:])
+    else:
+        parser = argparse.ArgumentParser(
+            description="Run TradingView scanners (Extensions)",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+        )
+
+        parser.add_argument(
+            "--config",
+            default=None,
+            help="Path to YAML config (default: tvscreener.yaml)",
+        )
+
+        parser.add_argument(
+            "--scanner",
+            "-s",
+            choices=["opportunity", "strategy", "inspect"],
+            default="strategy",
+        )
+        parser.add_argument(
+            "--pipeline",
+            choices=["both", "data", "analytics"],
+            default="both",
+            help="Execution mode: data (fetch+Iceberg), analytics (Iceberg+render), both (data then analytics)",
+        )
+        parser.add_argument(
+            "--runner",
+            choices=["local", "export", "prefect"],
+            default="prefect",
+            help="Execution runner: prefect (execute via Prefect flow), local (execute in-process), export (emit PipelineRunSpec JSON)",
+        )
+        parser.add_argument(
+            "--spec-out",
+            default=None,
+            help="Write PipelineRunSpec JSON to this file (only when --runner export)",
+        )
+        parser.add_argument(
+            "--artifacts-dir",
+            default="artifacts/runs",
+            help="Artifacts directory (used by --runner prefect)",
+        )
+        parser.add_argument(
+            "--asset-type",
+            choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
+            default="forex",
+        )
+        parser.add_argument(
+            "--universe",
+            "-u",
+            default=None,
+        )
+        parser.add_argument("--pairs", nargs="+", help="Specific pairs to scan")
+        parser.add_argument("--timeframes", "-t", default=None, help="Comma-separated timeframes")
+        parser.add_argument(
+            "--contract-type",
+            choices=["spot", "cfd", "spreadbet", "all"],
+            default=None,
+            help="Contract type to filter (default: cfd)",
+        )
+        parser.add_argument(
+            "--instrument-type",
+            choices=["spot", "perp"],
+            default=None,
+            help="Instrument type (crypto only): spot or perp",
+        )
+        parser.add_argument("--output", "-o", help="Output file (csv/json/parquet/xml)")
+        parser.add_argument("--save-config", help="Save opportunity config to YAML")
+        parser.add_argument("--load-config", help="Load opportunity config from YAML")
+        parser.add_argument(
+            "--strategy",
+            choices=["all", "trend", "mean_reversion", "hybrid", "breakout", "confluence"],
+            default="all",
+        )
+        parser.add_argument("--direction", choices=["long", "short"], help="Filter by direction")
+        parser.add_argument(
+            "--filter", action="append", help="MTF filter expression (e.g. '1H:TREND > 0')"
+        )
+        parser.add_argument("--sql", help="Raw SQL query to filter the results")
+        parser.add_argument(
+            "--sql-params",
+            type=str,
+            help="JSON string of parameters for the SQL query",
+        )
+        parser.add_argument("--min_volume", type=float, help="Minimum average volume")
+        parser.add_argument("--max-atr", type=float, help="Maximum ATR (volatility proxy)")
+        parser.add_argument("--min-ma-score", type=float, help="Minimum MA score (-2 to 2)")
+        parser.add_argument(
+            "--min-confluence",
+            type=int,
+            help="Minimum confluence score (strategy scanner)",
+        )
+        parser.add_argument(
+            "--trend-threshold",
+            type=float,
+            help="Trend score threshold (strategy scanner)",
+        )
+        parser.add_argument(
+            "--mr-threshold",
+            type=float,
+            help="Mean-reversion score threshold (strategy scanner)",
+        )
+        parser.add_argument(
+            "--rsi-lower",
+            type=float,
+            help="Lower RSI threshold for oversold signals",
+        )
+        parser.add_argument(
+            "--rsi-upper",
+            type=float,
+            help="Upper RSI threshold for overbought signals",
+        )
+        parser.add_argument(
+            "--min-roc",
+            type=float,
+            help="Minimum ROC value for breakout filter",
+        )
+        parser.add_argument(
+            "--opportunity-trend-weight",
+            type=float,
+            help="Trend weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-ma-weight",
+            type=float,
+            help="MA weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-osc-weight",
+            type=float,
+            help="Oscillator weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-roc-weight",
+            type=float,
+            help="ROC weight for opportunity scoring",
+        )
+        parser.add_argument(
+            "--opportunity-timeframe-weights",
+            help="Timeframe weights for opportunity scoring (format 240:0.2,60:0.3,15:0.5)",
+        )
+        parser.add_argument(
+            "--include-atr",
+            action="store_true",
+            help="Request ATR fields when running strategy scan",
+        )
+        parser.add_argument(
+            "--include-rsi",
+            action="store_true",
+            help="Request RSI fields when running strategy scan",
+        )
+        parser.add_argument(
+            "--mr-signal",
+            choices=["rsi_oversold", "rsi_overbought"],
+            action="append",
+            help="Mean reversion signal (can be specified multiple times)",
+        )
+        # Risk management signal quality filters
+        parser.add_argument(
+            "--min-tf-alignment",
+            type=int,
+            choices=[1, 2, 3],
+            help="Minimum aligned timeframes for signal quality",
+        )
+        parser.add_argument(
+            "--require-momentum",
+            action="store_true",
+            help="Require ROC to align with direction",
+        )
+        parser.add_argument(
+            "--min-rvol",
+            type=float,
+            help="Minimum relative volume (1.0 = average)",
+        )
+        parser.add_argument(
+            "--require-volume-spike",
+            action="store_true",
+            help="Require volume > 1.5x average",
+        )
+        # Risk management parameters
+        parser.add_argument(
+            "--risk-per-trade",
+            type=float,
+            help="Risk per trade as percentage (default from settings)",
+        )
+        parser.add_argument(
+            "--atr-multiplier",
+            type=float,
+            help="ATR multiplier for stop loss calculation",
+        )
+        parser.add_argument(
+            "--min-risk-reward",
+            type=float,
+            help="Minimum risk:reward ratio",
+        )
+        parser.add_argument(
+            "--account-balance",
+            type=float,
+            help="Account balance for position sizing",
+        )
+        # Output format options
+        parser.add_argument(
+            "--detailed",
+            action="store_true",
+            help="Show detailed per-pair breakdown with TF analysis",
+        )
+        parser.add_argument(
+            "--matrix",
+            action="store_true",
+            help="Show confluence matrix view for all pairs",
+        )
+        parser.add_argument(
+            "--limit",
+            type=int,
+            help="Number of results to show in summary/detailed/matrix views",
+        )
+        parser.add_argument(
+            "--confluence-grade",
+            choices=["A+", "A", "B", "C", "D", "F"],
+            help="Filter by confluence grade",
+        )
+        parser.add_argument(
+            "--min-opportunity-confluence",
+            type=int,
+            help="Minimum grid-aligned cells (0-12) for opportunity scanner",
+        )
+        # Inspect options
+        parser.add_argument(
+            "--head",
+            type=int,
+            help="Number of rows to show when inspecting parquet",
+        )
+        parser.add_argument(
+            "--metadata_only",
+            action="store_true",
+            help="Only show metadata when inspecting parquet",
+        )
+        parser.add_argument(
+            "--show-risk",
+            action="store_true",
+            help="Show risk management metadata (SL/TP/RR/Size) in output",
+        )
+        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+
+        args = parser.parse_args(effective_argv[1:])
+        args.command = "scan"
+
+    setup_logging(args.verbose)
+
+    # Local-only helper commands should not require Prefect.
+    if (
+        getattr(args, "command", None) == "scan"
+        and getattr(args, "scanner", None) == "inspect"
+        and getattr(args, "runner", "prefect") == "prefect"
+    ):
+        args.runner = "local"
+
+    # Parse sql_params if provided
+    if getattr(args, "sql_params", None):
+        import json
+
+        try:
+            args.sql_params = json.loads(args.sql_params)
+        except json.JSONDecodeError as e:
+            console.print(f"[red]Error parsing --sql-params: {e}[/red]")
+            return 1
+    else:
+        args.sql_params = {}
+
+    # Export runner: emit a PipelineRunSpec JSON payload for workflow engines.
+    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "export":
+        from tvscreener_ext.runner import PipelineRunSpec
+
+        spec = PipelineRunSpec.from_cli_args(args)
+        payload = spec.model_dump_json(indent=2)
+        spec_out = getattr(args, "spec_out", None)
+        if spec_out:
+            from pathlib import Path
+
+            Path(spec_out).write_text(payload, encoding="utf-8")
+        else:
+            print(payload)
+        return 0
+
+    # Prefect runner: execute via Prefect flow in-process (no intermediate spec file required).
+    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "prefect":
+        from tvscreener_ext.runner import PipelineRunSpec
+
+        spec = PipelineRunSpec.from_cli_args(args)
+        try:
+            from tvscreener_ext.prefect.run_batch import run_prefect
+
+            _ = run_prefect(spec, artifacts_dir=getattr(args, "artifacts_dir", "artifacts/runs"))
+            return 0
+        except Exception as e:
+            console.print(f"[red]Prefect runner failed: {e}[/red]")
+            console.print("[dim]Hint: install with `uv sync --extra prefect`[/dim]")
+            return 2
+
+    # Local runner: execute via PipelineRunSpec + LocalRunner.
+    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "local":
+        from tvscreener_ext.runner import LocalRunner, PipelineRunSpec
+
+        spec = PipelineRunSpec.from_cli_args(args)
+        res = LocalRunner(console=console).run(spec)
+        if not res.success:
+            console.print("\n[bold red]Scan failed[/bold red]")
+            return 2
+        console.print(f"\n[bold]Total: {res.result_count} results[/bold]")
+        return 0 if res.result_count > 0 else 1
+
+    # Initialize orchestrator and run
+    controller = ScreenerController(console=console)
+    count = controller.run_from_args(args)
+
+    # Non-scan commands handle their own output and exit semantics.
+    if getattr(args, "command", "scan") != "scan":
+        return 0 if count >= 0 else 2
+
+    if count < 0:
+        console.print("\n[bold red]Scan failed[/bold red]")
+        return 2
+
+    console.print(f"\n[bold]Total: {count} results[/bold]")
+    return 0 if count > 0 else 1
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

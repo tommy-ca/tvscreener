@@ -1,7 +1,6 @@
 import pytest
-
-from tvscreener.lib.orchestrator import ScreenerController
-from tvscreener.util import validate_path
+from tvscreener_ext.orchestrator import ScreenerController
+from tvscreener_ext.utils.logic import validate_path
 
 
 @pytest.fixture()

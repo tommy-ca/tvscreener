@@ -1,9 +1,7 @@
 import json
-import random
 import time
 from collections.abc import Callable, Iterator
 from enum import Enum
-from typing import Any
 
 import pandas as pd
 import requests
@@ -47,7 +45,7 @@ class ScreenerDataFrame(pd.DataFrame):
     def __init__(self, data, columns: dict, *args, **kwargs):
         # Add the extra received columns
         columns = {"symbol": "Symbol", **columns}
-        super().__init__(data, *args, columns=list(columns.values()), **kwargs)
+        super().__init__(data, columns=list(columns.values()), *args, **kwargs)
 
         # Reorder columns - only include first_columns that exist in the request
         first_columns = ["symbol", "name", "description"]
@@ -67,20 +65,19 @@ class Screener:
     """Base screener class for querying TradingView screeners."""
 
     # Subclasses should override this to enable field type validation
-    _field_type: type[Enum] | None = None
+    _field_type: type = None
 
     def __init__(self):
-        self.sort: dict[str, Any] | None = None
-        self.url: str = ""
-        self.filters: list[Filter] = []
-        self.options: dict[str, Any] = {}
-        self.symbols: list[str] | None = None
-        self.misc: dict[str, Any] = {}
-        self.specific_fields: list[Field] | None = None
+        self.sort = None
+        self.url = None
+        self.filters = []
+        self.options = {}
+        self.symbols = None
+        self.misc = {}
+        self.specific_fields = None
 
-        # TradingView /scan defaults (range is a hard cap even when explicit tickers are provided).
-        self.range: list[int] | None = [DEFAULT_MIN_RANGE, DEFAULT_MAX_RANGE]
-        self._range_is_default: bool = True
+        self.range = None
+        self.set_range()
         self.add_option("lang", "en")
 
     # def add_prebuilt_filter(self, filter_: Filter):
@@ -93,7 +90,7 @@ class Screener:
     def search(self, value: str):
         self.add_filter(ExtraFilter.SEARCH, FilterOperator.MATCH, value)
 
-    def _get_filter(self, filter_type: Field | ExtraFilter) -> Filter | None:
+    def _get_filter(self, filter_type: Field | ExtraFilter) -> Filter:
         for filter_ in self.filters:
             if filter_.field == filter_type:
                 return filter_
@@ -147,7 +144,7 @@ class Screener:
             )
 
     def add_filter(
-        self, filter_type: Field | ExtraFilter, operation: FilterOperator, values: Enum | str
+        self, filter_type: Field | ExtraFilter, operation: FilterOperator, values: Enum or str
     ):
         self._validate_field_type(filter_type)
         filter_ = Filter(filter_type, operation, values)
@@ -158,9 +155,7 @@ class Screener:
         else:
             self._add_new_filter(filter_)
 
-    def where(
-        self, condition_or_field, operation: FilterOperator | None = None, value=None
-    ) -> "Screener":
+    def where(self, condition_or_field, operation: FilterOperator = None, value=None) -> "Screener":
         """
         Add a filter condition (fluent method).
 
@@ -195,10 +190,6 @@ class Screener:
             )
         else:
             # Legacy syntax: ss.where(field, operator, value)
-            if operation is None:
-                raise ValueError("Legacy where() requires an operation")
-            if value is None:
-                raise ValueError("Legacy where() requires a value")
             self.add_filter(condition_or_field, operation, value)
         return self
 
@@ -242,7 +233,6 @@ class Screener:
         self, from_range: int = default_min_range, to_range: int = default_max_range
     ) -> "Screener":
         self.range = [from_range, to_range]
-        self._range_is_default = False
         return self
 
     def sort_by(self, sort_by: Field, ascending=True):
@@ -276,129 +266,17 @@ class Screener:
 
         return self
 
-    def set_tickers(self, *tickers: str) -> "Screener":
-        """
-        Filter screener results to only include specified ticker(s).
-        Tickers should be in the format 'EXCHANGE:SYMBOL'.
-
-        :param tickers: One or more ticker symbols
-        :return: self for method chaining
-
-        Example:
-            >>> ss = StockScreener()
-            >>> ss.set_tickers("NASDAQ:AAPL", "NASDAQ:MSFT")
-            >>> df = ss.get()
-        """
-        if not tickers:
-            return self
-
-        if self.symbols is None:
-            self.symbols = {"tickers": list(tickers)}
-        else:
-            self.symbols["tickers"] = list(tickers)
-
-        return self
-
     def _build_payload(self, requested_columns_):
-        # Resolve symbols: merge self.symbols (from set_tickers/set_index) with
-        # any misc["symbols"] (e.g. query types set by subclass constructors).
-        # This prevents **self.misc from silently overwriting set_tickers().
-        misc_symbols = self.misc.pop("symbols", None)
-
-        if self.symbols is not None:
-            # User explicitly set tickers/index — use that as the base
-            symbols = dict(self.symbols)
-            # Merge query/types from misc so subclass type filters still apply
-            if misc_symbols and "query" in misc_symbols and "query" not in symbols:
-                symbols["query"] = misc_symbols["query"]
-        elif misc_symbols:
-            # No user-set symbols — use whatever the subclass put in misc
-            symbols = misc_symbols
-        else:
-            symbols = {"query": {"types": []}, "tickers": []}
-
         payload = {
             "filter": [f.to_dict() for f in self.filters],
             "options": self.options,
-            "symbols": symbols,
+            "symbols": self.symbols if self.symbols else {"query": {"types": []}, "tickers": []},
             "sort": self.sort,
             "range": self.range,
             "columns": requested_columns_,
             **self.misc,
         }
-
-        # Restore misc so repeated calls work correctly
-        if misc_symbols is not None:
-            self.misc["symbols"] = misc_symbols
-
         return payload
-
-    def _validate_api_response(self, resp_json: dict, payload_json: str, status_code: int):
-        """
-        Validate the structure of the TradingView API response.
-
-        :param resp_json: The response JSON to validate
-        :param payload_json: The original request payload (for error reporting)
-        :param status_code: The HTTP status code
-        :raises MalformedRequestException: If the response is malformed
-        """
-        if not isinstance(resp_json, dict):
-            raise MalformedRequestException(
-                status_code,
-                f"Invalid JSON response: expected dict, got {type(resp_json).__name__}",
-                self.url,
-                payload_json,
-            )
-
-        if "data" not in resp_json:
-            raise MalformedRequestException(
-                status_code,
-                "Invalid API response: missing 'data' key",
-                self.url,
-                payload_json,
-            )
-
-        if not isinstance(resp_json["data"], list):
-            raise MalformedRequestException(
-                status_code,
-                f"Invalid API response: 'data' should be a list, got {type(resp_json['data']).__name__}",
-                self.url,
-                payload_json,
-            )
-
-        # Validate each item in data
-        for i, item in enumerate(resp_json["data"]):
-            if not isinstance(item, dict):
-                raise MalformedRequestException(
-                    status_code,
-                    f"Invalid data item at index {i}: expected dict, got {type(item).__name__}",
-                    self.url,
-                    payload_json,
-                )
-
-            if "s" not in item:
-                raise MalformedRequestException(
-                    status_code,
-                    f"Invalid data item at index {i}: missing symbol 's' key",
-                    self.url,
-                    payload_json,
-                )
-
-            if "d" not in item:
-                raise MalformedRequestException(
-                    status_code,
-                    f"Invalid data item at index {i}: missing data 'd' key",
-                    self.url,
-                    payload_json,
-                )
-
-            if not isinstance(item["d"], list):
-                raise MalformedRequestException(
-                    status_code,
-                    f"Invalid data item at index {i}: 'd' should be a list, got {type(item['d']).__name__}",
-                    self.url,
-                    payload_json,
-                )
 
     def get(self, print_request=False):
         """
@@ -413,17 +291,6 @@ class Screener:
         columns = get_columns_to_request(self.specific_fields)
 
         payload = self._build_payload(list(columns.keys()))
-
-        # If the caller provided an explicit tickers list but didn't customize range, auto-size range
-        # so TradingView doesn't truncate results at the default 150 rows.
-        try:
-            symbols = payload.get("symbols") or {}
-            tickers = symbols.get("tickers") or []
-            if self._range_is_default and isinstance(tickers, list) and tickers:
-                payload["range"] = [0, len(tickers)]
-        except Exception:
-            # Best-effort only; do not fail the request building path.
-            pass
         payload_json = json.dumps(payload, indent=4)
 
         if print_request:
@@ -431,120 +298,41 @@ class Screener:
             print("Payload:")
             print(payload_json)
 
-        retryable_statuses = {408, 425, 429, 500, 502, 503, 504}
-        max_retries = 3
-        base_backoff = 0.5
+        try:
+            # Fixed: Add timeout to prevent hanging indefinitely
+            response = requests.post(
+                self.url, data=payload_json, timeout=REQUEST_TIMEOUT, headers=REQUEST_HEADERS
+            )
 
-        last_exc: Exception | None = None
-        for attempt in range(max_retries + 1):
-            try:
-                response = requests.post(
-                    self.url, data=payload_json, timeout=REQUEST_TIMEOUT, headers=REQUEST_HEADERS
-                )
-
-                if is_status_code_ok(response):
-                    try:
-                        resp_json = response.json()
-                        self._validate_api_response(resp_json, payload_json, response.status_code)
-
-                        # Extract data from validated response
-                        data = []
-                        expected_len = len(columns)
-                        for i, item in enumerate(resp_json["data"]):
-                            symbol = item["s"]
-                            values = item["d"]
-
-                            if len(values) != expected_len:
-                                raise MalformedRequestException(
-                                    response.status_code,
-                                    f"Data length mismatch at index {i}: expected {expected_len} values, got {len(values)}",
-                                    self.url,
-                                    payload_json,
-                                )
-                            data.append([symbol] + values)
-
-                    except (ValueError, KeyError, TypeError) as e:
-                        raise MalformedRequestException(
-                            response.status_code,
-                            f"Failed to parse API response: {str(e)}",
-                            self.url,
-                            payload_json,
-                        ) from e
-
-                    df = ScreenerDataFrame(data, columns)
-                    safe_headers = {
-                        "Content-Type",
-                        "Date",
-                        "Server",
-                        "User-Agent",
-                        "X-Request-Id",
-                        "Retry-After",
-                    }
-                    sanitized_headers = {
-                        k: v for k, v in response.headers.items() if k in safe_headers
-                    }
-                    df.attrs["api_context"] = {
-                        "url": self.url,
-                        "status_code": response.status_code,
-                        "headers": sanitized_headers,
-                        "method": "POST",
-                    }
-                    return df
-
-                # Non-OK response
-                if response.status_code in retryable_statuses and attempt < max_retries:
-                    retry_after = response.headers.get("Retry-After")
-                    if retry_after and str(retry_after).strip().isdigit():
-                        sleep_s = min(float(retry_after), 30.0)
-                    else:
-                        # Exponential backoff with jitter
-                        sleep_s = min(base_backoff * (2**attempt), 10.0)
-                        sleep_s = sleep_s * (0.8 + 0.4 * random.random())
-                    time.sleep(sleep_s)
-                    continue
-
+            if is_status_code_ok(response):
+                data = [[d["s"]] + d["d"] for d in response.json()["data"]]
+                return ScreenerDataFrame(data, columns)
+            else:
                 raise MalformedRequestException(
                     response.status_code, response.text, self.url, payload_json
                 )
 
-            except requests.Timeout as e:
-                last_exc = e
-                if attempt < max_retries:
-                    sleep_s = min(base_backoff * (2**attempt), 10.0)
-                    sleep_s = sleep_s * (0.8 + 0.4 * random.random())
-                    time.sleep(sleep_s)
-                    continue
-                raise MalformedRequestException(
-                    408,
-                    f"Request timed out after {REQUEST_TIMEOUT} seconds",
-                    self.url,
-                    payload_json,
-                ) from e
-            except requests.RequestException as e:
-                last_exc = e
-                if attempt < max_retries:
-                    sleep_s = min(base_backoff * (2**attempt), 10.0)
-                    sleep_s = sleep_s * (0.8 + 0.4 * random.random())
-                    time.sleep(sleep_s)
-                    continue
-                raise MalformedRequestException(
-                    0,
-                    str(e),
-                    self.url,
-                    payload_json,
-                ) from e
-
-        # Should never reach here
-        if last_exc:
-            raise MalformedRequestException(0, str(last_exc), self.url, payload_json) from last_exc
-        raise MalformedRequestException(0, "Unknown error", self.url, payload_json)
+        except requests.Timeout:
+            raise MalformedRequestException(
+                408,  # Request Timeout
+                f"Request timed out after {REQUEST_TIMEOUT} seconds",
+                self.url,
+                payload_json,
+            )
+        except requests.RequestException as e:
+            raise MalformedRequestException(
+                0,  # Unknown status code
+                str(e),
+                self.url,
+                payload_json,
+            )
 
     def stream(
         self,
         interval: float = 5.0,
         max_iterations: int | None = None,
         on_update: Callable[["ScreenerDataFrame"], None] | None = None,
-    ) -> Iterator["ScreenerDataFrame | None"]:
+    ) -> Iterator["ScreenerDataFrame"]:
         """
         Stream screener data at regular intervals.
 

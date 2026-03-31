@@ -1,6 +1,5 @@
 from rich.console import Console
-
-from tvscreener.lib.orchestrator import ScreenerController
+from tvscreener_ext.orchestrator import ScreenerController
 
 
 def test_fetch_data_with_progress_skips_spinner_for_recording_console() -> None:

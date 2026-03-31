@@ -1,7 +1,7 @@
 import sys
 
-from tvscreener import cli
-from tvscreener.lib import orchestrator
+from tvscreener_ext import orchestrator
+from tvscreener_ext import scan as cli
 
 
 class DummySettings:
@@ -111,7 +111,7 @@ def test_cli_defaults_to_prefect_runner(monkeypatch):
         ],
     )
 
-    from tvscreener.lib import prefect_runner
+    from tvscreener_ext import prefect_runner
 
     monkeypatch.setattr(prefect_runner, "run_prefect", fake_run_prefect)
 

@@ -3,8 +3,11 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pandas as pd
-
-from tvscreener.lib.data_sources import StubDataSource, TradingViewDataSource, build_data_source
+from tvscreener_ext.data_sources.logic import (
+    StubDataSource,
+    TradingViewDataSource,
+    build_data_source,
+)
 
 
 def test_build_data_source_defaults_to_tradingview():

@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.lib.orchestrator import ScreenerController
+from tvscreener_ext.orchestrator import ScreenerController
 
 
 def test_load_latest_signals_latest_crypto_prefers_entity_id(monkeypatch):
@@ -19,7 +18,7 @@ def test_load_latest_signals_latest_crypto_prefers_entity_id(monkeypatch):
             calls.append(sql)
             return pd.DataFrame({"entity_id": ["BINANCE:BTCUSDT"], "asset_type": ["crypto"]})
 
-    monkeypatch.setattr("tvscreener.lib.query.EdgeQueryClient", lambda: _FakeClient())
+    monkeypatch.setattr("tvscreener_ext.query.EdgeQueryClient", lambda: _FakeClient())
 
     df = controller._load_latest_signals_latest(
         asset_type="crypto",

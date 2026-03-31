@@ -1,12 +1,11 @@
 import pandas as pd
 import pytest
-
-from tvscreener.filter import RocFilter
-from tvscreener.lib.screeners.filter_utils import (
+from tvscreener_ext.screeners.filter_utils import (
     apply_ma_score_filter,
     apply_volume_filter,
 )
-from tvscreener.lib.screeners.forex_opportunity import (
+from tvscreener_ext.screeners.filters import RocFilter
+from tvscreener_ext.screeners.forex_opportunity import (
     ForexOpportunityScreener,
     ForexScreenerConfig,
 )

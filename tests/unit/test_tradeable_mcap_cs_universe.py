@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.lib.universe import binance_crypto as bc
+from tvscreener_ext.universe import binance_crypto as bc
 
 
 def test_tradeable_mcap_cs_restricts_to_market_cap_bases(monkeypatch):

@@ -1,7 +1,6 @@
 import pandas as pd
 import pytest
-
-from tvscreener.lib.lakehouse.manager import LakehouseManager
+from tvscreener_ext.lakehouse.manager import LakehouseManager
 
 
 @pytest.mark.parametrize(

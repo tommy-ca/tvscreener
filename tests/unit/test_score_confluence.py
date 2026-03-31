@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.score import ScoringEngine
+from tvscreener_ext.scoring import ScoringEngine
 
 
 def test_calculate_confluence_infers_direction_without_ensemble_score():

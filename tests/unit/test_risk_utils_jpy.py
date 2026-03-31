@@ -2,8 +2,7 @@
 
 import pandas as pd
 import pytest
-
-from tvscreener.lib.screeners.risk_utils import (
+from tvscreener_ext.screeners.risk_utils import (
     RiskConfig,
     RiskEngine,
 )

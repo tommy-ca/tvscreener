@@ -10,8 +10,8 @@ import pytest
 def test_prefect_flow_writes_expected_artifacts(tmp_path, monkeypatch):
     pytest.importorskip("prefect")
 
-    from tvscreener.lib import prefect_runner as pr
-    from tvscreener.lib.pipeline_runner import PipelineRunSpec, RunResult
+    from tvscreener_ext import prefect_runner as pr
+    from tvscreener_ext.runner import PipelineRunSpec, RunResult
 
     monkeypatch.setenv("PREFECT_LOGGING_LEVEL", "ERROR")
     monkeypatch.setenv("PREFECT_LOGGING_INTERNAL_LEVEL", "ERROR")

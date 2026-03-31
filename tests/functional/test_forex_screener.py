@@ -1,6 +1,5 @@
 import pytest
-
-from tvscreener.lib.screeners.forex_opportunity import (
+from tvscreener_ext.screeners.forex_opportunity import (
     ForexOpportunityScreener,
     ForexScreenerConfig,
 )

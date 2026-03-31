@@ -1,6 +1,5 @@
 import pandas as pd
-
-from tvscreener.lib.universe import binance_crypto as bc
+from tvscreener_ext.universe import binance_crypto as bc
 
 
 def test_cs_momentum_universe_excludes_stables_and_sorts_by_volume(monkeypatch):

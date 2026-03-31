@@ -60,22 +60,35 @@ Track B (extensions-owned pipelines):
   - implement `PipelineRunSpec` + runner
   - implement Iceberg persistence layer + DuckDB-backed analytics
   - implement Prefect flows on top of the extensions runner
+### Zero-Fork Migration Plan
+The repository is migrating from a "modified upstream" to a "pure upstream + extensions" model.
 
-Selected approach: Track B.
+#### Phase 1: Logic Extraction (In Progress)
+Migrate all enhancements currently residing in the repo-local `tvscreener/` to `extensions/src/tvscreener_ext/`.
 
-Sync plan:
-- Track B is a compatibility bridge for the package-index upstream surface-area mismatch.
-- When upstream publishes the pipeline + lakehouse + Prefect runner surface area, extensions SHOULD drop duplicated
-  implementations and become a thin orchestration layer.
+**Mapping Table:**
+| Local Fork Path | Extension Target Path | Status |
+| :--- | :--- | :--- |
+| `tvscreener/core/enums.py` | `tvscreener_ext/enums.py` | ✅ Migrated |
+| `tvscreener/score.py` | `tvscreener_ext/scoring.py` | ✅ Migrated |
+| `tvscreener/lib/lakehouse/` | `tvscreener_ext/lakehouse/` | ⏳ Pending |
+| `tvscreener/lib/screeners/` | `tvscreener_ext/screeners/` | ⏳ Pending |
+| `tvscreener/lib/pipeline_runner.py` | `tvscreener_ext/runner.py` | ⏳ Refactoring |
+| `tvscreener/lib/orchestrator.py` | `tvscreener_ext/orchestrator.py` | ⏳ Pending |
+| `tvscreener/beauty.py` | `tvscreener_ext/renderers/beauty.py` | ⏳ Pending |
+| `tvscreener/constants/` | `tvscreener_ext/constants/` | ⏳ Pending |
 
-Proposed module mapping (for deletion of duplicates):
-- `extensions/src/tvscreener_ext/runner.py` -> `tvscreener/lib/pipeline_runner.py`
-- `extensions/src/tvscreener_ext/lakehouse.py` -> `tvscreener/lib/lakehouse/manager.py`
-- `extensions/src/tvscreener_ext/semantic/*` -> `tvscreener/lib/semantic_artifacts.py`
-- `extensions/src/tvscreener_ext/prefect/*` -> `tvscreener/lib/prefect_runner.py` (or upstream-owned flows)
-- `extensions/src/tvscreener_ext/universes.py` -> `tvscreener/constants/*` and `tvscreener/lib/universe/*`
+#### Phase 2: Refactoring for Public API
+Local screeners often import from `tvscreener` internals. These MUST be refactored to:
+1.  Use only public APIs from the `tvscreener` package.
+2.  If internal logic is required (e.g., `ExportMixin`), extensions must carry a copy or implement a compatible version.
 
-### Migration plan: stop relying on repo-local `tvscreener/`
+#### Phase 3: Total Reversion
+Once extensions are verified feature-complete against the installed `tvscreener-0.2.1`:
+1.  Run `git checkout v0.2.1 -- tvscreener/`.
+2.  Delete `tvscreener/lib/`, `tvscreener/score.py`, etc.
+3.  Ensure `tvscreener/` contains only what is in the official release.
+
 Goal: workflows and operators rely on installed upstream `tvscreener` + `tvscreener-ext`, not the in-repo
 `tvscreener/` source tree.
 

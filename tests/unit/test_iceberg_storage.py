@@ -2,13 +2,12 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-
-from tvscreener.lib.lakehouse.manager import LakehouseManager
+from tvscreener_ext.lakehouse.manager import LakehouseManager
 
 
 @pytest.fixture
 def mock_catalog():
-    with patch("tvscreener.lib.lakehouse.manager.load_catalog") as mock:
+    with patch("tvscreener_ext.lakehouse.manager.load_catalog") as mock:
         yield mock
 
 
