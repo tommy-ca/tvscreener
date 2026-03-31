@@ -5,10 +5,10 @@ usage() {
   cat <<'EOF'
 Usage: scripts/clean-workspace.sh [--caches] [--artifacts] [--prefect] [--venv] [--all]
 
-Safe default: removes only Python/pytest/ruff caches.
+Safe default: removes only Python/pytest/ruff/build caches and temporary backups.
 
 Options:
-  --caches     Remove __pycache__/ + .pytest_cache/ + .ruff_cache/ (default)
+  --caches     Remove __pycache__/ + .pytest_cache/ + .ruff_cache/ + build/ + *.egg-info/ + .prefect-home.bak-*/ (default)
   --artifacts  Remove artifacts/ and exports/
   --prefect    Remove .prefect-home/ (stops local Prefect state)
   --venv       Remove .venv/
@@ -57,7 +57,7 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "$repo_root"
 
 if [[ $do_caches -eq 1 ]]; then
-  rm -rf .pytest_cache .ruff_cache
+  rm -rf .pytest_cache .ruff_cache build *.egg-info .prefect-home.bak-*/
   # Remove all __pycache__ dirs (globstar is bash-only).
   shopt -s globstar nullglob
   rm -rf **/__pycache__
