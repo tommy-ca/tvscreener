@@ -1,3 +1,6 @@
+# Core library (pure upstream, do not fork)
+/tvscreener/
+
 # Data exports
 exports/
 artifacts/
