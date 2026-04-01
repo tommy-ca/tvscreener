@@ -1297,3 +1297,16 @@ Outcomes:
   - **DRY**: Enforced reliance exclusively on the installed upstream `tvscreener` package. Added instructions to avoid duplicating or over-patching upstream logic when the upstream implementation (e.g., `set_symbol_types` resolution) is sufficient.
 
 Status: Project specifications updated to enforce new structural guarantees moving forward.
+
+## 2026-04-01: Final Root Cleanup & Artifact Pruning
+
+Goal: Complete the project root cleanup by removing shims and build artifacts, and pruning legacy data directories.
+
+Outcomes:
+- **Removed `openspec/` shim**: Deleted the redundant root-level `openspec/` directory, as the canonical project context now resides exclusively under `docs/openspec/`.
+- **Cleaned `MagicMock/` and `tvscreener.egg-info/`**: Removed accidental test artifacts and built package info to maintain a clean workspace.
+- **Pruned legacy `artifacts/`**: Deleted `artifacts/prefect/`, `artifacts/matrix/`, `artifacts/validation/`, and `artifacts/tmp/`. These contained non-contractual legacy logs and debug data from previous iterations. Canonical runs now write to `artifacts/runs/`.
+- **Refined `docs/architecture/LAKEHOUSE.md`**: Updated to remove references to the deleted `workflows/` templates and confirmed that batch fan-out is now managed through the `extensions/` distribution.
+
+Status: Root repository is now strictly aligned with SOLID, KISS, and YAGNI principles. All redundant files and legacy data shims have been purged.
+
