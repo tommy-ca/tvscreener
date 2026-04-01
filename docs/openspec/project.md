@@ -65,6 +65,11 @@ Packaging reality check:
   `run_id`, `fetched_at_utc`, `timeframes`, `timeframe_set_id`, `source`, `scanner_family`.
 - Iceberg tables are canonical; on-disk snapshots are optional debug artifacts only.
 
+## Repository Layout Constraints (SOLID, KISS, DRY, YAGNI)
+- **SOLID / YAGNI**: The repository must contain only what is strictly necessary to test and deploy the pipeline extensions (`extensions/`, `tests/`, `docs/`, `scripts/`). Experimental apps (`app/`), deprecated scripts (`.dev/`), redundant submodules (`semantic/`), and obsolete workflows must be removed immediately to prevent dead code accumulation.
+- **KISS**: All pipeline orchestration, edge analytics, lakehouse storage, and custom screeners are strictly consolidated into `extensions/src/tvscreener_ext/`. Avoid scattering logic across multiple root-level directories.
+- **DRY**: Rely exclusively on the installed upstream `tvscreener` package. Do not duplicate upstream source code, and avoid over-patching upstream logic if the upstream implementation is sufficient (e.g., `set_symbol_types` resolution).
+
 ## Workspace hygiene
 - Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).
 - Local runner state lives under `.prefect-home/` (gitignored); delete it to reset local Prefect state.

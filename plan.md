@@ -1285,3 +1285,15 @@ Outcomes:
 - `tvscreener-ext-validate --runner local --matrix` ran the matrix data fetch successfully, evaluating technicals for Forex Majors & Minors, Crypto Base & Perpetuals, and Stock pairs.
 
 Status: Refactoring complete. The application and orchestration are decoupled, running stable, and the test suite is passing securely.
+
+## 2026-04-01: Update Requirements, Specs & Design Docs (SOLID, KISS, DRY, YAGNI)
+
+Goal: Formalize the project root cleanup constraints into the project's specification documents.
+
+Outcomes:
+- **`docs/openspec/project.md`**: Appended a new `Repository Layout Constraints (SOLID, KISS, DRY, YAGNI)` section to enforce long-term hygiene and maintainability.
+  - **SOLID / YAGNI**: Documented that experimental apps, deprecated scripts, redundant submodules, and obsolete workflows must be systematically removed to prevent dead code accumulation. The repository only contains what is necessary to test and deploy pipeline extensions (`extensions/`, `tests/`, `docs/`).
+  - **KISS**: Mandated that all pipeline orchestration, edge analytics, lakehouse storage, and custom screeners must be consolidated into `extensions/src/tvscreener_ext/`.
+  - **DRY**: Enforced reliance exclusively on the installed upstream `tvscreener` package. Added instructions to avoid duplicating or over-patching upstream logic when the upstream implementation (e.g., `set_symbol_types` resolution) is sufficient.
+
+Status: Project specifications updated to enforce new structural guarantees moving forward.
