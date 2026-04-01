@@ -79,9 +79,9 @@ outside the core `tvscreener` library package so the core remains dependency-fre
 
 ## Operational reruns (forex majors/minors)
 
-The repo supports deterministic reruns for **forex majors and minors** using Prefect batch fan-out:
+The repo supports deterministic reruns for **forex majors and minors** using batch fan-out executed through the extension module (`tvscreener_ext`).
 
-- Batch templates live under `workflows/prefect/batches/` (e.g. `forex_majors_minors_both.json`).
+- Batch specifications and pipeline entrypoints are managed inside `extensions/src/tvscreener_ext/`.
 - Artifacts are keyed by `params_hash` and written under `artifacts/runs/<params_hash>/` so replays are stable and
   machine-discoverable.
 
