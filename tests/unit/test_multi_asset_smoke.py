@@ -4,9 +4,9 @@ from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
-
 from tvscreener.core.base import Screener
+
+from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
 
 
 class MultiAssetMockScreener(BaseOpportunityScreener):

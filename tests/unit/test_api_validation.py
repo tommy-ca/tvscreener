@@ -37,7 +37,7 @@ class TestApiValidation(unittest.TestCase):
     def test_explicit_tickers_auto_sizes_range(self, mock_post):
         # Arrange: 200 explicit tickers and default range should auto-size to 200
         tickers = [f"NASDAQ:TEST{i}" for i in range(200)]
-        self.ss.set_tickers(*tickers)
+        self.ss.set_tickers(*tickers)  # ty: ignore
 
         mock_response = MagicMock()
         mock_response.ok = True

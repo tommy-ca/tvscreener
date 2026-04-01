@@ -1,4 +1,5 @@
 import pandas as pd
+
 from tvscreener_ext.screeners.base import ScreenerConfig
 from tvscreener_ext.screeners.factory import GenericOpportunityScreener
 

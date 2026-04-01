@@ -1,4 +1,5 @@
 import pandas as pd
+
 from tvscreener_ext.inspect_utils import inspect_parquet
 from tvscreener_ext.screeners.metadata_utils import MetadataCollector
 

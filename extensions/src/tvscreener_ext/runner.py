@@ -355,6 +355,13 @@ class RunResult(BaseModel):
     exit_code: int
     errors: list[str] = Field(default_factory=list)
 
+    # Optional artifact paths
+    results_path: str | None = None
+    results_table_path: str | None = None
+    matrix_path: str | None = None
+    matrix_md_path: str | None = None
+    grade_summary_table_path: str | None = None
+
     # Optional audit fields (best-effort)
     tables_read: list[str] = Field(default_factory=list)
     tables_written: list[str] = Field(default_factory=list)

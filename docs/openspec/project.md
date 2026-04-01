@@ -71,6 +71,11 @@ Packaging reality check:
 - **DRY**: Rely exclusively on the installed upstream `tvscreener` package. Do not duplicate upstream source code, and avoid over-patching upstream logic if the upstream implementation is sufficient (e.g., `set_symbol_types` resolution).
 - **Workspace Structure**: The project root MUST be configured as a `uv` workspace root with `package = false`. It MUST NOT claim to be the `tvscreener` package to avoid shadowing the upstream dependency.
 
+## Continuous Review & Refinement
+- **Issue Spotting**: Regularly run static analysis tools (`ruff`, `ty`) to identify architectural drift, dead code, or type safety regressions.
+- **Refactoring Candidates**: Large modules (e.g. `orchestrator.py` > 50KB) should be periodically evaluated for decomposition following SOLID principles.
+- **Documentation Parity**: Design documents and specifications must be updated to remove references to deleted legacy components or defunct paths.
+
 ## Workspace hygiene
 - Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).
 - Local runner state lives under `.prefect-home/` (gitignored); delete it to reset local Prefect state.

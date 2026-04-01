@@ -13,11 +13,11 @@ Key visual elements:
 
 import narwhals as nw
 import pandas as pd
-from tvscreener_ext.enums import Direction
-from tvscreener_ext.utils.logic import _is_nan, millify
-
 import tvscreener.ta as ta
 from tvscreener.field import Field, Rating
+
+from tvscreener_ext.enums import Direction
+from tvscreener_ext.utils.logic import _is_nan, millify
 
 # Visual indicators for ratings
 BUY_CHAR = "↑ B"

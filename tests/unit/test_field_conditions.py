@@ -1,8 +1,8 @@
 """Tests for the new Pythonic comparison operator syntax on Fields."""
 
-from tvscreener_ext.screeners.filters import FieldCondition
-
 from tvscreener import FilterOperator, StockField, StockScreener
+
+from tvscreener_ext.screeners.filters import FieldCondition
 
 
 class TestFieldCondition:
@@ -96,7 +96,7 @@ class TestFieldCondition:
     def test_to_filter(self):
         """Test to_filter() method."""
         cond = StockField.PRICE > 100
-        filter_ = cond.to_filter()
+        filter_ = cond.to_filter()  # ty: ignore
         assert filter_.field == StockField.PRICE
         assert filter_.operation == FilterOperator.ABOVE
         assert filter_.values == [100]

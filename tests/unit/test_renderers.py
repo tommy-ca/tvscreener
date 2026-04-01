@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pandas as pd
 from rich.console import Console
 from rich.table import Table
+
 from tvscreener_ext.renderers.beauty import VisualStyler
 from tvscreener_ext.screeners.renderers.rich_console import RichConsoleRenderer
 

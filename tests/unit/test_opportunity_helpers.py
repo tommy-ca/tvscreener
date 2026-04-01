@@ -2,6 +2,7 @@ import logging
 
 import pandas as pd
 import yaml
+
 from tvscreener_ext.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
 from tvscreener_ext.orchestrator import (
     AssetSelection,

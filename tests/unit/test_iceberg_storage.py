@@ -1,7 +1,11 @@
+from __future__ import annotations
+
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
+
 from tvscreener_ext.lakehouse.manager import LakehouseManager
 
 
@@ -73,7 +77,7 @@ def test_write_overwrite_partition_filter(mock_catalog):
     f = kwargs["overwrite_filter"]
     assert isinstance(f, In)
     assert f.term.name == "date"
-    assert f.literals == In("date", ["2026-03-01", "2026-03-02"]).literals
+    assert f.literals == cast(Any, In("date", ["2026-03-01", "2026-03-02"])).literals  # ty: ignore
 
 
 def test_write_overwrite_multi_partition_filter(mock_catalog):
@@ -106,7 +110,7 @@ def test_write_explicit_overwrite_filter(mock_catalog):
 
     from pyiceberg.expressions import EqualTo
 
-    custom_filter = EqualTo("some_col", "some_val")
+    custom_filter = cast(Any, EqualTo("some_col", "some_val"))  # ty: ignore
     df = pd.DataFrame({"some_col": ["some_val"], "value": [1]})
     storage.write_table(df, "test_table", mode="overwrite", overwrite_filter=custom_filter)
 

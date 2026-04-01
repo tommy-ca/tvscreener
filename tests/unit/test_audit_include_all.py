@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import argparse
 import json
 from pathlib import Path
+from typing import cast
 
 from tvscreener_ext.orchestrator import ScreenerController
 
@@ -20,7 +24,7 @@ def test_audit_defaults_to_screener_universes(tmp_path: Path):
     )()
 
     # Just verify the output list; don't assert counts.
-    assert controller.run_audit(args) == 0
+    assert controller.run_audit(cast(argparse.Namespace, args)) == 0
     payload = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     universes = set((payload or {}).get("universes", {}).keys())
     assert "binance_spot_tradeable_base" in universes
@@ -43,7 +47,7 @@ def test_audit_include_all_adds_diagnostic_universes(tmp_path: Path):
         },
     )()
 
-    assert controller.run_audit(args) == 0
+    assert controller.run_audit(cast(argparse.Namespace, args)) == 0
     payload = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))
     universes = set((payload or {}).get("universes", {}).keys())
     assert "binance_spot_mcap_top100" in universes

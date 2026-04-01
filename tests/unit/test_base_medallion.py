@@ -3,9 +3,9 @@ from unittest.mock import ANY, MagicMock, patch
 import pandas as pd
 import pytest
 from pyiceberg.exceptions import NoSuchTableError
-from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
-
 from tvscreener.core.base import Screener
+
+from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
 
 
 class MockScreener(BaseOpportunityScreener):
@@ -192,7 +192,7 @@ def test_fetch_all_data_retries_then_succeeds():
         RuntimeError("transient"),
         pd.DataFrame({"Symbol": ["TEST"], "Name": ["TEST"], "Price": [1.0]}),
     ]
-    screener._get_screener_instance = lambda: client
+    screener._get_screener_instance = lambda: client  # ty: ignore
 
     df = BaseOpportunityScreener._fetch_all_data(screener)
 
@@ -223,7 +223,7 @@ def test_fetch_all_data_retries_are_bounded_on_failure():
 
     client = MagicMock()
     client.get.side_effect = RuntimeError("always-fail")
-    screener._get_screener_instance = lambda: client
+    screener._get_screener_instance = lambda: client  # ty: ignore
 
     df = BaseOpportunityScreener._fetch_all_data(screener)
 

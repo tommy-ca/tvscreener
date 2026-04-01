@@ -1,4 +1,5 @@
 import unittest
+from typing import Any, cast
 
 from tvscreener import (
     ExtraFilter,
@@ -247,7 +248,7 @@ class TestStockFilters(unittest.TestCase):
     def test_rating_find(self):
         self.assertEqual(Rating.STRONG_BUY, Rating.find(0.63))
         self.assertEqual(Rating.UNKNOWN, Rating.find(1.5))
-        self.assertEqual(Rating.UNKNOWN, Rating.find(None))
+        self.assertEqual(Rating.UNKNOWN, Rating.find(cast(Any, None)))
 
     def test_rating_names(self):
         self.assertIn("STRONG_BUY", Rating.names())

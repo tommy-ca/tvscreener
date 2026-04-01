@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import pandas as pd
-
 from tvscreener.core.forex import ForexScreener
 from tvscreener.field.forex import ForexField
+
 from tvscreener_ext.constants.forex import (
     DEFAULT_FOREX_PAIRS,
     DEFAULT_TIMEFRAMES,

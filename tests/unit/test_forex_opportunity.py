@@ -1,5 +1,6 @@
 import pandas as pd
 import pytest
+
 from tvscreener_ext.screeners.filter_utils import (
     apply_ma_score_filter,
     apply_volume_filter,

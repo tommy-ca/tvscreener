@@ -4,7 +4,7 @@ import contextlib
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -13,7 +13,7 @@ try:
 
     DUCKDB_AVAILABLE = True
 except ImportError:
-    duckdb = None
+    duckdb = cast(Any, None)
     DUCKDB_AVAILABLE = False
 
 try:
@@ -21,7 +21,7 @@ try:
 
     MINIJINJA_AVAILABLE = True
 except ImportError:
-    minijinja = None
+    minijinja = cast(Any, None)
     MINIJINJA_AVAILABLE = False
 
 try:
@@ -29,7 +29,7 @@ try:
 
     NARWHALS_AVAILABLE = True
 except ImportError:
-    nw = None
+    nw = cast(Any, None)
     NARWHALS_AVAILABLE = False
 
 logger = logging.getLogger(__name__)

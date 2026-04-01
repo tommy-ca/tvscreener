@@ -885,7 +885,7 @@ def fetch_tradingview_crypto_tickers(tickers: list[str]) -> pd.DataFrame:
     from tvscreener import CryptoField
 
     ss = tvs.CryptoScreener()
-    ss.set_tickers(*tickers)
+    ss.set_tickers(*tickers)  # ty: ignore
     ss.set_range(0, len(tickers))
     ss.select(
         CryptoField.NAME,

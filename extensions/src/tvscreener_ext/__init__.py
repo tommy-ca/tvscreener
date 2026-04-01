@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+from typing import Any, cast
+
 from . import runner as pipeline_runner
 from .enums import Direction
 from .lakehouse import LakehouseManager, get_manager
@@ -16,11 +20,11 @@ def _patch_field():
     try:
         from tvscreener.field import FieldWithInterval
     except ImportError:
-        FieldWithInterval = None
+        FieldWithInterval = cast(Any, None)
     try:
         from tvscreener.field import FieldWithHistory
     except ImportError:
-        FieldWithHistory = None
+        FieldWithHistory = cast(Any, None)
 
     from .screeners.filters import FieldCondition, FilterOperator
 
@@ -65,16 +69,16 @@ def _patch_field():
         return FieldCondition(self, FilterOperator.NOT_IN_RANGE, values)
 
     for cls in filter(None, [Field, FieldWithInterval, FieldWithHistory]):
-        cls.__gt__ = __gt__
-        cls.__ge__ = __ge__
-        cls.__lt__ = __lt__
-        cls.__le__ = __le__
-        cls.__eq__ = __eq__
-        cls.__ne__ = __ne__
-        cls.between = between
-        cls.not_between = not_between
-        cls.isin = isin
-        cls.not_in = not_in
+        cls.__gt__ = __gt__  # ty: ignore
+        cls.__ge__ = __ge__  # ty: ignore
+        cls.__lt__ = __lt__  # ty: ignore
+        cls.__le__ = __le__  # ty: ignore
+        cls.__eq__ = __eq__  # ty: ignore
+        cls.__ne__ = __ne__  # ty: ignore
+        cls.between = between  # ty: ignore
+        cls.not_between = not_between  # ty: ignore
+        cls.isin = isin  # ty: ignore
+        cls.not_in = not_in  # ty: ignore
 
 
 def _patch_screeners():
@@ -93,8 +97,8 @@ def _patch_screeners():
             self.add_misc("symbols", {"tickers": tks})
 
     for cls in (StockScreener, CryptoScreener, ForexScreener):
-        cls.set_tickers = set_tickers
-        cls.set_symbols = set_symbols
+        cls.set_tickers = set_tickers  # ty: ignore
+        cls.set_symbols = set_symbols  # ty: ignore
 
 
 def _patch_where():
@@ -107,14 +111,13 @@ def _patch_where():
             f = condition_or_field.to_filter()
             self.filters.append(f)
             return self
-        return original_where(self, condition_or_field, operation, value)
+        return original_where(self, condition_or_field, cast(Any, operation), value)
 
-    Screener.where = where
+    Screener.where = where  # ty: ignore
 
 
 def _patch_get():
     import requests
-
     import tvscreener.util
     from tvscreener.core.base import Screener, ScreenerDataFrame
     from tvscreener.exceptions import MalformedRequestException
@@ -173,7 +176,7 @@ def _patch_get():
 
         return ScreenerDataFrame(rows, columns)
 
-    Screener.get = get
+    Screener.get = get  # ty: ignore
 
 
 def _patch_range():
@@ -188,7 +191,7 @@ def _patch_range():
         self.range = [start, end]
         return self
 
-    Screener.set_range = set_range
+    Screener.set_range = set_range  # ty: ignore
 
 
 _patch_field()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pandas as pd
+
 from tvscreener_ext.data_sources.logic import (
     StubDataSource,
     TradingViewDataSource,

@@ -1,4 +1,5 @@
 import pytest
+
 from tvscreener_ext.screeners.parser import MTFExpressionParser
 
 

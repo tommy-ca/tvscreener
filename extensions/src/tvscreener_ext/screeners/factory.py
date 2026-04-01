@@ -11,6 +11,7 @@ from tvscreener import (
     FuturesField,
     StockField,
 )
+
 from tvscreener_ext.screeners.base import BaseOpportunityScreener, ScreenerConfig
 from tvscreener_ext.screeners.forex_opportunity import ForexOpportunityScreener
 from tvscreener_ext.screeners.risk_utils import RISK_DEFAULTS

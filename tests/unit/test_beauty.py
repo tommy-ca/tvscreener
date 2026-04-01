@@ -1,5 +1,7 @@
 import unittest
 
+from tvscreener.field import Rating
+
 from tvscreener_ext.renderers.beauty import (
     BUY_CHAR,
     COLOR_BLUE_BUY,
@@ -15,8 +17,6 @@ from tvscreener_ext.renderers.beauty import (
     _rating_letter,
     beautify,
 )
-
-from tvscreener.field import Rating
 
 
 class TestBeautifyHelpers(unittest.TestCase):

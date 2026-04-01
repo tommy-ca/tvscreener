@@ -1,5 +1,9 @@
+from __future__ import annotations
+
+import argparse
 import json
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 from tvscreener_ext.orchestrator import ScreenerController
@@ -7,8 +11,8 @@ from tvscreener_ext.orchestrator import ScreenerController
 
 def test_review_runs_audit_then_report(tmp_path: Path):
     controller = ScreenerController(console=None)
-    controller.run_audit = MagicMock(return_value=0)
-    controller.run_report = MagicMock(return_value=0)
+    controller.run_audit = MagicMock(return_value=0)  # ty: ignore
+    controller.run_report = MagicMock(return_value=0)  # ty: ignore
 
     args = type(
         "Args",
@@ -16,33 +20,29 @@ def test_review_runs_audit_then_report(tmp_path: Path):
         {
             "command": "review",
             "target": "binance-universes",
-            "audit_out_dir": str(tmp_path / "audits"),
-            "report_out_dir": str(tmp_path / "reports"),
-            "strict": False,
+            "out_dir": str(tmp_path),
+            "include_all": False,
             "verbose": False,
             "config": None,
         },
     )()
 
-    assert controller.run_review(args) == 0
-    assert controller.run_audit.call_count == 1
-    assert controller.run_report.call_count == 1
+    assert controller.run_review(cast(argparse.Namespace, args)) == 0
+    assert cast(MagicMock, controller.run_audit).call_count == 1
+    assert cast(MagicMock, controller.run_report).call_count == 1
 
 
-def test_review_strict_fails_when_audit_has_errors(tmp_path: Path):
+def test_review_stops_if_audit_fails(tmp_path: Path):
     controller = ScreenerController(console=None)
+    controller.run_audit = MagicMock(return_value=2)  # ty: ignore
+    controller.run_report = MagicMock(return_value=0)  # ty: ignore
 
-    def _write_audit(_args):
-        out_dir = Path(_args.out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "report.json").write_text(
-            json.dumps({"universes": {"binance_spot_top100": {"errors": ["underfilled_top_n"]}}}),
-            encoding="utf-8",
-        )
+    def _write_audit(*args, **kwargs):
+        (tmp_path / "report.json").write_text(json.dumps({"summary": {"failed": 1}}))
         return 0
 
-    controller.run_audit = MagicMock(side_effect=_write_audit)
-    controller.run_report = MagicMock(return_value=0)
+    controller.run_audit = MagicMock(side_effect=_write_audit)  # ty: ignore
+    controller.run_report = MagicMock(return_value=0)  # ty: ignore
 
     args = type(
         "Args",
@@ -50,13 +50,12 @@ def test_review_strict_fails_when_audit_has_errors(tmp_path: Path):
         {
             "command": "review",
             "target": "binance-universes",
-            "audit_out_dir": str(tmp_path / "audits"),
-            "report_out_dir": str(tmp_path / "reports"),
-            "strict": True,
+            "out_dir": str(tmp_path),
+            "include_all": False,
             "verbose": False,
             "config": None,
         },
     )()
 
-    assert controller.run_review(args) == 2
-    assert controller.run_report.call_count == 0
+    assert controller.run_review(cast(argparse.Namespace, args)) == 2
+    assert cast(MagicMock, controller.run_report).call_count == 0

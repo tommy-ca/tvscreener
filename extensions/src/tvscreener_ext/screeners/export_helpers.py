@@ -43,7 +43,7 @@ def export_to_json(
     metadata: dict[str, Any] | None = None,
 ) -> None:
     df = df_getter()
-    payload: dict[str, Any] = {"data": df.to_dict(orient=orient)}
+    payload: dict[str, Any] = {"data": df.to_dict(orient=orient)}  # ty: ignore
     if metadata:
         payload["metadata"] = metadata
     with open(path, "w") as fh:

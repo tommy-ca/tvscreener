@@ -6,7 +6,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from prefect.runner import Runner
 from prefect.schedules import Cron
@@ -322,7 +322,7 @@ def main(argv: list[str] | None = None) -> int:
                 job_variables=job_variables,
                 entrypoint_type=EntrypointType.MODULE_PATH,
             )
-            _deployment_id = deployment.apply()
+            _deployment_id = cast(Any, deployment).apply()
             extra = f" image={image}" if image else ""
             print(f"applied engine=worker deployment={d.name} id={_deployment_id}{extra}")
         else:

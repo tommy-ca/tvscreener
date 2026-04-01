@@ -150,10 +150,10 @@ class LakehouseManager:
 
                         col_filter = None
                         if unique_vals:
-                            col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
+                            col_filter = In(col, unique_vals)  # ty: ignore
 
                         if has_null:
-                            null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
+                            null_filter = IsNull(col)  # ty: ignore
                             col_filter = Or(col_filter, null_filter) if col_filter else null_filter
 
                         if col_filter:
@@ -266,6 +266,13 @@ class LakehouseManager:
             )
         return nw_df.to_arrow()
 
+    def read_table_arrow(self, table_name: str) -> pa.Table:
+        """Read an Iceberg table into an Arrow table."""
+        identifier = self._normalize_table_identifier(table_name)
+        catalog = self.get_catalog()
+        table = catalog.load_table(identifier)
+        return table.scan().to_arrow()
+
     def maintenance(self, table_name: str, operation: str, **kwargs: Any) -> None:
         """Perform table maintenance (expire snapshots, remove orphans)."""
         from datetime import datetime, timedelta, timezone
@@ -281,7 +288,7 @@ class LakehouseManager:
             ts = datetime.now(timezone.utc) - timedelta(days=days)
             m.expire_snapshots().older_than(ts).commit()
         elif operation == "remove_orphan_files":
-            m.remove_orphan_files().commit()
+            m.remove_orphan_files().commit()  # ty: ignore
         elif operation == "compact":
             logger.info("Compaction requested for %s (Hook)", table_name)
 

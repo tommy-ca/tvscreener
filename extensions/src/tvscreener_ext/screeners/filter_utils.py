@@ -15,7 +15,7 @@ def apply_volume_filter(df: FrameT, min_volume: float | None) -> FrameT:
     candidates = ["Average Volume (10 day Calc)", "AVG_VOLUME", "volume"]
     for col in candidates:
         if col in df.columns:
-            return df.filter(nw.col(col) >= min_volume)
+            return df.filter(nw.col(col) >= min_volume)  # ty: ignore
     return df
 
 
@@ -29,7 +29,7 @@ def apply_atr_filter(df: FrameT, max_atr: float | None) -> FrameT:
     if not atr_cols:
         return df
 
-    return df.filter(nw.mean_horizontal(*atr_cols) <= max_atr)
+    return df.filter(nw.mean_horizontal(*atr_cols) <= max_atr)  # ty: ignore
 
 
 @nw.narwhalify
@@ -42,7 +42,7 @@ def apply_ma_score_filter(df: FrameT, min_ma_score: float | None) -> FrameT:
     if not ma_cols:
         return df
 
-    return df.filter(nw.mean_horizontal(*(nw.col(c).fill_null(0) for c in ma_cols)) >= min_ma_score)
+    return df.filter(nw.mean_horizontal(*(nw.col(c).fill_null(0) for c in ma_cols)) >= min_ma_score)  # ty: ignore
 
 
 @nw.narwhalify
@@ -62,11 +62,11 @@ def apply_contract_type_filter(df: FrameT, contract_type: str) -> FrameT:
         subtype = nw.col(subtype_col).fill_null("")
         if contract_type == "cfd":
             # Accept explicit "cfd" and empty (brokers that don't tag subtype)
-            return df.filter(subtype.is_in(["cfd", ""]))
+            return df.filter(subtype.is_in(["cfd", ""]))  # ty: ignore
         elif contract_type == "spot":
-            return df.filter(subtype.is_in(["", "spot"]))
+            return df.filter(subtype.is_in(["", "spot"]))  # ty: ignore
         elif contract_type == "spreadbet":
-            return df.filter(subtype == "spreadbet")
+            return df.filter(subtype == "spreadbet")  # ty: ignore
 
     return df
 
@@ -78,7 +78,7 @@ def enrich_screener_data(df: FrameT, timeframes: Sequence[str]) -> FrameT:
     cols = list(df.columns)
     if "PAIR" in cols:
         cols.remove("PAIR")
-        df = df.select("PAIR", *cols)
+        df = df.select("PAIR", *cols)  # ty: ignore
 
     # Rename technical columns to human-readable factor context
     rename_map = {}
@@ -103,7 +103,7 @@ def enrich_screener_data(df: FrameT, timeframes: Sequence[str]) -> FrameT:
             rename_map[f"Rsi|{tf}"] = f"RSI_{tf}"
 
     if rename_map:
-        return df.rename(rename_map)
+        return df.rename(rename_map)  # ty: ignore
 
     return df
 
@@ -145,6 +145,6 @@ def detect_mean_reversion_signals(
         )
 
     if exprs:
-        return df.with_columns(*exprs)
+        return df.with_columns(*exprs)  # ty: ignore
 
     return df

@@ -1322,4 +1322,22 @@ Outcomes:
 
 Status: Repository architecture is now "Zero-Fork" verified at the package manager level. The environment is clean and stable.
 
+## 2026-04-01: Repository Review & Exploration (Continuous Refinement)
+
+Goal: Explore the current state of the repository, identify remaining technical debt, and propose architectural improvements following SOLID, KISS, DRY, and YAGNI.
+
+Planned Work:
+- **Type Safety Audit**: Address the 100+ `ty` diagnostics found in the `extensions/` source and tests. These are primarily caused by monkeypatching and Narwhals generic type handling.
+- **Architectural Review**:
+    - Evaluate `orchestrator.py` (68KB) for decomposition into smaller, more focused services (SOLID).
+    - Review `scan.py` for potential logic duplication with `runner.py`.
+- **Documentation Parity**: Prune remaining references to deleted legacy directories (`workflows/`, `semantic/`, `todos/`) in old design documents and specifications.
+- **Dependency Audit**: Ensure all dependencies in `extensions/pyproject.toml` are strictly necessary (YAGNI).
+
+Next Steps:
+- Perform surgical type fixes in `extensions/src/tvscreener_ext/`.
+- Propose a refactoring plan for the large `orchestrator.py` module.
+- Scan and fix documentation references to obsolete paths.
+
+
 

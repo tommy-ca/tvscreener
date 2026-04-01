@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+
 from tvscreener_ext.screeners.registry import (
     ScreenerFamilyRegistry,
     compose_stages,
@@ -13,7 +14,7 @@ from tvscreener_ext.screeners.registry import (
 
 def test_registry_runs_registered_family():
     registry = ScreenerFamilyRegistry()
-    registry.register("opportunity", lambda _request: 7)
+    registry.register("opportunity", lambda _request: 7)  # ty: ignore
 
     result = registry.run("opportunity", object())
 
@@ -23,7 +24,7 @@ def test_registry_runs_registered_family():
 
 def test_registry_raises_for_unknown_family():
     registry = ScreenerFamilyRegistry()
-    registry.register("strategy", lambda _request: 1)
+    registry.register("strategy", lambda _request: 1)  # ty: ignore
 
     with pytest.raises(ValueError, match="Unknown scanner type"):
         registry.run("missing", object())

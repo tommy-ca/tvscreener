@@ -1,4 +1,5 @@
 import pytest
+
 from tvscreener_ext.orchestrator import ScreenerController
 from tvscreener_ext.utils.logic import validate_path
 

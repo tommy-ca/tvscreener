@@ -1,4 +1,5 @@
 import pandas as pd
+
 from tvscreener_ext.scoring import ScoringConfig
 from tvscreener_ext.screeners.filters import RocFilter, ScoreFilter
 from tvscreener_ext.screeners.forex_opportunity import (

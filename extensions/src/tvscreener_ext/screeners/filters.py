@@ -6,7 +6,6 @@ from enum import Enum
 from typing import Any, Literal
 
 import pandas as pd
-
 from tvscreener.field import Field
 from tvscreener.filter import ExtraFilter, FilterOperator
 

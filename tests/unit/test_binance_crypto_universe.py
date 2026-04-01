@@ -1,4 +1,5 @@
 import pandas as pd
+
 from tvscreener_ext.universe.binance_crypto import (
     BinanceCryptoMarketCapUniverseConstraints,
     BinanceCryptoUniverseConstraints,
@@ -89,6 +90,7 @@ def test_compute_volatility_falls_back_to_proxy_when_native_missing():
 def test_market_cap_universe_filters_volatility_and_sorts_by_volume(monkeypatch):
     # Mock top coins by market cap -> bases A, B
     import pandas as pd
+
     from tvscreener_ext.universe import binance_crypto as bc
 
     monkeypatch.setattr(
@@ -130,6 +132,7 @@ def test_market_cap_universe_filters_volatility_and_sorts_by_volume(monkeypatch)
 
 def test_market_cap_universe_falls_back_to_usdc(monkeypatch):
     import pandas as pd
+
     from tvscreener_ext.universe import binance_crypto as bc
 
     monkeypatch.setattr(

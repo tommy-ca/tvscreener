@@ -1,4 +1,5 @@
 from rich.console import Console
+
 from tvscreener_ext.orchestrator import ScreenerController
 
 

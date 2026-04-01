@@ -37,3 +37,9 @@ norecursedirs = ["tests/repro"]
 markers = [
     "slow: long-running functional tests",
 ]
+
+[tool.ty.src]
+include = [
+    "extensions/src",
+    "tests",
+]

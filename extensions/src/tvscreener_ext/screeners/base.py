@@ -36,6 +36,7 @@ from tvscreener_ext.utils.logic import (
 
 if TYPE_CHECKING:
     from tvscreener.core.base import Screener
+
     from tvscreener_ext.screeners.filters import DataFrameFilter
 
 logger = logging.getLogger(__name__)
@@ -622,9 +623,9 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
                         col_filter = None
                         if unique_vals:
-                            col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
+                            col_filter = In(col, unique_vals)  # ty: ignore
                         if has_null:
-                            null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
+                            null_filter = IsNull(col)  # ty: ignore
                             col_filter = Or(col_filter, null_filter) if col_filter else null_filter
 
                         if col_filter:
@@ -771,13 +772,12 @@ class BaseOpportunityScreener(ExportMixin, ABC, Generic[T]):
 
                             col_filter = None
                             if unique_vals:
-                                col_filter = In(col, unique_vals)  # type: ignore[call-arg,arg-type]
+                                col_filter = In(col, unique_vals)  # ty: ignore
                             if has_null:
-                                null_filter = IsNull(col)  # type: ignore[call-arg,arg-type]
+                                null_filter = IsNull(col)  # ty: ignore
                                 col_filter = (
                                     Or(col_filter, null_filter) if col_filter else null_filter
                                 )
-
                             if col_filter:
                                 filters.append(col_filter)
 

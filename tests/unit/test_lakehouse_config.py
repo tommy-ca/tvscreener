@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+
 from tvscreener_ext.lakehouse import get_manager
 from tvscreener_ext.lakehouse.manager import LakehouseManager
 
@@ -74,6 +78,7 @@ def test_lakehouse_singleton_ignores_subsequent_config():
 
 def test_lakehouse_remote_config_validation():
     from pydantic import ValidationError
+
     from tvscreener_ext.config.settings import ScreenerSettings
 
     # Valid remote config
@@ -88,14 +93,15 @@ def test_lakehouse_remote_config_validation():
             }
         }
     }
-    settings = ScreenerSettings(**valid_remote)
+    settings = ScreenerSettings(**cast(Any, valid_remote))
     assert settings.lakehouse.catalog.mode == "remote"
+    assert settings.lakehouse.catalog.remote is not None
     assert settings.lakehouse.catalog.remote.uri == "postgresql://localhost/iceberg"
 
     # Invalid: mode=remote but no remote block
     invalid_remote_missing = {"lakehouse": {"catalog": {"mode": "remote"}}}
     with pytest.raises(ValidationError) as exc:
-        ScreenerSettings(**invalid_remote_missing)
+        ScreenerSettings(**cast(Any, invalid_remote_missing))
     assert "lakehouse.catalog.remote must be set" in str(exc.value)
 
     # Invalid: remote block missing required fields
@@ -110,7 +116,7 @@ def test_lakehouse_remote_config_validation():
         }
     }
     with pytest.raises(ValidationError):
-        ScreenerSettings(**invalid_remote_fields)
+        ScreenerSettings(**cast(Any, invalid_remote_fields))
 
 
 def test_lakehouse_env_override(monkeypatch):
@@ -126,5 +132,6 @@ def test_lakehouse_env_override(monkeypatch):
     # ScreenerSettings should pick these up
     settings = ScreenerSettings()
     assert settings.lakehouse.catalog.mode == "remote"
+    assert settings.lakehouse.catalog.remote is not None
     assert settings.lakehouse.catalog.remote.uri == "postgresql://env_host/db"
     assert settings.lakehouse.catalog.remote.warehouse == "s3://env_bucket/env_warehouse"
