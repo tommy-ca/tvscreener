@@ -1310,3 +1310,16 @@ Outcomes:
 
 Status: Root repository is now strictly aligned with SOLID, KISS, and YAGNI principles. All redundant files and legacy data shims have been purged.
 
+## 2026-04-01: Ghost Package Removal & UV Workspace Migration
+
+Goal: Eliminate "ghost" package shadowing and formalize the root as a pure `uv` workspace.
+
+Outcomes:
+- **Fixed Package Shadowing**: Modified the root `pyproject.toml` to remove the `[project]` section that incorrectly claimed the root directory was the `tvscreener` package. This prevented a local empty version `0.2.0` from shadowing the real upstream `0.3.0` dependency.
+- **`uv` Workspace Formalization**: Converted the repository into a `tool.uv` managed workspace with `package = false`. `tvscreener-ext` is now correctly recognized as a workspace member while `tvscreener` is resolved from the external registry.
+- **Dependency Cleanliness**: Ran `uv sync` to purge the ghost package from the virtual environment and ensure all tests run against the true upstream library.
+- **Spec Hardening**: Updated `docs/openspec/project.md` to mandate this non-package root structure, ensuring future collaborators don't accidentally re-introduce shadowing.
+
+Status: Repository architecture is now "Zero-Fork" verified at the package manager level. The environment is clean and stable.
+
+

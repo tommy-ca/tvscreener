@@ -69,6 +69,7 @@ Packaging reality check:
 - **SOLID / YAGNI**: The repository must contain only what is strictly necessary to test and deploy the pipeline extensions (`extensions/`, `tests/`, `docs/`, `scripts/`). Experimental apps (`app/`), deprecated scripts (`.dev/`), redundant submodules (`semantic/`), and obsolete workflows must be removed immediately to prevent dead code accumulation.
 - **KISS**: All pipeline orchestration, edge analytics, lakehouse storage, and custom screeners are strictly consolidated into `extensions/src/tvscreener_ext/`. Avoid scattering logic across multiple root-level directories.
 - **DRY**: Rely exclusively on the installed upstream `tvscreener` package. Do not duplicate upstream source code, and avoid over-patching upstream logic if the upstream implementation is sufficient (e.g., `set_symbol_types` resolution).
+- **Workspace Structure**: The project root MUST be configured as a `uv` workspace root with `package = false`. It MUST NOT claim to be the `tvscreener` package to avoid shadowing the upstream dependency.
 
 ## Workspace hygiene
 - Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).

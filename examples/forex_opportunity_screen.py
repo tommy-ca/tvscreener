@@ -9,7 +9,7 @@ Usage:
     python examples/forex_opportunity_screen.py
 
 Requirements:
-    pip install tvscreener[cli]
+    pip install tvscreener tvscreener-ext
 """
 
 from tvscreener_ext.screeners.filters import RocFilter, ScoreFilter
