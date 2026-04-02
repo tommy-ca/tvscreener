@@ -35,6 +35,8 @@ To satisfy the **Single Responsibility Principle (SRP)** and improve testability
 **Responsibility**: Lifecycle Orchestration.
 - Orchestrates the sequence: `Resolver -> Factory -> Execution -> Filtering -> Export`.
 - Manages progress bars and console logging.
+- Captures and persists confluence matrices (`matrix.txt`) to artifact directories.
+- Handles optional Table Artifact publication (`results_top_rows.json`, `results_grade_summary.json`) for in-browser review.
 - **Interface**:
   ```python
   def run_opportunity_scan(self, request: ScanRequest) -> int: ...

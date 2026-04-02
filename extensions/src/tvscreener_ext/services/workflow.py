@@ -96,6 +96,13 @@ class ScanWorkflow:
             if results.empty:
                 self.console.print("[yellow]No results found matching criteria.[/yellow]")
             else:
+                # Capture matrix output if we are going to write it
+                import io
+
+                from rich.console import Console
+
+                capture_io = io.StringIO()
+                capture_console = Console(file=capture_io, force_terminal=True, width=80)
                 screener.print_summary(
                     results_df=results,
                     detailed=request.output.detailed,
@@ -103,8 +110,16 @@ class ScanWorkflow:
                     limit=request.output.limit,
                     show_risk=request.output.show_risk,
                     snapshot_label=snapshot_label,
-                    console=self.console,
+                    console=capture_console,
                 )
+                matrix_text = capture_io.getvalue()
+
+                # Write to artifacts if enabled
+                if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() == "1":
+                    self._write_matrix_artifact(matrix_text, request)
+
+                # Still print to actual console
+                self.console.print(matrix_text)
 
         if request.output.save_config:
             self._maybe_save_opportunity_config(request.output.save_config, request)
@@ -206,6 +221,13 @@ class ScanWorkflow:
             if results.empty:
                 self.console.print("[yellow]No signals found matching criteria.[/yellow]")
             else:
+                # Capture matrix output
+                import io
+
+                from rich.console import Console
+
+                capture_io = io.StringIO()
+                capture_console = Console(file=capture_io, force_terminal=True, width=80)
                 scanner.print_summary(
                     results_df=results,
                     detailed=request.output.detailed,
@@ -213,8 +235,16 @@ class ScanWorkflow:
                     limit=request.output.limit,
                     show_risk=request.output.show_risk,
                     snapshot_label=snapshot_label,
-                    console=self.console,
+                    console=capture_console,
                 )
+                matrix_text = capture_io.getvalue()
+
+                # Write to artifacts if enabled
+                if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() == "1":
+                    self._write_matrix_artifact(matrix_text, request)
+
+                # Still print to actual console
+                self.console.print(matrix_text)
         return len(results)
 
     def run_inspect(self, request: ScanRequest) -> int:
@@ -432,3 +462,16 @@ class ScanWorkflow:
             .reset_index()
         )
         return summary.to_dict(orient="records")
+
+    def _write_matrix_artifact(self, text: str, request: ScanRequest) -> None:
+        """Write confluence matrix text to artifact directory."""
+        run_id = (os.getenv("TVSCREENER_RUN_ID") or "").strip()
+        if not run_id:
+            return
+
+        artifacts_dir = getattr(request.output, "artifacts_dir", "artifacts/runs")
+        run_dir = Path(artifacts_dir) / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        matrix_path = run_dir / "matrix.txt"
+        matrix_path.write_text(text, encoding="utf-8")

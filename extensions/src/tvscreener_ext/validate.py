@@ -13,6 +13,8 @@ def _default_env() -> None:
     load_dotenv(override=False)
     os.environ.setdefault("PREFECT_API_URL", "http://127.0.0.1:4200/api")
     os.environ.setdefault("PREFECT_HOME", os.path.join(os.getcwd(), ".prefect-home"))
+    os.environ.setdefault("TVSCREENER_PUBLISH_TABLE_ARTIFACTS", "1")
+    os.environ.setdefault("TVSCREENER_PUBLISH_RESULTS_SUMMARY", "1")
 
 
 def main(argv: list[str] | None = None) -> int:

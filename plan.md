@@ -1400,15 +1400,16 @@ Next Steps:
 
 Goal: Verify that Prefect runs correctly publish Table Artifacts for in-browser review, and perform a full operational pass for Forex and Binance universes.
 
-Planned Work:
-- Set `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` in the verification environment.
-- Execute full scan runset using the Prefect runner.
-- Verify that `run_result.json` includes `results_table_path`.
-- Confirm that `_maybe_publish_prefect_results_table_artifact` path is exercised.
+Outcomes:
+- **Comprehensive Verification**: Executed 7 major scan categories (Forex Majors/Minors, Crypto Spot Majors/Minors, Crypto Perp Majors/Minors, Stock Market Risk) using the Prefect runner.
+- **Table Artifact Success**: Verified that `results_top_rows.json` and `results_grade_summary.json` are correctly generated and linked in `run_result.json` when `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` is set.
+- **Matrix Persistence**: Fixed an issue where `matrix_path` was missing from `run_result.json`. `ScanWorkflow` now explicitly captures and writes `matrix.txt` before the runner completes.
+- **Validation Script Hardening**: Updated `tvscreener-ext-validate` to enable table artifacts by default, ensuring all future validation runs exercise these paths.
+- **Status**: All service-oriented architectural updates and discovery contract enhancements are verified and stable across the full planned asset universe.
 
 Next Steps:
-- Execute `run_validation.py` with table artifacts enabled.
-- Verify discovery contract completion.
+- Merge `feat/forex-strategy-scanner` into `main`.
+- Final audit of `docs/openspec/changes/` for LEGACY markings.
 
 
 
