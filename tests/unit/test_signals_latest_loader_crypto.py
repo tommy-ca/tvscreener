@@ -21,7 +21,7 @@ def test_load_latest_signals_latest_crypto_prefers_entity_id(monkeypatch):
 
     monkeypatch.setattr("tvscreener_ext.query.EdgeQueryClient", lambda: _FakeClient())
 
-    df = controller._load_latest_signals_latest(
+    df = controller._workflow._load_latest_signals(
         asset_type="crypto",
         pairs=["BINANCE:BTCUSDT"],
         timeframes=["240", "60", "15"],

@@ -8,7 +8,7 @@ def test_fetch_data_with_progress_skips_spinner_for_recording_console() -> None:
     controller = ScreenerController(console=console)
 
     with console.capture() as capture:
-        out = controller._fetch_data_with_progress(lambda: 123)
+        out = controller._workflow._fetch_data_with_progress(lambda: 123)
 
     assert out == 123
     assert capture.get() == ""

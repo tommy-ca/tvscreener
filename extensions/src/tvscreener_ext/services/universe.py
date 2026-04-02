@@ -95,9 +95,21 @@ class UniverseResolver:
                 return self._resolve_binance_mcap_top100(universe)
             if universe in {"binance_spot_cs_momentum", "binance_perp_cs_momentum"}:
                 return self._resolve_binance_cs_momentum(universe)
+            if universe in {"binance_spot_tradeable_base", "binance_perp_tradeable_base"}:
+                return self._resolve_binance_tradeable_base(universe)
+            if universe in {"binance_spot_tradeable_mcap_cs", "binance_perp_tradeable_mcap_cs"}:
+                return self._resolve_binance_tradeable_mcap_overlap(universe)
+            if universe in {
+                "binance_spot_majors",
+                "binance_perp_majors",
+                "binance_spot_minors",
+                "binance_perp_minors",
+            }:
+                return self._resolve_binance_mcap_tier(universe)
 
         # Default fallthrough
-        return []
+        cfg = self.get_universe_config(asset_type)
+        return list(cfg.pairs)
 
     def _resolve_binance_top100(self, universe: str) -> list[str]:
         from tvscreener_ext.universe.binance_crypto import (
@@ -145,6 +157,68 @@ class UniverseResolver:
                 min_quote_volume_usd=(1_700_000 if it == "spot" else 10_000_000),
             )
         )
+        self._write_snapshot(snapshot)
+        return tickers
+
+    def _resolve_binance_tradeable_base(self, universe: str) -> list[str]:
+        from tvscreener_ext.universe.binance_crypto import (
+            BinanceCryptoTradeableBaseUniverseConstraints,
+            build_binance_crypto_universe_tradeable_base,
+        )
+
+        it = "spot" if universe == "binance_spot_tradeable_base" else "perp"
+        tickers, snapshot = build_binance_crypto_universe_tradeable_base(
+            constraints=BinanceCryptoTradeableBaseUniverseConstraints(
+                instrument_type=it,
+                min_quote_volume_usd=(2_500_000 if it == "spot" else 20_000_000),
+                top_n=200,
+            )
+        )
+        self._write_snapshot(snapshot)
+        return tickers
+
+    def _resolve_binance_tradeable_mcap_overlap(self, universe: str) -> list[str]:
+        from tvscreener_ext.universe.binance_crypto import (
+            BinanceCryptoTradeableMcapOverlapUniverseConstraints,
+            build_binance_crypto_universe_tradeable_mcap_overlap,
+        )
+
+        it = "spot" if universe == "binance_spot_tradeable_mcap_cs" else "perp"
+        tickers, snapshot = build_binance_crypto_universe_tradeable_mcap_overlap(
+            constraints=BinanceCryptoTradeableMcapOverlapUniverseConstraints(
+                instrument_type=it,
+            )
+        )
+        self._write_snapshot(snapshot)
+        return tickers
+
+    def _resolve_binance_mcap_tier(self, universe: str) -> list[str]:
+        from tvscreener_ext.universe.binance_crypto import (
+            BinanceCryptoMcapTierUniverseConstraints,
+            build_binance_crypto_universe_mcap_tier,
+        )
+
+        it = "spot" if universe in {"binance_spot_majors", "binance_spot_minors"} else "perp"
+        tier = "majors" if universe.endswith("_majors") else "minors"
+        rmin, rmax = (1, 20) if tier == "majors" else (21, 200)
+
+        tickers, snapshot = build_binance_crypto_universe_mcap_tier(
+            constraints=BinanceCryptoMcapTierUniverseConstraints(
+                instrument_type=it,
+                top_n_market_cap=200,
+                mcap_rank_min=rmin,
+                mcap_rank_max=rmax,
+                min_quote_volume_usd_spot=2_500_000,
+                min_quote_volume_usd_perp=20_000_000,
+                min_history_days=180,
+            )
+        )
+
+        if isinstance(snapshot, dict):
+            snapshot.setdefault("constraints", {})
+            if isinstance(snapshot.get("constraints"), dict):
+                snapshot["constraints"]["tier"] = tier
+
         self._write_snapshot(snapshot)
         return tickers
 

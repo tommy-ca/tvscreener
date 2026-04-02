@@ -1336,17 +1336,16 @@ Audited Roadmap (Phased Refactor):
     - [x] Implement `UniverseResolver` in `tvscreener_ext/services/universe.py`.
     - [x] Implement `ExportService` in `tvscreener_ext/services/export.py`.
     - [x] Update `ScreenerController` to delegate to these new services.
-- **Phase 2: Configuration & Logic Pureness** (Current)
+- **Phase 2: Configuration & Logic Pureness** (Completed)
     - [x] Implement `ConfigFactory` in `tvscreener_ext/services/config.py`.
-    - [ ] Extract `ScanWorkflow` to manage the coordination lifecycle.
-- **Phase 3: CLI Hardening**
-    - [ ] Refactor `scan.py` to use a declarative command registry.
-    - [ ] Remove the remaining legacy methods from `ScreenerController`.
+    - [x] Extract `ScanWorkflow` to manage the coordination lifecycle.
+    - [x] Update `ScreenerController` to delegate to `ScanWorkflow`.
+- **Phase 3: CLI Hardening** (Completed)
+    - [x] Refactor `scan.py` to use a declarative command registry (`argparse` subparsers).
+    - [x] Decouple CLI parsing from orchestrator initialization.
+    - [x] Remove the remaining legacy methods from `ScreenerController`.
 
-Next Steps:
-- Complete implementation of `ScanWorkflow` and migrate execution coordination from `ScreenerController`.
-- Mark historical documentation in `docs/openspec/changes/` as `LEGACY`.
-- Audit `extensions/src/tvscreener_ext/scan.py` for subcommand refactoring.
+Status: Service-Oriented Refactor complete. The repository is now highly modular, type-safe, and decoupled.
 
 
 

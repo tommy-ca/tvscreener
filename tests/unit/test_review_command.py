@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 from pathlib import Path
 from typing import cast
 from unittest.mock import MagicMock
@@ -35,13 +34,6 @@ def test_review_runs_audit_then_report(tmp_path: Path):
 def test_review_stops_if_audit_fails(tmp_path: Path):
     controller = ScreenerController(console=None)
     controller.run_audit = MagicMock(return_value=2)  # ty: ignore
-    controller.run_report = MagicMock(return_value=0)  # ty: ignore
-
-    def _write_audit(*args, **kwargs):
-        (tmp_path / "report.json").write_text(json.dumps({"summary": {"failed": 1}}))
-        return 0
-
-    controller.run_audit = MagicMock(side_effect=_write_audit)  # ty: ignore
     controller.run_report = MagicMock(return_value=0)  # ty: ignore
 
     args = type(

@@ -49,6 +49,18 @@ class ExportService:
 
         return path
 
+    def save_config(
+        self, path_str: str, data: dict[str, Any], *, base_dir: Path | None = None
+    ) -> Path:
+        """Save configuration to a YAML file."""
+        import yaml
+
+        path = validate_path(path_str, base_dir=base_dir)
+        self._ensure_parent_exists(path)
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f)
+        return path
+
     def _ensure_parent_exists(self, path: Path) -> None:
         """Ensure the parent directory of a path exists."""
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -5,23 +5,18 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import logging
 import sys
 
 from dotenv import load_dotenv
 from rich.console import Console
 
+from tvscreener_ext.cli.scan_handler import handle_scan
+from tvscreener_ext.cli.utils import add_common_args, setup_logging
 from tvscreener_ext.orchestrator import ScreenerController
 from tvscreener_ext.upstream import ensure_upstream_tvscreener
 from tvscreener_ext.utils.logic import load_dotenv_file
 
 console = Console()
-logger = logging.getLogger(__name__)
-
-
-def setup_logging(verbose: bool = False) -> None:
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -33,435 +28,162 @@ def main(argv: list[str] | None = None) -> int:
     with contextlib.suppress(Exception):
         load_dotenv_file(".env")
 
-    effective_argv = sys.argv if argv is None else argv
+    parser = argparse.ArgumentParser(
+        description="TradingView Screener Extensions CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    subparsers = parser.add_subparsers(dest="command", help="Subcommand to run")
 
-    # Handle maintenance subcommand separately to preserve top-level compatibility for scans
-    if len(effective_argv) > 1 and effective_argv[1] == "maintenance":
-        parser = argparse.ArgumentParser(description="Lakehouse maintenance tools")
-        parser.add_argument("command", choices=["maintenance"])
-        parser.add_argument(
-            "--expire-snapshots", action="store_true", help="Expire snapshots older than X days"
-        )
-        parser.add_argument("--days", type=int, default=7, help="Days to keep snapshots")
-        parser.add_argument("--table", default="forex.opportunities", help="Table name")
-        parser.add_argument("--compact", action="store_true", help="Trigger file compaction (Hook)")
-        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-        parser.add_argument("--config", help="Path to YAML config")
+    # --- Scan Command ---
+    scan_p = subparsers.add_parser("scan", help="Run a scanner (default if no command given)")
+    scan_p.add_argument(
+        "--scanner",
+        "-s",
+        choices=["opportunity", "strategy", "inspect"],
+        default="strategy",
+    )
+    scan_p.add_argument(
+        "--pipeline",
+        choices=["both", "data", "analytics"],
+        default="both",
+        help="Execution mode",
+    )
+    scan_p.add_argument(
+        "--runner",
+        choices=["local", "export", "prefect"],
+        default="prefect",
+        help="Execution runner",
+    )
+    scan_p.add_argument("--spec-out", help="Write PipelineRunSpec JSON to file")
+    scan_p.add_argument("--artifacts-dir", default="artifacts/runs", help="Artifacts directory")
+    scan_p.add_argument(
+        "--asset-type",
+        choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
+        default="forex",
+    )
+    scan_p.add_argument("--universe", "-u")
+    scan_p.add_argument("--pairs", nargs="+", help="Specific pairs to scan")
+    scan_p.add_argument("--timeframes", "-t", help="Comma-separated timeframes")
+    scan_p.add_argument("--contract-type", choices=["spot", "cfd", "spreadbet", "all"])
+    scan_p.add_argument("--instrument-type", choices=["spot", "perp"])
+    scan_p.add_argument("--output", "-o", help="Output file")
+    scan_p.add_argument("--save-config", help="Save opportunity config to YAML")
+    scan_p.add_argument("--load-config", help="Load opportunity config from YAML")
+    scan_p.add_argument(
+        "--strategy",
+        choices=["all", "trend", "mean_reversion", "hybrid", "breakout", "confluence"],
+        default="all",
+    )
+    scan_p.add_argument("--direction", choices=["long", "short"], help="Filter by direction")
+    scan_p.add_argument("--filter", action="append", help="MTF filter expression")
+    scan_p.add_argument("--sql", help="Raw SQL query to filter")
+    scan_p.add_argument("--sql-params", help="JSON string of parameters for SQL")
+    scan_p.add_argument("--min_volume", type=float, help="Minimum average volume")
+    scan_p.add_argument("--max-atr", type=float, help="Maximum ATR")
+    scan_p.add_argument("--min-ma-score", type=float, help="Minimum MA score")
+    scan_p.add_argument("--min-confluence", type=int, help="Min confluence score")
+    scan_p.add_argument("--trend-threshold", type=float, help="Trend score threshold")
+    scan_p.add_argument("--mr-threshold", type=float, help="MR score threshold")
+    scan_p.add_argument("--rsi-lower", type=float, help="Lower RSI threshold")
+    scan_p.add_argument("--rsi-upper", type=float, help="Upper RSI threshold")
+    scan_p.add_argument("--min-roc", type=float, help="Min ROC value")
+    scan_p.add_argument("--opportunity-trend-weight", type=float, help="Trend weight")
+    scan_p.add_argument("--opportunity-ma-weight", type=float, help="MA weight")
+    scan_p.add_argument("--opportunity-osc-weight", type=float, help="Oscillator weight")
+    scan_p.add_argument("--opportunity-roc-weight", type=float, help="ROC weight")
+    scan_p.add_argument("--opportunity-timeframe-weights", help="TF weights (240:0.2,...)")
+    scan_p.add_argument("--include-atr", action="store_true", help="Request ATR fields")
+    scan_p.add_argument("--include-rsi", action="store_true", help="Request RSI fields")
+    scan_p.add_argument(
+        "--mr-signal",
+        choices=["rsi_oversold", "rsi_overbought"],
+        action="append",
+        help="MR signal",
+    )
+    scan_p.add_argument("--min-tf-alignment", type=int, choices=[1, 2, 3], help="Min TF alignment")
+    scan_p.add_argument(
+        "--require-momentum", action="store_true", help="Require momentum alignment"
+    )
+    scan_p.add_argument("--min-rvol", type=float, help="Min relative volume")
+    scan_p.add_argument("--require-volume-spike", action="store_true", help="Require volume spike")
+    scan_p.add_argument("--risk-per-trade", type=float, help="Risk per trade %%")
+    scan_p.add_argument("--atr-multiplier", type=float, help="ATR multiplier for SL")
+    scan_p.add_argument("--min-risk-reward", type=float, help="Min risk:reward")
+    scan_p.add_argument("--account-balance", type=float, help="Account balance")
+    scan_p.add_argument("--detailed", action="store_true", help="Show detailed breakdown")
+    scan_p.add_argument("--matrix", action="store_true", help="Show confluence matrix")
+    scan_p.add_argument("--limit", type=int, help="Limit results shown")
+    scan_p.add_argument("--confluence-grade", choices=["A+", "A", "B", "C", "D", "F"])
+    scan_p.add_argument("--min-opportunity-confluence", type=int, help="Min grid-aligned cells")
+    scan_p.add_argument("--head", type=int, help="Number of rows to show (inspect)")
+    scan_p.add_argument("--metadata_only", action="store_true", help="Metadata only (inspect)")
+    scan_p.add_argument("--show-risk", action="store_true", help="Show risk metadata")
+    add_common_args(scan_p)
 
-        args = parser.parse_args(effective_argv[1:])
-    elif len(effective_argv) > 1 and effective_argv[1] == "query":
-        parser = argparse.ArgumentParser(description="Query Iceberg tables using DuckDB")
-        parser.add_argument("command", choices=["query"])
-        parser.add_argument("table", help="Table identifier (e.g. forex.opportunities)")
-        parser.add_argument(
-            "--sql",
-            help="SQL query to execute (can use MiniJinja 'df' as the table alias)",
-        )
-        parser.add_argument("--snapshot-id", type=int, help="Iceberg snapshot ID for time-travel")
-        parser.add_argument("--output", "-o", help="Output file (csv/parquet)")
-        parser.add_argument("--head", type=int, default=10, help="Number of rows to show")
-        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-        parser.add_argument("--config", help="Path to YAML config")
+    # --- Maintenance Command ---
+    maint_p = subparsers.add_parser("maintenance", help="Lakehouse maintenance tools")
+    maint_p.add_argument("--expire-snapshots", action="store_true", help="Expire snapshots")
+    maint_p.add_argument("--days", type=int, default=7, help="Days to keep snapshots")
+    maint_p.add_argument("--table", default="forex.opportunities", help="Table name")
+    maint_p.add_argument("--compact", action="store_true", help="Trigger compaction")
+    add_common_args(maint_p)
 
-        args = parser.parse_args(effective_argv[1:])
-    elif len(effective_argv) > 1 and effective_argv[1] == "audit":
-        parser = argparse.ArgumentParser(description="Audit universe selection and artifacts")
-        parser.add_argument("command", choices=["audit"])
-        parser.add_argument(
-            "target",
-            choices=["binance-universes"],
-            help="Audit target",
-        )
-        parser.add_argument(
-            "--out-dir",
-            default="artifacts/audits/binance-universes",
-            help="Directory to write audit report(s)",
-        )
-        parser.add_argument(
-            "--include-all",
-            action="store_true",
-            help="Include extended diagnostic universes (mcap_top100, cs_momentum)",
-        )
-        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-        parser.add_argument("--config", help="Path to YAML config")
-        args = parser.parse_args(effective_argv[1:])
-    elif len(effective_argv) > 1 and effective_argv[1] == "report":
-        parser = argparse.ArgumentParser(description="Generate DuckDB-backed reports")
-        parser.add_argument("command", choices=["report"])
-        parser.add_argument(
-            "target",
-            choices=["binance-universes"],
-            help="Report target",
-        )
-        parser.add_argument(
-            "--in-dir",
-            default="artifacts/audits/binance-universes",
-            help="Directory containing universe.json audit folders",
-        )
-        parser.add_argument(
-            "--out-dir",
-            default="artifacts/reports/binance-universes",
-            help="Directory to write report outputs",
-        )
-        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-        parser.add_argument("--config", help="Path to YAML config")
-        args = parser.parse_args(effective_argv[1:])
-    elif len(effective_argv) > 1 and effective_argv[1] == "review":
-        parser = argparse.ArgumentParser(
-            description="Run audit + DuckDB report pipelines",
-        )
-        parser.add_argument("command", choices=["review"])
-        parser.add_argument(
-            "target",
-            choices=["binance-universes"],
-            help="Review target",
-        )
-        parser.add_argument(
-            "--audit-out-dir",
-            default="artifacts/audits/binance-universes",
-            help="Directory to write audit outputs",
-        )
-        parser.add_argument(
-            "--report-out-dir",
-            default="artifacts/reports/binance-universes",
-            help="Directory to write report outputs",
-        )
-        parser.add_argument(
-            "--strict",
-            action="store_true",
-            help="Exit non-zero if audit reports any errors",
-        )
-        parser.add_argument(
-            "--include-all",
-            action="store_true",
-            help="Include extended diagnostic universes (mcap_top100, cs_momentum)",
-        )
-        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-        parser.add_argument("--config", help="Path to YAML config")
-        args = parser.parse_args(effective_argv[1:])
-    else:
-        parser = argparse.ArgumentParser(
-            description="Run TradingView scanners (Extensions)",
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-        )
+    # --- Query Command ---
+    query_p = subparsers.add_parser("query", help="Query Iceberg tables using DuckDB")
+    query_p.add_argument("table", help="Table identifier")
+    query_p.add_argument("--sql", help="SQL query to execute")
+    query_p.add_argument("--snapshot-id", type=int, help="Snapshot ID for time-travel")
+    query_p.add_argument("--output", "-o", help="Output file")
+    query_p.add_argument("--head", type=int, default=10, help="Number of rows to show")
+    add_common_args(query_p)
 
-        parser.add_argument(
-            "--config",
-            default=None,
-            help="Path to YAML config (default: tvscreener.yaml)",
-        )
+    # --- Audit Command ---
+    audit_p = subparsers.add_parser("audit", help="Audit universe selection")
+    audit_p.add_argument("target", choices=["binance-universes"], help="Audit target")
+    audit_p.add_argument("--out-dir", default="artifacts/audits/binance-universes")
+    audit_p.add_argument("--include-all", action="store_true", help="Include diagnostic universes")
+    add_common_args(audit_p)
 
-        parser.add_argument(
-            "--scanner",
-            "-s",
-            choices=["opportunity", "strategy", "inspect"],
-            default="strategy",
-        )
-        parser.add_argument(
-            "--pipeline",
-            choices=["both", "data", "analytics"],
-            default="both",
-            help="Execution mode: data (fetch+Iceberg), analytics (Iceberg+render), both (data then analytics)",
-        )
-        parser.add_argument(
-            "--runner",
-            choices=["local", "export", "prefect"],
-            default="prefect",
-            help="Execution runner: prefect (execute via Prefect flow), local (execute in-process), export (emit PipelineRunSpec JSON)",
-        )
-        parser.add_argument(
-            "--spec-out",
-            default=None,
-            help="Write PipelineRunSpec JSON to this file (only when --runner export)",
-        )
-        parser.add_argument(
-            "--artifacts-dir",
-            default="artifacts/runs",
-            help="Artifacts directory (used by --runner prefect)",
-        )
-        parser.add_argument(
-            "--asset-type",
-            choices=["forex", "stock", "stocks", "crypto", "futures", "commodity"],
-            default="forex",
-        )
-        parser.add_argument(
-            "--universe",
-            "-u",
-            default=None,
-        )
-        parser.add_argument("--pairs", nargs="+", help="Specific pairs to scan")
-        parser.add_argument("--timeframes", "-t", default=None, help="Comma-separated timeframes")
-        parser.add_argument(
-            "--contract-type",
-            choices=["spot", "cfd", "spreadbet", "all"],
-            default=None,
-            help="Contract type to filter (default: cfd)",
-        )
-        parser.add_argument(
-            "--instrument-type",
-            choices=["spot", "perp"],
-            default=None,
-            help="Instrument type (crypto only): spot or perp",
-        )
-        parser.add_argument("--output", "-o", help="Output file (csv/json/parquet/xml)")
-        parser.add_argument("--save-config", help="Save opportunity config to YAML")
-        parser.add_argument("--load-config", help="Load opportunity config from YAML")
-        parser.add_argument(
-            "--strategy",
-            choices=["all", "trend", "mean_reversion", "hybrid", "breakout", "confluence"],
-            default="all",
-        )
-        parser.add_argument("--direction", choices=["long", "short"], help="Filter by direction")
-        parser.add_argument(
-            "--filter", action="append", help="MTF filter expression (e.g. '1H:TREND > 0')"
-        )
-        parser.add_argument("--sql", help="Raw SQL query to filter the results")
-        parser.add_argument(
-            "--sql-params",
-            type=str,
-            help="JSON string of parameters for the SQL query",
-        )
-        parser.add_argument("--min_volume", type=float, help="Minimum average volume")
-        parser.add_argument("--max-atr", type=float, help="Maximum ATR (volatility proxy)")
-        parser.add_argument("--min-ma-score", type=float, help="Minimum MA score (-2 to 2)")
-        parser.add_argument(
-            "--min-confluence",
-            type=int,
-            help="Minimum confluence score (strategy scanner)",
-        )
-        parser.add_argument(
-            "--trend-threshold",
-            type=float,
-            help="Trend score threshold (strategy scanner)",
-        )
-        parser.add_argument(
-            "--mr-threshold",
-            type=float,
-            help="Mean-reversion score threshold (strategy scanner)",
-        )
-        parser.add_argument(
-            "--rsi-lower",
-            type=float,
-            help="Lower RSI threshold for oversold signals",
-        )
-        parser.add_argument(
-            "--rsi-upper",
-            type=float,
-            help="Upper RSI threshold for overbought signals",
-        )
-        parser.add_argument(
-            "--min-roc",
-            type=float,
-            help="Minimum ROC value for breakout filter",
-        )
-        parser.add_argument(
-            "--opportunity-trend-weight",
-            type=float,
-            help="Trend weight for opportunity scoring",
-        )
-        parser.add_argument(
-            "--opportunity-ma-weight",
-            type=float,
-            help="MA weight for opportunity scoring",
-        )
-        parser.add_argument(
-            "--opportunity-osc-weight",
-            type=float,
-            help="Oscillator weight for opportunity scoring",
-        )
-        parser.add_argument(
-            "--opportunity-roc-weight",
-            type=float,
-            help="ROC weight for opportunity scoring",
-        )
-        parser.add_argument(
-            "--opportunity-timeframe-weights",
-            help="Timeframe weights for opportunity scoring (format 240:0.2,60:0.3,15:0.5)",
-        )
-        parser.add_argument(
-            "--include-atr",
-            action="store_true",
-            help="Request ATR fields when running strategy scan",
-        )
-        parser.add_argument(
-            "--include-rsi",
-            action="store_true",
-            help="Request RSI fields when running strategy scan",
-        )
-        parser.add_argument(
-            "--mr-signal",
-            choices=["rsi_oversold", "rsi_overbought"],
-            action="append",
-            help="Mean reversion signal (can be specified multiple times)",
-        )
-        # Risk management signal quality filters
-        parser.add_argument(
-            "--min-tf-alignment",
-            type=int,
-            choices=[1, 2, 3],
-            help="Minimum aligned timeframes for signal quality",
-        )
-        parser.add_argument(
-            "--require-momentum",
-            action="store_true",
-            help="Require ROC to align with direction",
-        )
-        parser.add_argument(
-            "--min-rvol",
-            type=float,
-            help="Minimum relative volume (1.0 = average)",
-        )
-        parser.add_argument(
-            "--require-volume-spike",
-            action="store_true",
-            help="Require volume > 1.5x average",
-        )
-        # Risk management parameters
-        parser.add_argument(
-            "--risk-per-trade",
-            type=float,
-            help="Risk per trade as percentage (default from settings)",
-        )
-        parser.add_argument(
-            "--atr-multiplier",
-            type=float,
-            help="ATR multiplier for stop loss calculation",
-        )
-        parser.add_argument(
-            "--min-risk-reward",
-            type=float,
-            help="Minimum risk:reward ratio",
-        )
-        parser.add_argument(
-            "--account-balance",
-            type=float,
-            help="Account balance for position sizing",
-        )
-        # Output format options
-        parser.add_argument(
-            "--detailed",
-            action="store_true",
-            help="Show detailed per-pair breakdown with TF analysis",
-        )
-        parser.add_argument(
-            "--matrix",
-            action="store_true",
-            help="Show confluence matrix view for all pairs",
-        )
-        parser.add_argument(
-            "--limit",
-            type=int,
-            help="Number of results to show in summary/detailed/matrix views",
-        )
-        parser.add_argument(
-            "--confluence-grade",
-            choices=["A+", "A", "B", "C", "D", "F"],
-            help="Filter by confluence grade",
-        )
-        parser.add_argument(
-            "--min-opportunity-confluence",
-            type=int,
-            help="Minimum grid-aligned cells (0-12) for opportunity scanner",
-        )
-        # Inspect options
-        parser.add_argument(
-            "--head",
-            type=int,
-            help="Number of rows to show when inspecting parquet",
-        )
-        parser.add_argument(
-            "--metadata_only",
-            action="store_true",
-            help="Only show metadata when inspecting parquet",
-        )
-        parser.add_argument(
-            "--show-risk",
-            action="store_true",
-            help="Show risk management metadata (SL/TP/RR/Size) in output",
-        )
-        parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    # --- Report Command ---
+    report_p = subparsers.add_parser("report", help="Generate DuckDB reports")
+    report_p.add_argument("target", choices=["binance-universes"], help="Report target")
+    report_p.add_argument("--in-dir", default="artifacts/audits/binance-universes")
+    report_p.add_argument("--out-dir", default="artifacts/reports/binance-universes")
+    add_common_args(report_p)
 
-        args = parser.parse_args(effective_argv[1:])
-        args.command = "scan"
+    # --- Review Command ---
+    review_p = subparsers.add_parser("review", help="Run audit + report pipeline")
+    review_p.add_argument("target", choices=["binance-universes"], help="Review target")
+    review_p.add_argument("--audit-out-dir", default="artifacts/audits/binance-universes")
+    review_p.add_argument("--report-out-dir", default="artifacts/reports/binance-universes")
+    review_p.add_argument("--strict", action="store_true", help="Fail if audit has errors")
+    review_p.add_argument("--include-all", action="store_true", help="Include diagnostic universes")
+    add_common_args(review_p)
 
+    # Default to scan if no command given (backwards compatibility)
+    effective_argv = sys.argv[1:] if argv is None else argv[1:]
+    if not effective_argv or effective_argv[0] not in subparsers.choices:
+        effective_argv = ["scan"] + effective_argv
+
+    args = parser.parse_args(effective_argv)
     setup_logging(args.verbose)
 
-    # Local-only helper commands should not require Prefect.
-    if (
-        getattr(args, "command", None) == "scan"
-        and getattr(args, "scanner", None) == "inspect"
-        and getattr(args, "runner", "prefect") == "prefect"
-    ):
-        args.runner = "local"
-
-    # Parse sql_params if provided
-    if getattr(args, "sql_params", None):
-        import json
-
-        try:
-            args.sql_params = json.loads(args.sql_params)
-        except json.JSONDecodeError as e:
-            console.print(f"[red]Error parsing --sql-params: {e}[/red]")
-            return 1
-    else:
-        args.sql_params = {}
-
-    # Export runner: emit a PipelineRunSpec JSON payload for workflow engines.
-    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "export":
-        from tvscreener_ext.runner import PipelineRunSpec
-
-        spec = PipelineRunSpec.from_cli_args(args)
-        payload = spec.model_dump_json(indent=2)
-        spec_out = getattr(args, "spec_out", None)
-        if spec_out:
-            from pathlib import Path
-
-            Path(spec_out).write_text(payload, encoding="utf-8")
-        else:
-            print(payload)
-        return 0
-
-    # Prefect runner: execute via Prefect flow in-process (no intermediate spec file required).
-    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "prefect":
-        from tvscreener_ext.runner import PipelineRunSpec
-
-        spec = PipelineRunSpec.from_cli_args(args)
-        try:
-            from tvscreener_ext.prefect.run_batch import run_prefect
-
-            _ = run_prefect(spec, artifacts_dir=getattr(args, "artifacts_dir", "artifacts/runs"))
-            return 0
-        except Exception as e:
-            console.print(f"[red]Prefect runner failed: {e}[/red]")
-            console.print("[dim]Hint: install with `uv sync --extra prefect`[/dim]")
-            return 2
-
-    # Local runner: execute via PipelineRunSpec + LocalRunner.
-    if getattr(args, "command", None) == "scan" and getattr(args, "runner", "prefect") == "local":
-        from tvscreener_ext.runner import LocalRunner, PipelineRunSpec
-
-        spec = PipelineRunSpec.from_cli_args(args)
-        res = LocalRunner(console=console).run(spec)
-        if not res.success:
-            console.print("\n[bold red]Scan failed[/bold red]")
-            return 2
-        console.print(f"\n[bold]Total: {res.result_count} results[/bold]")
-        return 0 if res.result_count > 0 else 1
-
-    # Initialize orchestrator and run
     controller = ScreenerController(console=console)
-    count = controller.run_from_args(args)
 
-    # Non-scan commands handle their own output and exit semantics.
-    if getattr(args, "command", "scan") != "scan":
-        return 0 if count >= 0 else 2
+    if args.command == "scan":
+        return handle_scan(args, controller, console)
+    if args.command == "maintenance":
+        return controller.run_maintenance(args)
+    if args.command == "query":
+        return controller.run_query(args)
+    if args.command == "audit":
+        return controller.run_audit(args)
+    if args.command == "report":
+        return controller.run_report(args)
+    if args.command == "review":
+        return controller.run_review(args)
 
-    if count < 0:
-        console.print("\n[bold red]Scan failed[/bold red]")
-        return 2
-
-    console.print(f"\n[bold]Total: {count} results[/bold]")
-    return 0 if count > 0 else 1
+    return 0
 
 
 if __name__ == "__main__":
