@@ -1396,6 +1396,20 @@ Next Steps:
 - Monitor Binance Matrix runs using the new discovery contract.
 - Prepare for final release of the service-oriented extensions.
 
+## 2026-04-01: Table Artifact Verification & Multi-Universe Operational Pass
+
+Goal: Verify that Prefect runs correctly publish Table Artifacts for in-browser review, and perform a full operational pass for Forex and Binance universes.
+
+Planned Work:
+- Set `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` in the verification environment.
+- Execute full scan runset using the Prefect runner.
+- Verify that `run_result.json` includes `results_table_path`.
+- Confirm that `_maybe_publish_prefect_results_table_artifact` path is exercised.
+
+Next Steps:
+- Execute `run_validation.py` with table artifacts enabled.
+- Verify discovery contract completion.
+
 
 
 

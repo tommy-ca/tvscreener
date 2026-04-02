@@ -89,6 +89,9 @@ class ScanWorkflow:
                 label="opportunities",
             )
 
+        if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() == "1":
+            self._publish_table_artifacts(results, request)
+
         if self.console:
             if results.empty:
                 self.console.print("[yellow]No results found matching criteria.[/yellow]")
@@ -195,6 +198,9 @@ class ScanWorkflow:
                 self.factory.build_strategy_metadata(request),
                 label="signals",
             )
+
+        if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() == "1":
+            self._publish_table_artifacts(results, request)
 
         if self.console:
             if results.empty:
@@ -385,3 +391,44 @@ class ScanWorkflow:
         if min_confluence is not None:
             df = df.loc[df["TOTAL_CONFLUENCE"] >= min_confluence]
         return df
+
+    def _publish_table_artifacts(self, df: pd.DataFrame, request: ScanRequest) -> None:
+        """Publish table artifacts (top rows and summary) to the artifact directory."""
+        if df.empty:
+            return
+
+        run_id = (os.getenv("TVSCREENER_RUN_ID") or "").strip()
+        if not run_id:
+            return
+
+        artifacts_dir = getattr(request.output, "artifacts_dir", "artifacts/runs")
+        run_dir = Path(artifacts_dir) / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Top Rows
+        from tvscreener_ext.semantic_artifacts import _df_to_rows
+
+        top_rows = _df_to_rows(df, limit=30)
+        self.exporter.save_json(str(run_dir / "results_top_rows.json"), {"data": top_rows})
+
+        # 2. Grade Summary (if enabled)
+        if (os.getenv("TVSCREENER_PUBLISH_RESULTS_SUMMARY") or "").strip() == "1":
+            summary = self._compute_grade_summary(df)
+            self.exporter.save_json(str(run_dir / "results_grade_summary.json"), {"data": summary})
+
+    def _compute_grade_summary(self, df: pd.DataFrame) -> list[dict[str, Any]]:
+        """Compute a simple grade/direction summary."""
+        if df.empty:
+            return []
+
+        # Simplified summary logic
+        summary = (
+            df.groupby(["GRADE", "DIRECTION"])
+            .agg(
+                opportunity_count=("PAIR", "count"),
+                avg_ensemble_score=("ENSEMBLE_SCORE", "mean"),
+                avg_total_confluence=("TOTAL_CONFLUENCE", "mean"),
+            )
+            .reset_index()
+        )
+        return summary.to_dict(orient="records")

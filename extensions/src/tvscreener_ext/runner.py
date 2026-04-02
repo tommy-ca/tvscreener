@@ -98,17 +98,8 @@ def _persist_run_record(spec: PipelineRunSpec, result: RunResult) -> None:
             dr = Path(run_dir)
             dr.mkdir(parents=True, exist_ok=True)
             with open(dr / "run_result.json", "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "params_hash": result.params_hash,
-                        "success": result.success,
-                        "result_count": result.result_count,
-                        "exit_code": result.exit_code,
-                        "finished_at_utc": result.finished_at_utc.isoformat(),
-                    },
-                    f,
-                    indent=2,
-                )
+                # Use model_dump to include all fields including artifacts paths
+                json.dump(result.model_dump(mode="json"), f, indent=2)
     except Exception as exc:
         if (os.getenv("TVSCREENER_STRICT_PERSIST") or "").strip() == "1":
             raise
@@ -455,8 +446,29 @@ class LocalRunner:
                     os.environ[key] = previous
 
         finished = _utc_now()
+        params_hash = spec.params_hash or spec.compute_params_hash()
+
+        # Determine artifact paths based on conventions
+        results_path = spec.output
+        matrix_path = None
+        matrix_md_path = None
+        results_table_path = None
+        grade_summary_table_path = None
+
+        # If artifacts_dir is available, we can guess the paths
+        run_dir = os.path.join(spec.artifacts_dir or "artifacts/runs", params_hash)
+        if os.path.exists(run_dir):
+            if os.path.exists(os.path.join(run_dir, "matrix.txt")):
+                matrix_path = os.path.join(run_dir, "matrix.txt")
+            if os.path.exists(os.path.join(run_dir, "matrix.md")):
+                matrix_md_path = os.path.join(run_dir, "matrix.md")
+            if os.path.exists(os.path.join(run_dir, "results_top_rows.json")):
+                results_table_path = os.path.join(run_dir, "results_top_rows.json")
+            if os.path.exists(os.path.join(run_dir, "results_grade_summary.json")):
+                grade_summary_table_path = os.path.join(run_dir, "results_grade_summary.json")
+
         result = RunResult(
-            params_hash=spec.params_hash or spec.compute_params_hash(),
+            params_hash=params_hash,
             scanner_family=spec.scanner_family,
             pipeline_mode_executed=spec.pipeline_mode,
             started_at_utc=started,
@@ -465,6 +477,11 @@ class LocalRunner:
             result_count=max(0, int(count)),
             exit_code=exit_code,
             errors=errors,
+            results_path=results_path,
+            results_table_path=results_table_path,
+            matrix_path=matrix_path,
+            matrix_md_path=matrix_md_path,
+            grade_summary_table_path=grade_summary_table_path,
         )
         _persist_run_record(spec, result)
         return result

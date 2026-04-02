@@ -61,6 +61,16 @@ class ExportService:
             yaml.safe_dump(data, f)
         return path
 
+    def save_json(
+        self, path_str: str, data: dict[str, Any], *, base_dir: Path | None = None
+    ) -> Path:
+        """Save data to a JSON file."""
+        path = validate_path(path_str, base_dir=base_dir)
+        self._ensure_parent_exists(path)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, cls=MetadataEncoder)
+        return path
+
     def _ensure_parent_exists(self, path: Path) -> None:
         """Ensure the parent directory of a path exists."""
         path.parent.mkdir(parents=True, exist_ok=True)

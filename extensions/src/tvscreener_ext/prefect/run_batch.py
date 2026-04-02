@@ -224,6 +224,12 @@ def _maybe_publish_prefect_results_table_artifact(
         if not rows:
             return
 
+        # Write local JSON files for discovery contract (Cleanup Plan Task 1)
+        # These will be picked up by LocalRunner.run and added to run_result.json
+        base_dir = _resolve_base_dir(spec.artifacts_dir or "artifacts/runs")
+        run_dir = base_dir / params_hash
+        _write_json(run_dir / "results_top_rows.json", rows)
+
         desc = (
             f"Top rows from data `{data_params_hash}` (analytics `{params_hash}`)"
             if semantic_rows is not None
@@ -243,6 +249,7 @@ def _maybe_publish_prefect_results_table_artifact(
                 else None
             )
             if summary:
+                _write_json(run_dir / "results_grade_summary.json", summary)
                 create_table_artifact(
                     key=f"{_prefect_results_key(spec)}-summary",
                     table=summary,
@@ -359,15 +366,26 @@ def _execute_specs(specs: list[PipelineRunSpec], artifacts_dir: str) -> dict:
                 spec=spec, params_hash=params_hash, results_path=analytics_output
             )
 
-        payload = {
-            "params_hash": params_hash,
-            "success": bool(
+        # The run_result.json has already been written by _persist_run_record in the tasks.
+        # We'll reload the final one (usually from analytics) and ensure success reflects both stages.
+        final_res = analytics_res or data_res
+        if final_res:
+            payload = final_res.model_dump(mode="json")
+            payload["success"] = bool(
                 (data_res.success if data_res else True)
                 and (analytics_res.success if analytics_res else True)
-            ),
-        }
-        _write_json(run_dir / "run_result.json", payload)
-        results.append(payload)
+            )
+            # Add explicit paths if not already set (they should be set in RunResult)
+            _write_json(run_dir / "run_result.json", payload)
+            results.append(payload)
+        else:
+            payload = {
+                "params_hash": params_hash,
+                "success": False,
+                "errors": ["No results generated"],
+            }
+            _write_json(run_dir / "run_result.json", payload)
+            results.append(payload)
 
     return {"results": results}
 
