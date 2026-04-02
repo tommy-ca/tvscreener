@@ -274,7 +274,7 @@ def run_prefect(spec: PipelineRunSpec, *, artifacts_dir: str = "artifacts/runs")
     _prefect_required()
     spec = spec.normalized()
     params_hash: str = spec.params_hash or spec.compute_params_hash()
-    prefect_flow = cast(Any, prefect_run_flow)
+    prefect_flow = cast(Any, run_single_spec_flow)
     return prefect_flow(
         spec_payload=spec.model_dump(),
         params_hash=params_hash,
@@ -282,96 +282,27 @@ def run_prefect(spec: PipelineRunSpec, *, artifacts_dir: str = "artifacts/runs")
     )
 
 
-@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
-def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
-    data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
-    console = _console_for_spec(data_spec)
-    previous = os.environ.get("TVSCREENER_RUN_DIR")
-    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
-    os.environ["TVSCREENER_RUN_DIR"] = run_dir
-    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
-    try:
-        res = LocalRunner(console=console).run(data_spec)
-    finally:
-        if previous is None:
-            os.environ.pop("TVSCREENER_RUN_DIR", None)
-        else:
-            os.environ["TVSCREENER_RUN_DIR"] = previous
-
-        if prev_strict is None:
-            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
-        else:
-            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
-    matrix_text = console.export_text() if console is not None else None
-    return res, matrix_text
-
-
-@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
-def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
-    analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
-    console = _console_for_spec(analytics_spec)
-    previous = os.environ.get("TVSCREENER_RUN_DIR")
-    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
-    prev_semantic = os.environ.get("TVSCREENER_SEMANTIC_RUNTIME")
-    os.environ["TVSCREENER_RUN_DIR"] = run_dir
-    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
-    # Do not force a semantic runtime; default is auto (Sidemantic if installed).
-    try:
-        res = LocalRunner(console=console).run(analytics_spec)
-    finally:
-        if previous is None:
-            os.environ.pop("TVSCREENER_RUN_DIR", None)
-        else:
-            os.environ["TVSCREENER_RUN_DIR"] = previous
-
-        if prev_strict is None:
-            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
-        else:
-            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
-
-        if prev_semantic is None:
-            os.environ.pop("TVSCREENER_SEMANTIC_RUNTIME", None)
-        else:
-            os.environ["TVSCREENER_SEMANTIC_RUNTIME"] = prev_semantic
-    matrix_text = console.export_text() if console is not None else None
-    return res, matrix_text
-
-
-@flow(name="tvscreener-run", flow_run_name="tvscreener-batch-{batch_path}")  # type: ignore[misc]
-def prefect_run_flow(
-    batch_path: str,
+@flow(name="tvscreener-single-run", flow_run_name="tvscreener-{params_hash}")  # type: ignore[misc]
+def run_single_spec_flow(
+    spec_payload: dict[str, Any],
+    params_hash: str,
     artifacts_dir: str = "artifacts/runs",
-    data_concurrency: int = 1,
-    analytics_concurrency: int = 8,
-    rate_limit: dict[str, Any] | None = None,
-    skip_existing: bool = False,
 ) -> dict:
-    """Batch entrypoint for Prefect deployments."""
+    """Run a single spec as a Prefect flow."""
+    spec = PipelineRunSpec.model_validate(spec_payload).normalized()
+    results = _execute_specs([spec], artifacts_dir)
+    return results
+
+
+def _execute_specs(specs: list[PipelineRunSpec], artifacts_dir: str) -> dict:
+    """Internal helper to execute a list of specs."""
     from tvscreener_ext.orchestrator import ScreenerController
 
     controller = ScreenerController(console=None)
-
-    # Load batch from JSON
-    full_batch_path = Path(batch_path)
-    if not full_batch_path.is_absolute():
-        # Search relative to package or CWD
-        import tvscreener_ext.prefect
-
-        pkg_root = Path(tvscreener_ext.prefect.__file__).parent
-        if (pkg_root / "batches" / full_batch_path.name).exists():
-            full_batch_path = pkg_root / "batches" / full_batch_path.name
-
-    with open(full_batch_path) as f:
-        specs_raw = json.load(f)
-
-    if isinstance(specs_raw, dict):
-        specs_raw = [specs_raw]
-
     results = []
-    for raw in specs_raw:
-        spec = PipelineRunSpec.model_validate(raw).normalized()
-        params_hash = spec.params_hash or "unknown"
 
+    for spec in specs:
+        params_hash = spec.params_hash or "unknown"
         base_dir = _resolve_base_dir(artifacts_dir)
         run_dir = base_dir / params_hash
         _ensure_dir(run_dir)
@@ -439,3 +370,88 @@ def prefect_run_flow(
         results.append(payload)
 
     return {"results": results}
+
+
+@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
+def _run_data_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
+    data_spec = spec.model_copy(update={"pipeline_mode": "data"}).normalized()
+    console = _console_for_spec(data_spec)
+    previous = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
+    os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
+    try:
+        res = LocalRunner(console=console).run(data_spec)
+    finally:
+        if previous is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+    matrix_text = console.export_text() if console is not None else None
+    return res, matrix_text
+
+
+@task(retries=2, retry_delay_seconds=10)  # type: ignore[misc]
+def _run_analytics_task(spec: PipelineRunSpec, run_dir: str) -> tuple[RunResult, str | None]:
+    analytics_spec = spec.model_copy(update={"pipeline_mode": "analytics"}).normalized()
+    console = _console_for_spec(analytics_spec)
+    previous = os.environ.get("TVSCREENER_RUN_DIR")
+    prev_strict = os.environ.get("TVSCREENER_STRICT_PERSIST")
+    prev_semantic = os.environ.get("TVSCREENER_SEMANTIC_RUNTIME")
+    os.environ["TVSCREENER_RUN_DIR"] = run_dir
+    os.environ["TVSCREENER_STRICT_PERSIST"] = "1"
+    # Do not force a semantic runtime; default is auto (Sidemantic if installed).
+    try:
+        res = LocalRunner(console=console).run(analytics_spec)
+    finally:
+        if previous is None:
+            os.environ.pop("TVSCREENER_RUN_DIR", None)
+        else:
+            os.environ["TVSCREENER_RUN_DIR"] = previous
+
+        if prev_strict is None:
+            os.environ.pop("TVSCREENER_STRICT_PERSIST", None)
+        else:
+            os.environ["TVSCREENER_STRICT_PERSIST"] = prev_strict
+
+        if prev_semantic is None:
+            os.environ.pop("TVSCREENER_SEMANTIC_RUNTIME", None)
+        else:
+            os.environ["TVSCREENER_SEMANTIC_RUNTIME"] = prev_semantic
+    matrix_text = console.export_text() if console is not None else None
+    return res, matrix_text
+
+
+@flow(name="tvscreener-run", flow_run_name="tvscreener-batch-{batch_path}")  # type: ignore[misc]
+def prefect_run_flow(
+    batch_path: str,
+    artifacts_dir: str = "artifacts/runs",
+    data_concurrency: int = 1,
+    analytics_concurrency: int = 8,
+    rate_limit: dict[str, Any] | None = None,
+    skip_existing: bool = False,
+) -> dict:
+    """Batch entrypoint for Prefect deployments."""
+    # Load batch from JSON
+    full_batch_path = Path(batch_path)
+    if not full_batch_path.is_absolute():
+        # Search relative to package or CWD
+        import tvscreener_ext.prefect
+
+        pkg_root = Path(tvscreener_ext.prefect.__file__).parent
+        if (pkg_root / "batches" / full_batch_path.name).exists():
+            full_batch_path = pkg_root / "batches" / full_batch_path.name
+
+    with open(full_batch_path) as f:
+        specs_raw = json.load(f)
+
+    if isinstance(specs_raw, dict):
+        specs_raw = [specs_raw]
+
+    specs = [PipelineRunSpec.model_validate(raw).normalized() for raw in specs_raw]
+    return _execute_specs(specs, artifacts_dir)

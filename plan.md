@@ -1374,7 +1374,23 @@ Outcomes:
     - Created **`docs/guide/extensions.md`**: A comprehensive user guide for `tvscreener-ext`, covering CLI usage, maintenance, and programmatic services.
     - Updated **`docs/architecture/LAKEHOUSE.md`**: Formalized `artifacts/runs/` as the canonical artifact store and documented the `run_result.json` discovery contract.
     - Updated **`mkdocs.yml`**: Integrated the new Extensions guide into the project documentation site.
-- **Status**: The repository structure is now fully aligned with its documentation, and the migration from legacy `artifacts/prefect/` is officially complete on the write-side.
+Status: The repository structure is now fully aligned with its documentation, and the migration from legacy `artifacts/prefect/` is officially complete on the write-side.
+
+## 2026-04-01: Final Validation of End-to-End SOA Pipeline
+
+Goal: Verify all architectural updates (Service Decomposition, CLI Hardening, Unified Contract) using full end-to-end scans for Forex and Crypto.
+
+Outcomes:
+- **SOA Verification**: Successfully executed 6 major scan categories (Forex Majors/Minors, Crypto Spot Majors/Minors, Crypto Perp Majors/Minors) using the `ScanWorkflow` and its constituent services.
+- **Prefect Runner Reliability**: Verified the refactored `run_prefect` and `run_single_spec_flow` in `run_batch.py`. The runner now correctly handles spec normalization and artifact publication.
+- **Artifact Contract Validation**: Every validation run successfully produced a machine-discoverable `run_result.json` containing all relevant artifact paths (Matrix, Parquet, Spec).
+- **Matrix Integrity**: Confirmed that confluence matrices and technical grading are fully operational under the new service-oriented layout.
+- **Status**: The repository is now "Production Ready" for this branch. The orchestration is decoupled, the CLI is hardened, and the data contract is unified.
+
+Next Steps:
+- Merge `feat/forex-strategy-scanner` into `main`.
+- Final cleanup of temporary validation scripts (`run_validation.py`, `check_runs.py`).
+
 
 Next Steps:
 - Monitor Binance Matrix runs using the new discovery contract.
