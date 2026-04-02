@@ -6,6 +6,7 @@ import logging
 import os
 import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
@@ -86,6 +87,28 @@ def _persist_run_record(spec: PipelineRunSpec, result: RunResult) -> None:
             mode="append",
             partition_by=["asset_type", "ingest_date"],
         )
+
+        # Also write a local JSON summary for discovery (Cleanup Plan Task 1)
+        run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip()
+        if not run_dir:
+            base = spec.artifacts_dir or "artifacts/runs"
+            run_dir = os.path.join(base, spec.params_hash or "")
+
+        if run_dir:
+            dr = Path(run_dir)
+            dr.mkdir(parents=True, exist_ok=True)
+            with open(dr / "run_result.json", "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "params_hash": result.params_hash,
+                        "success": result.success,
+                        "result_count": result.result_count,
+                        "exit_code": result.exit_code,
+                        "finished_at_utc": result.finished_at_utc.isoformat(),
+                    },
+                    f,
+                    indent=2,
+                )
     except Exception as exc:
         if (os.getenv("TVSCREENER_STRICT_PERSIST") or "").strip() == "1":
             raise
@@ -110,6 +133,8 @@ class PipelineRunSpec(BaseModel):
 
     timeframes: list[str] = Field(default_factory=list)
     timeframe_set_id: str | None = None
+
+    artifacts_dir: str | None = None
 
     # Asset/scanner parameters
     strategy: str | None = None

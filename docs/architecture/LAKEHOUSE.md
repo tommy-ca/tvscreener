@@ -82,13 +82,10 @@ outside the core `tvscreener` library package so the core remains dependency-fre
 The repo supports deterministic reruns for **forex majors and minors** using batch fan-out executed through the extension module (`tvscreener_ext`).
 
 - Batch specifications and pipeline entrypoints are managed inside `extensions/src/tvscreener_ext/`.
-- Artifacts are keyed by `params_hash` and written under `artifacts/runs/<params_hash>/` so replays are stable and
-  machine-discoverable.
+- **Artifacts**: All runs (local or remote) write artifacts under `artifacts/runs/<params_hash>/`.
+- **Discovery**: Every successful run produces exactly one `run_result.json` in the artifact directory, serving as the machine-discoverable contract for that execution.
 
-Legacy compatibility: `artifacts/prefect/<params_hash>/` remains supported during migration.
-- Expected behavior:
-  - **Data** runs update canonical Iceberg tables (Bronze/Silver/Gold + product tables such as `signals_latest`).
-  - **Analytics** runs are expected to be **read-only** w.r.t. Iceberg and only emit artifacts (e.g. results parquet).
+Legacy compatibility: `artifacts/prefect/<params_hash>/` is deprecated and will be removed in a future release. Use `tvscreener-ext-scan maintenance --migrate-artifacts` to relocate legacy data.
 
 ## Multi-timeframe model
 

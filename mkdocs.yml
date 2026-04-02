@@ -83,6 +83,7 @@ nav:
     - Quick Start: getting-started/quickstart.md
     - Code Generator: getting-started/code-generator.md
   - User Guide:
+    - Extensions: guide/extensions.md
     - Filtering: guide/filtering.md
     - Selecting Fields: guide/selecting-fields.md
     - Sorting & Pagination: guide/sorting-pagination.md

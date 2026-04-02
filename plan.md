@@ -1363,5 +1363,22 @@ Outcomes:
 
 Status: Phased cleanup plan Task 2 is complete. Root repository is fully purged of legacy shims while retaining all planned operational capabilities.
 
+## 2026-04-01: Documentation Refresh & Contract Unification
+
+Goal: Complete the "Cleanup plan (phased)" Task 3 and unify the run discovery contract across all execution modes.
+
+Outcomes:
+- **Contract Unification**: Updated `_persist_run_record` in `runner.py` to write a `run_result.json` summary for every execution (including local scans). This establishes a machine-discoverable contract for all runs regardless of the orchestrator.
+- **Documentation Parity**:
+    - Created **`docs/guide/extensions.md`**: A comprehensive user guide for `tvscreener-ext`, covering CLI usage, maintenance, and programmatic services.
+    - Updated **`docs/architecture/LAKEHOUSE.md`**: Formalized `artifacts/runs/` as the canonical artifact store and documented the `run_result.json` discovery contract.
+    - Updated **`mkdocs.yml`**: Integrated the new Extensions guide into the project documentation site.
+- **Status**: The repository structure is now fully aligned with its documentation, and the migration from legacy `artifacts/prefect/` is officially complete on the write-side.
+
+Next Steps:
+- Monitor Binance Matrix runs using the new discovery contract.
+- Prepare for final release of the service-oriented extensions.
+
+
 
 
