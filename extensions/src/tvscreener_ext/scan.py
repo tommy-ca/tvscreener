@@ -126,6 +126,11 @@ def main(argv: list[str] | None = None) -> int:
     maint_p.add_argument("--days", type=int, default=7, help="Days to keep snapshots")
     maint_p.add_argument("--table", default="forex.opportunities", help="Table name")
     maint_p.add_argument("--compact", action="store_true", help="Trigger compaction")
+    maint_p.add_argument(
+        "--migrate-artifacts", action="store_true", help="Migrate legacy artifacts"
+    )
+    maint_p.add_argument("--prune-artifacts", action="store_true", help="Prune old artifacts")
+    maint_p.add_argument("--prune-days", type=int, default=30, help="Days to keep artifacts")
     add_common_args(maint_p)
 
     # --- Query Command ---

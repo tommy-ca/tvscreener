@@ -40,7 +40,18 @@ To satisfy the **Single Responsibility Principle (SRP)** and improve testability
   def execute(self, request: ScanRequest) -> int: ...
   ```
 
-## 5. CommandRegistry (CLI)
+## 5. MaintenanceService
+**Responsibility**: Repository and Artifact Lifecycle.
+- Migrates legacy artifacts from `artifacts/prefect/` to `artifacts/runs/`.
+- Prunes old artifacts based on retention policies.
+- Coordinates with `LakehouseManager` for table-level maintenance (expiry, compaction).
+- **Interface**:
+  ```python
+  def migrate_artifacts(self, base_dir: Path) -> dict[str, int]: ...
+  def prune_artifacts(self, base_dir: Path, older_than_days: int = 30) -> int: ...
+  ```
+
+## 6. CommandRegistry (CLI)
 **Responsibility**: Declarative Subcommand Routing.
 - Replaces the `argparse` switch-case in `scan.py`.
 - Maps subcommand strings to specialized handler methods.

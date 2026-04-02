@@ -1347,5 +1347,21 @@ Audited Roadmap (Phased Refactor):
 
 Status: Service-Oriented Refactor complete. The repository is now highly modular, type-safe, and decoupled.
 
+## 2026-04-01: Maintenance Enhancements & Binance Batch Restoration
+
+Goal: Complete the "Cleanup plan (phased)" Task 2 and restore planned Binance batch templates following the root cleanup.
+
+Outcomes:
+- **`MaintenanceService`**: Implemented a new service in `tvscreener_ext/services/maintenance.py` to handle artifact lifecycle.
+    - **Migration**: Added logic to move legacy artifacts from `artifacts/prefect/` to the canonical `artifacts/runs/` directory.
+    - **Pruning**: Added logic to remove artifact directories older than a specified number of days (default 30).
+- **CLI Subcommand Hardening**: Updated `tvscreener-ext-scan maintenance` to expose `--migrate-artifacts`, `--prune-artifacts`, and `--prune-days` flags.
+- **Binance Batch Templates**: Restored/added the following templates under `extensions/src/tvscreener_ext/prefect/batches/`:
+    - `crypto_binance_spot_top100_both.json`
+    - `crypto_binance_perp_top100_both.json`
+- **Spec Integrity**: Updated `docs/architecture/LAKEHOUSE.md` and `docs/openspec/project.md` to reflect that all orchestration artifacts and templates now reside within the `extensions/` package.
+
+Status: Phased cleanup plan Task 2 is complete. Root repository is fully purged of legacy shims while retaining all planned operational capabilities.
+
 
 

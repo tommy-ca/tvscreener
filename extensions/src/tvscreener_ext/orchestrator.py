@@ -23,6 +23,7 @@ from tvscreener_ext.models import (
 from tvscreener_ext.screeners.registry import ScreenerFamilyRegistry
 from tvscreener_ext.services.config import ConfigFactory
 from tvscreener_ext.services.export import ExportService
+from tvscreener_ext.services.maintenance import MaintenanceService
 from tvscreener_ext.services.universe import UniverseResolver
 from tvscreener_ext.services.workflow import ScanWorkflow
 from tvscreener_ext.utils.logic import (
@@ -44,6 +45,7 @@ class ScreenerController:
         self._universe_resolver = UniverseResolver()
         self._export_service = ExportService()
         self._config_factory = ConfigFactory()
+        self._maintenance_service = MaintenanceService()
         self._workflow = ScanWorkflow(
             resolver=self._universe_resolver,
             factory=self._config_factory,
@@ -172,10 +174,32 @@ class ScreenerController:
         return self._family_registry.run(request.assets.scanner, request)
 
     def run_maintenance(self, args: argparse.Namespace) -> int:
-        """Run lakehouse maintenance tasks."""
+        """Run repository and lakehouse maintenance tasks."""
         if self.console:
-            self.console.print("[bold cyan]Running Lakehouse Maintenance...[/bold cyan]")
+            self.console.print("[bold cyan]Running Maintenance...[/bold cyan]")
 
+        # 1. Artifact Migration
+        if getattr(args, "migrate_artifacts", False):
+            if self.console:
+                self.console.print(" - Migrating legacy artifacts to artifacts/runs/...")
+            res = self._maintenance_service.migrate_artifacts(Path.cwd())
+            if self.console:
+                self.console.print(
+                    f"   [green]Migrated: {res['migrated']}[/green], "
+                    f"[yellow]Skipped: {res['skipped']}[/yellow], "
+                    f"[red]Errors: {res['errors']}[/red]"
+                )
+
+        # 2. Artifact Pruning
+        if getattr(args, "prune_artifacts", False):
+            days = getattr(args, "prune_days", 30)
+            if self.console:
+                self.console.print(f" - Pruning artifacts older than {days} days...")
+            count = self._maintenance_service.prune_artifacts(Path.cwd(), older_than_days=days)
+            if self.console:
+                self.console.print(f"   [green]Pruned {count} artifact directories.[/green]")
+
+        # 3. Lakehouse Maintenance
         manager = get_manager(getattr(args, "config", None))
         table_name = getattr(args, "table", "forex.opportunities")
 
