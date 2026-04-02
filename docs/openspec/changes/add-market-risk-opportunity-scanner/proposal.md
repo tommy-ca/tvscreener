@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## Proposal: Add macro/market risk opportunity scanner (NQ/ES/VIX/DXY)
 
 We want an operator-friendly market risk scan that uses the existing opportunity scanner pipelines and the same Confluence Matrix view.

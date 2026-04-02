@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## Proposal: Scheduled Prefect runs for opportunity scanners
 
 We want periodic opportunity scans across key universes using the Prefect batch runner:

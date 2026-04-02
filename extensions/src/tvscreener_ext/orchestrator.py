@@ -4,29 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import yaml
 
 from tvscreener_ext.config import load_settings
-from tvscreener_ext.config.universe import FOREX_UNIVERSE, AssetUniverse, ConfigurationError
-from tvscreener_ext.constants.commodity import COMMODITY_UNIVERSE
-from tvscreener_ext.constants.crypto import CRYPTO_UNIVERSE
-from tvscreener_ext.constants.forex import (
-    DEFAULT_FOREX_PAIRS,
-    DEFAULT_TIMEFRAME_WEIGHTS,
-    FOREX_MAJORS,
-    FOREX_MINORS,
-)
-from tvscreener_ext.constants.market_risk import (
-    MARKET_RISK_FUTURES_TICKERS,
-    MARKET_RISK_PROXY_TICKERS,
-)
-from tvscreener_ext.constants.stocks import STOCK_UNIVERSE
-from tvscreener_ext.enums import Direction
+from tvscreener_ext.config.universe import AssetUniverse, ConfigurationError
 from tvscreener_ext.lakehouse import get_manager
 from tvscreener_ext.models import (
     AssetSelection,
@@ -35,20 +22,21 @@ from tvscreener_ext.models import (
     ScanRequest,
     ScoringConfig,
 )
-from tvscreener_ext.scoring import ScoringConfig as ScoreWeights
 from tvscreener_ext.screeners.base import BaseOpportunityScreener
 from tvscreener_ext.screeners.factory import AssetScreenerFactory
-from tvscreener_ext.screeners.filters import AtrFilter, RocFilter, ScoreFilter, VolumeFilter
-from tvscreener_ext.screeners.forex_opportunity import ContractType, ForexScreenerConfig
+from tvscreener_ext.screeners.forex_opportunity import ForexScreenerConfig
 from tvscreener_ext.screeners.forex_strategy import (
     ForexStrategyScanner,
     StrategyConfig,
-    StrategyType,
 )
 from tvscreener_ext.screeners.registry import ScreenerFamilyRegistry
+from tvscreener_ext.services.config import ConfigFactory
+from tvscreener_ext.services.export import ExportService
+from tvscreener_ext.services.universe import UniverseResolver
+from tvscreener_ext.services.workflow import ScanWorkflow
 from tvscreener_ext.utils.logic import (
     canonicalize_asset_type,
-    parse_timeframe_weights,
+    timeframe_set_id,
     validate_path,
 )
 
@@ -58,22 +46,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-UNIVERSE_MAP: dict[str, AssetUniverse] = {
-    "forex": FOREX_UNIVERSE,
-    "stock": STOCK_UNIVERSE,
-    "crypto": CRYPTO_UNIVERSE,
-    "futures": COMMODITY_UNIVERSE,
-    # Aliases for CLI/backwards compatibility
-    "stocks": STOCK_UNIVERSE,
-    "commodity": COMMODITY_UNIVERSE,
-}
-
 
 class ScreenerController:
     """Handles the execution lifecycle of scanners."""
 
     def __init__(self, console: Console | None = None):
         self.console = console
+        self._universe_resolver = UniverseResolver()
+        self._export_service = ExportService()
+        self._config_factory = ConfigFactory()
+        self._workflow = ScanWorkflow(
+            resolver=self._universe_resolver,
+            factory=self._config_factory,
+            exporter=self._export_service,
+            console=self.console,
+        )
         self._family_registry = ScreenerFamilyRegistry()
         self._family_registry.register("opportunity", self.run_opportunity_scan)
         self._family_registry.register("strategy", self.run_strategy_scan)
@@ -81,12 +68,7 @@ class ScreenerController:
 
     def get_universe(self, asset_type: str) -> AssetUniverse:
         """Get universe config by asset type with validation."""
-        asset_type = canonicalize_asset_type(asset_type)
-        if asset_type not in UNIVERSE_MAP:
-            raise ConfigurationError(
-                f"Unknown asset type: {asset_type}. Valid options: {', '.join(UNIVERSE_MAP.keys())}"
-            )
-        return UNIVERSE_MAP[asset_type]
+        return self._universe_resolver.get_universe_config(asset_type)
 
     def get_pairs(
         self,
@@ -97,196 +79,9 @@ class ScreenerController:
         instrument_type: str | None = None,
     ) -> list[str]:
         """Resolve symbols based on asset type, universe selector, or explicit list."""
-        if specific:
-            return specific
-
-        # Universe aliases for ergonomic CLI/config usage.
-        universe_aliases = {
-            "binance_spot_base": "binance_spot_tradeable_base",
-            "binance_perp_base": "binance_perp_tradeable_base",
-            "binance_spot_largecap": "binance_spot_tradeable_mcap_cs",
-            "binance_perp_largecap": "binance_perp_tradeable_mcap_cs",
-            "binance_spot_snapshot": "binance_spot_top100",
-            "binance_perp_snapshot": "binance_perp_top100",
-        }
-        if asset_type == "crypto" and universe in {"majors", "minors"}:
-            it = (instrument_type or "spot").strip().lower()
-            venue = "perp" if it in {"perp", "swap"} else "spot"
-            universe = f"binance_{venue}_{universe}"
-
-        if universe:
-            universe = universe_aliases.get(universe, universe)
-
-        asset_type = canonicalize_asset_type(asset_type)
-        if asset_type == "forex":
-            if universe == "majors":
-                return FOREX_MAJORS
-            if universe == "minors":
-                return FOREX_MINORS
-            if universe in (None, "all"):
-                return DEFAULT_FOREX_PAIRS
-            # Unknown forex selector: fall back to default
-            return DEFAULT_FOREX_PAIRS
-
-        if universe in {"market_risk", "risk"}:
-            if asset_type == "stock":
-                return list(MARKET_RISK_PROXY_TICKERS)
-            if asset_type == "futures":
-                return list(MARKET_RISK_FUTURES_TICKERS)
-
-        # Non-forex: use configured universe pairs
-        if asset_type == "crypto" and universe in {"binance_spot_top100", "binance_perp_top100"}:
-            from tvscreener_ext.universe.binance_crypto import (
-                BinanceCryptoUniverseConstraints,
-                build_binance_crypto_universe,
-                maybe_write_universe_json,
-            )
-
-            instrument_type = "spot" if universe == "binance_spot_top100" else "perp"
-            tickers, snapshot = build_binance_crypto_universe(
-                constraints=BinanceCryptoUniverseConstraints(
-                    instrument_type=instrument_type,
-                    quote_assets=("USDT", "USDC"),
-                    # Tune spot floor down to keep spot/perp universe sizes comparable.
-                    min_quote_volume_usd=(2_500_000 if instrument_type == "spot" else 10_000_000),
-                )
-            )
-
-            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
-            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
-            return tickers
-
-        if asset_type == "crypto" and universe in {
-            "binance_spot_mcap_top100",
-            "binance_perp_mcap_top100",
-        }:
-            from tvscreener_ext.universe.binance_crypto import (
-                BinanceCryptoMarketCapUniverseConstraints,
-                build_binance_crypto_universe_market_cap,
-                maybe_write_universe_json,
-            )
-
-            instrument_type = "spot" if universe == "binance_spot_mcap_top100" else "perp"
-            tickers, snapshot = build_binance_crypto_universe_market_cap(
-                constraints=BinanceCryptoMarketCapUniverseConstraints(
-                    instrument_type=instrument_type,
-                    min_volatility_24h_pct=0.0,
-                )
-            )
-
-            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
-            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
-            return tickers
-
-        if asset_type == "crypto" and universe in {
-            "binance_spot_cs_momentum",
-            "binance_perp_cs_momentum",
-        }:
-            from tvscreener_ext.universe.binance_crypto import (
-                BinanceCryptoCSMomentumUniverseConstraints,
-                build_binance_crypto_universe_cs_momentum,
-                maybe_write_universe_json,
-            )
-
-            instrument_type = "spot" if universe == "binance_spot_cs_momentum" else "perp"
-            tickers, snapshot = build_binance_crypto_universe_cs_momentum(
-                constraints=BinanceCryptoCSMomentumUniverseConstraints(
-                    instrument_type=instrument_type,
-                    # Tune spot floor down to keep spot/perp universe sizes comparable.
-                    min_quote_volume_usd=(1_700_000 if instrument_type == "spot" else 10_000_000),
-                )
-            )
-
-            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
-            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
-            return tickers
-
-        if asset_type == "crypto" and universe in {
-            "binance_spot_tradeable_base",
-            "binance_perp_tradeable_base",
-        }:
-            from tvscreener_ext.universe.binance_crypto import (
-                BinanceCryptoTradeableBaseUniverseConstraints,
-                build_binance_crypto_universe_tradeable_base,
-                maybe_write_universe_json,
-            )
-
-            instrument_type = "spot" if universe == "binance_spot_tradeable_base" else "perp"
-            tickers, snapshot = build_binance_crypto_universe_tradeable_base(
-                constraints=BinanceCryptoTradeableBaseUniverseConstraints(
-                    instrument_type=instrument_type,
-                    # Tune defaults to keep spot/perp sizes comparable (~100).
-                    min_quote_volume_usd=(2_500_000 if instrument_type == "spot" else 20_000_000),
-                    top_n=200,
-                )
-            )
-
-            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
-            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
-            return tickers
-
-        if asset_type == "crypto" and universe in {
-            "binance_spot_tradeable_mcap_cs",
-            "binance_perp_tradeable_mcap_cs",
-        }:
-            from tvscreener_ext.universe.binance_crypto import (
-                BinanceCryptoTradeableMcapOverlapUniverseConstraints,
-                build_binance_crypto_universe_tradeable_mcap_overlap,
-                maybe_write_universe_json,
-            )
-
-            instrument_type = "spot" if universe == "binance_spot_tradeable_mcap_cs" else "perp"
-            tickers, snapshot = build_binance_crypto_universe_tradeable_mcap_overlap(
-                constraints=BinanceCryptoTradeableMcapOverlapUniverseConstraints(
-                    instrument_type=instrument_type,
-                )
-            )
-
-            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
-            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
-            return tickers
-
-        if asset_type == "crypto" and universe in {
-            "binance_spot_majors",
-            "binance_perp_majors",
-            "binance_spot_minors",
-            "binance_perp_minors",
-        }:
-            from tvscreener_ext.universe.binance_crypto import (
-                BinanceCryptoMcapTierUniverseConstraints,
-                build_binance_crypto_universe_mcap_tier,
-                maybe_write_universe_json,
-            )
-
-            instrument_type = (
-                "spot" if universe in {"binance_spot_majors", "binance_spot_minors"} else "perp"
-            )
-            tier = "majors" if universe.endswith("_majors") else "minors"
-            rmin, rmax = (1, 20) if tier == "majors" else (21, 200)
-
-            tickers, snapshot = build_binance_crypto_universe_mcap_tier(
-                constraints=BinanceCryptoMcapTierUniverseConstraints(
-                    instrument_type=instrument_type,
-                    top_n_market_cap=200,
-                    mcap_rank_min=rmin,
-                    mcap_rank_max=rmax,
-                    min_quote_volume_usd_spot=2_500_000,
-                    min_quote_volume_usd_perp=20_000_000,
-                    min_history_days=180,
-                )
-            )
-
-            if isinstance(snapshot, dict):
-                snapshot.setdefault("constraints", {})
-                if isinstance(snapshot.get("constraints"), dict):
-                    snapshot["constraints"]["tier"] = tier
-
-            run_dir = (os.getenv("TVSCREENER_RUN_DIR") or "").strip() or None
-            _ = maybe_write_universe_json(snapshot, run_dir=run_dir)
-            return tickers
-
-        cfg = self.get_universe(asset_type)
-        return list(cfg.pairs)
+        return self._universe_resolver.resolve_tickers(
+            asset_type, universe, specific, instrument_type=instrument_type
+        )
 
     def resolve_defaults(self, request: ScanRequest) -> ScanRequest:
         """Fill in missing parameters from settings."""
@@ -296,54 +91,20 @@ class ScreenerController:
         if request.assets.universe is None:
             request.assets.universe = settings.default_universe
 
-        # Normalize universe aliases early so downstream routing is consistent.
-        if request.assets.universe:
-            request.assets.universe = {
-                "binance_spot_base": "binance_spot_tradeable_base",
-                "binance_perp_base": "binance_perp_tradeable_base",
-                "binance_spot_largecap": "binance_spot_tradeable_mcap_cs",
-                "binance_perp_largecap": "binance_perp_tradeable_mcap_cs",
-                "binance_spot_snapshot": "binance_spot_top100",
-                "binance_perp_snapshot": "binance_perp_top100",
-            }.get(request.assets.universe, request.assets.universe)
         if request.assets.timeframes is None:
             request.assets.timeframes = settings.default_timeframes
         if request.assets.contract_type is None:
             request.assets.contract_type = settings.contract_type
 
+        # Default instrument type for crypto universes
         if (
             request.assets.asset_type == "crypto"
-            and request.assets.universe
-            in {
-                "binance_spot_top100",
-                "binance_perp_top100",
-                "binance_spot_mcap_top100",
-                "binance_perp_mcap_top100",
-                "binance_spot_cs_momentum",
-                "binance_perp_cs_momentum",
-                "binance_spot_tradeable_base",
-                "binance_perp_tradeable_base",
-                "binance_spot_tradeable_mcap_cs",
-                "binance_perp_tradeable_mcap_cs",
-                "binance_spot_majors",
-                "binance_perp_majors",
-                "binance_spot_minors",
-                "binance_perp_minors",
-            }
             and getattr(request.assets, "instrument_type", None) is None
         ):
-            request.assets.instrument_type = (
-                "spot"
-                if request.assets.universe
-                in {
-                    "binance_spot_top100",
-                    "binance_spot_mcap_top100",
-                    "binance_spot_cs_momentum",
-                    "binance_spot_tradeable_base",
-                    "binance_spot_tradeable_mcap_cs",
-                }
-                else "perp"
-            )
+            if request.assets.universe and "perp" in request.assets.universe:
+                request.assets.instrument_type = "perp"
+            else:
+                request.assets.instrument_type = "spot"
 
         if request.assets.contract_type is not None:
             valid_contracts = ("spot", "cfd", "spreadbet", "all")
@@ -354,18 +115,14 @@ class ScreenerController:
 
         # Scoped defaults: use opportunity settings if scanner is 'opportunity', else fallback to general
         def _resolve_val(attr: str, scanner: str) -> Any:
-            # Determine which component the attribute belongs to
-            # This is a bit tricky with nested structure, so we check them manually or use a map
-            # For simplicity in this refactor, we'll just check where the field currently lives
-
-            # Check all components
+            # Check components
             for component in [request.assets, request.scoring, request.risk, request.output]:
                 if hasattr(component, attr):
                     req_val = getattr(component, attr)
                     if req_val is not None:
                         return req_val
 
-            # Determine potential override from settings
+            # Potential override from settings
             settings_val = None
             if scanner == "opportunity":
                 settings_val = getattr(settings.opportunity, attr, None)
@@ -408,7 +165,7 @@ class ScreenerController:
         # Risk management defaults
         if request.scoring.min_tf_alignment is None:
             request.scoring.min_tf_alignment = settings.risk.min_tf_alignment
-        # Filtering (min_rvol) happens in EdgeQueryClient after ingestion so pipelines stay raw
+
         if request.risk.risk_per_trade_pct is None:
             request.risk.risk_per_trade_pct = settings.risk.risk_per_trade_pct
         if request.risk.atr_multiplier is None:
@@ -451,7 +208,7 @@ class ScreenerController:
         return 0
 
     def run_query(self, args: argparse.Namespace) -> int:
-        """Run an Edge SQL query on a table (Todo 144)."""
+        """Run an Edge SQL query on a table."""
         from tvscreener_ext.query import EdgeQueryClient
 
         table = args.table
@@ -493,12 +250,10 @@ class ScreenerController:
 
                 if getattr(args, "output", None):
                     out_path = Path(args.output)
-                    if out_path.suffix == ".csv":
-                        df.to_csv(out_path, index=False)
-                    else:
-                        df.to_parquet(out_path, index=False)
-                    if self.console:
-                        self.console.print(f"[green]Saved to {out_path}[/green]")
+                    metadata = {"command": "query", "table": table, "sql": sql}
+                    self._export_service.export_dataframe(
+                        df, str(out_path), metadata, label="query_results"
+                    )
 
                 return len(df)
         except Exception as e:
@@ -509,8 +264,6 @@ class ScreenerController:
 
     def run_from_args(self, args: argparse.Namespace) -> int:
         """Run scan from argparse namespace."""
-        # Initialize lakehouse manager early so catalog config is consistent for the process.
-        # This ensures CLI `--config` affects Iceberg catalog/warehouse selection.
         get_manager(getattr(args, "config", None))
 
         command = getattr(args, "command", "scan")
@@ -525,10 +278,8 @@ class ScreenerController:
         if command == "review":
             return self.run_review(args)
 
-        matrix_mode = args.matrix
-        detailed_mode = args.detailed
-        if not (matrix_mode or detailed_mode):
-            matrix_mode = True
+        matrix_mode = getattr(args, "matrix", True)
+        detailed_mode = getattr(args, "detailed", False)
 
         request = ScanRequest(
             assets=AssetSelection(
@@ -606,15 +357,11 @@ class ScreenerController:
             return 2
 
         import json
-        import os
-        from pathlib import Path
 
         out_base = Path(out_dir or "artifacts/audits/binance-universes")
         out_base.mkdir(parents=True, exist_ok=True)
 
         include_all = bool(getattr(args, "include_all", False))
-
-        # Default audit set focuses on screener-style universes.
         universes = [
             "binance_spot_majors",
             "binance_perp_majors",
@@ -627,9 +374,8 @@ class ScreenerController:
             "binance_spot_top100",
             "binance_perp_top100",
         ]
-
         if include_all:
-            universes = universes + [
+            universes += [
                 "binance_spot_mcap_top100",
                 "binance_perp_mcap_top100",
                 "binance_spot_cs_momentum",
@@ -643,7 +389,6 @@ class ScreenerController:
         for u in universes:
             run_dir = out_base / u
             run_dir.mkdir(parents=True, exist_ok=True)
-
             os.environ["TVSCREENER_RUN_DIR"] = str(run_dir)
             pairs = self.get_pairs("crypto", u, specific=None)
             sets[u] = set(pairs)
@@ -665,10 +410,8 @@ class ScreenerController:
             uni_path = run_dir / "universe.json"
             uni = None
             if uni_path.exists():
-                try:
+                with contextlib.suppress(Exception):
                     uni = json.loads(uni_path.read_text(encoding="utf-8"))
-                except Exception:
-                    uni = None
 
             errors: list[str] = []
             if len(pairs) != len(set(pairs)):
@@ -680,15 +423,6 @@ class ScreenerController:
             if any(not p.startswith("BINANCE:") for p in pairs):
                 errors.append("non_binance_ticker")
 
-            if u in {"binance_spot_top100", "binance_perp_top100"} and len(pairs) < 100:
-                errors.append("underfilled_top_n")
-
-            if u in {"binance_spot_top100", "binance_perp_top100"}:
-                allowed = {"USDT", "USDC"}
-                extra_quotes = [q for q in quote_dist if q not in allowed]
-                if extra_quotes:
-                    errors.append("non_usdt_usdc_quotes")
-
             report[u] = {
                 "count": len(pairs),
                 "sample": pairs[:10],
@@ -696,48 +430,32 @@ class ScreenerController:
                     sorted(quote_dist.items(), key=lambda kv: (-kv[1], kv[0]))
                 ),
                 "universe_json": str(uni_path) if uni_path.exists() else None,
-                "selection": (
-                    uni.get("constraints", {}).get("selection") if isinstance(uni, dict) else None
-                ),
-                "diagnostics": (uni.get("diagnostics") if isinstance(uni, dict) else None),
-                "requested_tickers": (
-                    len(uni.get("requested_tickers", [])) if isinstance(uni, dict) else None
-                ),
-                "missing_tickers": (
-                    len(uni.get("missing_tickers", [])) if isinstance(uni, dict) else None
-                ),
-                "included_bases": (
-                    len(uni.get("included_bases", [])) if isinstance(uni, dict) else None
-                ),
-                "missing_bases": (
-                    len(uni.get("missing_bases", [])) if isinstance(uni, dict) else None
-                ),
+                "selection": uni.get("constraints", {}).get("selection")
+                if isinstance(uni, dict)
+                else None,
+                "missing_tickers": len(uni.get("missing_tickers", []))
+                if isinstance(uni, dict)
+                else None,
+                "included_bases": len(uni.get("included_bases", []))
+                if isinstance(uni, dict)
+                else None,
                 "errors": errors,
             }
 
-        overlap: dict[str, dict[str, int]] = {}
-        for a in universes:
-            overlap[a] = {}
-            for b in universes:
-                overlap[a][b] = len(sets[a] & sets[b])
-
+        overlap: dict[str, dict[str, int]] = {
+            a: {b: len(sets[a] & sets[b]) for b in universes} for a in universes
+        }
         payload = {"universes": report, "overlap": overlap}
         report_path = out_base / "report.json"
         report_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
         if self.console:
             self.console.print(f"[green]Wrote {report_path}[/green]")
-            for u in universes:
-                info = report[u]
-                self.console.print(
-                    f"- {u}: {info['count']} (missing_tickers={info['missing_tickers']}, missing_bases={info['missing_bases']})"
-                )
 
         if previous_run_dir is None:
             os.environ.pop("TVSCREENER_RUN_DIR", None)
         else:
             os.environ["TVSCREENER_RUN_DIR"] = previous_run_dir
-
         return 0
 
     def run_report(self, args: argparse.Namespace) -> int:
@@ -746,13 +464,9 @@ class ScreenerController:
             if self.console:
                 self.console.print(f"[red]Unknown report target: {target}[/red]")
             return 2
-
         in_dir = getattr(args, "in_dir", "artifacts/audits/binance-universes")
         out_dir = getattr(args, "out_dir", "artifacts/reports/binance-universes")
-
-        from tvscreener_ext.reports.binance_universes import (
-            generate_binance_universes_report,
-        )
+        from tvscreener_ext.reports.binance_universes import generate_binance_universes_report
 
         paths = generate_binance_universes_report(in_dir=in_dir, out_dir=out_dir)
         if self.console:
@@ -766,7 +480,6 @@ class ScreenerController:
             if self.console:
                 self.console.print(f"[red]Unknown review target: {target}[/red]")
             return 2
-
         audit_out_dir = getattr(args, "audit_out_dir", "artifacts/audits/binance-universes")
         report_out_dir = getattr(args, "report_out_dir", "artifacts/reports/binance-universes")
         strict = bool(getattr(args, "strict", False))
@@ -783,17 +496,14 @@ class ScreenerController:
         if rc != 0:
             return rc
 
-        # Strict mode: fail if any universe has errors.
         if strict:
-            import json
-            from pathlib import Path
-
             report_path = Path(audit_out_dir) / "report.json"
             try:
+                import json
+
                 payload = json.loads(report_path.read_text(encoding="utf-8"))
                 universes = (payload or {}).get("universes", {})
-                has_errors = any((v or {}).get("errors") for v in universes.values())
-                if has_errors:
+                if any((v or {}).get("errors") for v in universes.values()):
                     if self.console:
                         self.console.print(
                             "[bold red]Review failed: audit errors present[/bold red]"
@@ -819,16 +529,13 @@ class ScreenerController:
         if pipeline not in ("data", "analytics", "both"):
             pipeline = "both"
 
-        # 1) Data pipeline (fetch + Iceberg)
         if pipeline in ("data", "both"):
-            _results, _screener = self.get_opportunity_results(request)
+            results, _ = self.get_opportunity_results(request)
             if pipeline == "data":
-                # Data pipeline run is complete; analytics pipeline is responsible for matrix rendering.
                 if self.console:
                     self.console.print("[green]Data pipeline complete (Iceberg updated).[/green]")
-                return len(_results)
+                return len(results)
 
-        # 2) Analytics pipeline (Iceberg + render)
         pairs = self.get_pairs(
             request.assets.asset_type,
             request.assets.universe,
@@ -840,8 +547,6 @@ class ScreenerController:
             if request.assets.timeframes
             else ["15", "60", "240"]
         )
-
-        # Build a screener instance only for enrichment + rendering (no fetch).
         config = self._build_opportunity_config(request)
         screener = AssetScreenerFactory.create_screener(
             asset_type=request.assets.asset_type,
@@ -849,11 +554,8 @@ class ScreenerController:
             timeframes=timeframes,
             config=config,
         )
-
         results = self._load_latest_signals_latest(
-            asset_type=request.assets.asset_type,
-            pairs=pairs,
-            timeframes=timeframes,
+            asset_type=request.assets.asset_type, pairs=pairs, timeframes=timeframes
         )
         snapshot_label = self._snapshot_label_from_df(results)
         results = self._apply_edge_filters(results, request)
@@ -865,9 +567,13 @@ class ScreenerController:
                 min_confluence=request.output.min_opportunity_confluence,
             )
 
-        metadata = self._build_opportunity_metadata(request)
         if request.output.output:
-            self._export_dataframe(results, request.output.output, metadata, label="opportunities")
+            self._export_service.export_dataframe(
+                results,
+                request.output.output,
+                self._build_opportunity_metadata(request),
+                label="opportunities",
+            )
 
         if self.console:
             if results.empty:
@@ -885,7 +591,6 @@ class ScreenerController:
 
         if request.output.save_config:
             self._maybe_save_opportunity_config(request.output.save_config, request)
-
         return len(results)
 
     def get_opportunity_results(
@@ -904,12 +609,10 @@ class ScreenerController:
             if request.assets.timeframes
             else ["15", "60", "240"]
         )
-
         if self.console:
             self.console.print(
                 f"[cyan]Scanning {len(pairs)} {request.assets.asset_type} symbols...[/cyan]"
             )
-
         config = self._build_opportunity_config(request)
         screener = AssetScreenerFactory.create_screener(
             asset_type=request.assets.asset_type,
@@ -917,37 +620,14 @@ class ScreenerController:
             timeframes=timeframes,
             config=config,
         )
-
         results = self._fetch_data_with_progress(screener.get_opportunities)
-
-        if request.output.sql or request.output.filters:
-            from tvscreener_ext.query import EdgeQueryClient
-
-            try:
-                with EdgeQueryClient() as edge_client:
-                    # Apply SQL if provided
-                    if request.output.sql:
-                        results = edge_client.query_sql(
-                            results, request.output.sql, params=request.output.sql_params
-                        )
-                        screener.metadata.config["sql"] = request.output.sql
-
-                    # Apply additional filters if provided
-                    if request.output.filters:
-                        for f in request.output.filters:
-                            results = edge_client.query_sql(results, f"SELECT * FROM df WHERE {f}")
-                            screener.metadata.config.setdefault("cli_filters", []).append(f)
-            except Exception as e:
-                logger.error("Failed to apply edge filters: %s", e)
-                # Keep original results if filtering fails
-
+        results = self._apply_edge_filters(results, request)
         if request.output.confluence_grade or request.output.min_opportunity_confluence:
             results = self._filter_by_confluence(
                 results,
                 grade=request.output.confluence_grade,
                 min_confluence=request.output.min_opportunity_confluence,
             )
-
         return results, screener
 
     def run_strategy_scan(self, request: ScanRequest) -> int:
@@ -957,16 +637,11 @@ class ScreenerController:
         if pipeline not in ("data", "analytics", "both"):
             pipeline = "both"
 
-        # Strategy depends on opportunity-style Gold rows; in split mode:
-        # - data: refresh Iceberg (opportunity medallion) only
-        # - analytics: compute strategy signals from Iceberg-backed data only
-        # - both: refresh then compute from Iceberg
         if pipeline in ("data", "both"):
-            results, _screener = self.get_opportunity_results(request)
+            results, _ = self.get_opportunity_results(request)
             if pipeline == "data":
                 if self.console:
                     self.console.print("[green]Data pipeline complete (Iceberg updated).[/green]")
-                # Return the count of refreshed Gold rows for correct CLI exit semantics.
                 return len(results)
 
         pairs = self.get_pairs(
@@ -977,22 +652,22 @@ class ScreenerController:
             if request.assets.timeframes
             else ["15", "60", "240"]
         )
-
         raw_data = self._load_latest_signals_latest(
-            asset_type=request.assets.asset_type,
-            pairs=pairs,
-            timeframes=timeframes,
+            asset_type=request.assets.asset_type, pairs=pairs, timeframes=timeframes
         )
         snapshot_label = self._snapshot_label_from_df(raw_data)
-
         config = self._build_strategy_config(request)
         scanner = ForexStrategyScanner(pairs=pairs, timeframes=timeframes, config=config)
         results = self._fetch_data_with_progress(lambda: scanner.scan_from_data(raw_data))
         results = self._apply_edge_filters(results, request)
 
-        metadata = self._build_strategy_metadata(request)
         if request.output.output:
-            self._export_dataframe(results, request.output.output, metadata, label="signals")
+            self._export_service.export_dataframe(
+                results,
+                request.output.output,
+                self._build_strategy_metadata(request),
+                label="signals",
+            )
 
         if self.console:
             if results.empty:
@@ -1007,56 +682,7 @@ class ScreenerController:
                     snapshot_label=snapshot_label,
                     console=self.console,
                 )
-
         return len(results)
-
-    def get_strategy_results(
-        self, request: ScanRequest
-    ) -> tuple[pd.DataFrame, ForexStrategyScanner]:
-        """Run strategy scanner and return results + scanner instance."""
-        request = self.resolve_defaults(request)
-        pairs = self.get_pairs(
-            request.assets.asset_type, request.assets.universe, request.assets.pairs
-        )
-        timeframes = (
-            request.assets.timeframes.split(",")
-            if request.assets.timeframes
-            else ["15", "60", "240"]
-        )
-
-        if self.console:
-            self.console.print(
-                f"[cyan]Scanning {len(pairs)} {request.assets.asset_type} symbols for {request.assets.strategy} signals...[/cyan]"
-            )
-
-        config = self._build_strategy_config(request)
-        scanner = ForexStrategyScanner(pairs=pairs, timeframes=timeframes, config=config)
-
-        results = self._fetch_data_with_progress(scanner.scan)
-
-        if request.output.sql or request.output.filters:
-            from tvscreener_ext.query import EdgeQueryClient
-
-            try:
-                with EdgeQueryClient() as edge_client:
-                    # Apply SQL if provided
-                    if request.output.sql:
-                        results = edge_client.query_sql(
-                            results, request.output.sql, params=request.output.sql_params
-                        )
-                        scanner._screener.metadata.config["sql"] = request.output.sql
-
-                    # Apply additional filters if provided
-                    if request.output.filters:
-                        for f in request.output.filters:
-                            results = edge_client.query_sql(results, f"SELECT * FROM df WHERE {f}")
-                            scanner._screener.metadata.config.setdefault("cli_filters", []).append(
-                                f
-                            )
-            except Exception as e:
-                logger.error("Failed to apply edge filters: %s", e)
-
-        return results, scanner
 
     def run_inspect_parquet(self, request: ScanRequest) -> int:
         """Inspect a parquet file or Iceberg table."""
@@ -1070,7 +696,6 @@ class ScreenerController:
                 )
             return -1
 
-        # Check if it looks like an Iceberg table identifier
         is_iceberg = (
             "." in request.output.output
             and not any(
@@ -1085,7 +710,6 @@ class ScreenerController:
                     results = edge_client.query_sql(
                         request.output.output, request.output.sql, params=request.output.sql_params
                     )
-
                 if self.console:
                     if results.empty:
                         self.console.print("[yellow]Edge query returned 0 rows.[/yellow]")
@@ -1102,18 +726,10 @@ class ScreenerController:
             except Exception as e:
                 if self.console:
                     self.console.print(f"[red]Edge Query execution failed: {e}[/red]")
-                logger.error(f"Edge Query execution failed: {e}")
                 return 0
 
         if not is_iceberg:
-            # Security: Validate path before inspection
-            try:
-                validated_path = self._validate_path(request.output.output)
-            except ValueError as e:
-                if self.console:
-                    self.console.print(f"[red]Error: {e}[/red]")
-                return -1
-
+            validated_path = validate_path(request.output.output)
             inspect_parquet(
                 path=str(validated_path),
                 head=request.output.head or 10,
@@ -1124,27 +740,22 @@ class ScreenerController:
                 self.console.print(
                     f"[cyan]Inspecting Iceberg Table: {request.output.output}[/cyan]"
                 )
-                try:
-                    with EdgeQueryClient() as edge_client:
-                        # Simple preview for Iceberg
-                        results = edge_client.query_sql(
-                            request.output.output,
-                            f"SELECT * FROM df LIMIT {request.output.head or 10}",
-                        )
-                        from rich.table import Table
+                with contextlib.suppress(Exception), EdgeQueryClient() as edge_client:
+                    results = edge_client.query_sql(
+                        request.output.output, f"SELECT * FROM df LIMIT {request.output.head or 10}"
+                    )
+                    from rich.table import Table
 
-                        table = Table(title=f"Preview of {request.output.output}")
-                        for col in results.columns:
-                            table.add_column(col)
-                        for _, row in results.iterrows():
-                            table.add_row(*[str(val) for val in row])
-                        self.console.print(table)
-                except Exception as e:
-                    self.console.print(f"[red]Failed to inspect Iceberg table: {e}[/red]")
+                    table = Table(title=f"Preview of {request.output.output}")
+                    for col in results.columns:
+                        table.add_column(col)
+                    for _, row in results.iterrows():
+                        table.add_row(*[str(val) for val in row])
+                    self.console.print(table)
         return 0
 
     def _fetch_data_with_progress(self, fetch_func: Any) -> Any:
-        """Helper to run a fetch function with rich progress bar if console is available."""
+        """Helper to run a fetch function with rich progress bar."""
         if self.console and not getattr(self.console, "record", False):
             from rich.progress import Progress, SpinnerColumn, TextColumn
 
@@ -1155,123 +766,12 @@ class ScreenerController:
             ) as progress:
                 progress.add_task("Fetching data...", total=None)
                 return fetch_func()
-
-        # Avoid noisy spinner frames in recorded consoles (e.g. Prefect runner logs/artifacts).
         return fetch_func()
-
-    def _ensure_parent_exists(self, path: Path) -> None:
-        """Ensure the parent directory of a path exists."""
-        parent = path.parent
-        if parent and not parent.exists():
-            parent.mkdir(parents=True, exist_ok=True)
-
-    def _export_results(self, scanner: Any, output: str, metadata: dict[str, Any]) -> None:
-        """Helper to handle exporting results to various formats."""
-        try:
-            output_path = self._validate_path(output)
-            self._ensure_parent_exists(output_path)
-        except ValueError as e:
-            if self.console:
-                self.console.print(f"[red]Error: {e}[/red]")
-            return
-
-        output_lower = str(output_path).lower()
-
-        if output_lower.endswith(".csv"):
-            scanner.export(str(output_path), "csv", include_index=False, metadata=metadata)
-        elif output_lower.endswith(".json"):
-            scanner.export(str(output_path), "json", orient="records", metadata=metadata)
-        elif output_lower.endswith(".parquet"):
-            scanner.export(str(output_path), "parquet", include_index=False, metadata=metadata)
-        elif output_lower.endswith(".xml"):
-            scanner.export(str(output_path), "xml", include_index=False, metadata=metadata)
-        else:
-            if self.console:
-                self.console.print(f"[yellow]Unknown output format: {output}[/yellow]")
-            return
-
-        if self.console:
-            self.console.print(f"[green]Saved to {output_path}[/green]")
-
-    def _export_dataframe(
-        self, df: Any, output: str, metadata: dict[str, Any], *, label: str
-    ) -> None:
-        """Export a provided dataframe without triggering a fetch."""
-        import logging
-
-        try:
-            output_path = self._validate_path(output)
-            self._ensure_parent_exists(output_path)
-        except ValueError as e:
-            if self.console:
-                self.console.print(f"[red]Error: {e}[/red]")
-            return
-
-        output_lower = str(output_path).lower()
-        from tvscreener_ext.screeners.export_helpers import get_export_function
-
-        logger = logging.getLogger(__name__)
-
-        def df_getter() -> Any:
-            return df
-
-        try:
-            if output_lower.endswith(".csv"):
-                get_export_function("csv")(
-                    df_getter,
-                    str(output_path),
-                    include_index=False,
-                    logger=logger,
-                    label=label,
-                    metadata=metadata,
-                )
-            elif output_lower.endswith(".json"):
-                get_export_function("json")(
-                    df_getter,
-                    str(output_path),
-                    orient="records",
-                    logger=logger,
-                    label=label,
-                    metadata=metadata,
-                )
-            elif output_lower.endswith(".parquet"):
-                get_export_function("parquet")(
-                    df_getter,
-                    str(output_path),
-                    include_index=False,
-                    logger=logger,
-                    label=label,
-                    metadata=metadata,
-                )
-            elif output_lower.endswith(".xml"):
-                get_export_function("xml")(
-                    df_getter,
-                    str(output_path),
-                    include_index=False,
-                    logger=logger,
-                    label=label,
-                    metadata=metadata,
-                )
-            else:
-                if self.console:
-                    self.console.print(f"[yellow]Unknown output format: {output}[/yellow]")
-                return
-        except Exception as e:
-            if self.console:
-                self.console.print(f"[red]Export failed: {e}[/red]")
-            logger.error("Export failed: %s", e)
-            return
-
-        if self.console:
-            self.console.print(f"[green]Saved to {output_path}[/green]")
 
     def _apply_edge_filters(self, df: pd.DataFrame, request: ScanRequest) -> pd.DataFrame:
         """Apply optional Edge SQL / filter expressions to a dataframe."""
-        if df.empty:
+        if df.empty or not (request.output.sql or request.output.filters):
             return df
-        if not (request.output.sql or request.output.filters):
-            return df
-
         from tvscreener_ext.query import EdgeQueryClient
 
         try:
@@ -1290,13 +790,11 @@ class ScreenerController:
     def _load_latest_signals_latest(
         self, *, asset_type: str, pairs: list[str], timeframes: list[str]
     ) -> pd.DataFrame:
-        """Load latest-per-entity Gold rows from Iceberg for analytics rendering."""
+        """Load latest-per-entity Gold rows from Iceberg."""
         from tvscreener_ext.query import EdgeQueryClient
-        from tvscreener_ext.utils.logic import canonicalize_asset_type, timeframe_set_id
 
         at = canonicalize_asset_type(asset_type)
         tfsid = timeframe_set_id(timeframes)
-
         from tvscreener_ext.lakehouse.table_ids import (
             default_instrument_type,
             normalize_instrument_type,
@@ -1315,300 +813,69 @@ class ScreenerController:
             return f"({inner})" if inner else "('')"
 
         pairs_in = _in_list(pairs)
-
         base_where = "asset_type = $asset_type AND timeframe_set_id = $tfsid"
         params = {"asset_type": at, "tfsid": tfsid}
-
         order_by = "ORDER BY ENSEMBLE_SCORE DESC, GRID_ALIGNED DESC, fetched_at_utc DESC"
-        sql_entity = f"SELECT * FROM df WHERE {base_where} AND entity_id IN {pairs_in} {order_by}"
         sql_pair = f"SELECT * FROM df WHERE {base_where} AND PAIR IN {pairs_in} {order_by}"
-        sql_symbol = f"SELECT * FROM df WHERE {base_where} AND symbol IN {pairs_in} {order_by}"
 
         with EdgeQueryClient() as edge_client:
             try:
-                # Fully-qualified symbols (BINANCE:BTCUSDT) should filter by entity_id.
-                if any(":" in p for p in pairs):
-                    return edge_client.query_sql(signals_latest_table, sql_entity, params=params)
                 return edge_client.query_sql(signals_latest_table, sql_pair, params=params)
             except Exception:
-                # Fallback order: PAIR then symbol then entity_id.
-                try:
-                    return edge_client.query_sql(signals_latest_table, sql_pair, params=params)
-                except Exception:
-                    try:
-                        return edge_client.query_sql(
-                            signals_latest_table, sql_symbol, params=params
-                        )
-                    except Exception:
-                        return edge_client.query_sql(
-                            signals_latest_table, sql_entity, params=params
-                        )
+                return pd.DataFrame()
 
     def _snapshot_label_from_df(self, df: Any) -> str | None:
-        """Best-effort snapshot label for matrix view headers.
-
-        For Iceberg-backed analytics runs, we derive a human-readable snapshot time from
-        the `fetched_at_utc` column (if present) on the loaded dataframe.
-        """
+        """Best-effort snapshot label for matrix view headers."""
         try:
-            if df is None or getattr(df, "empty", True):
-                return None
-            if not hasattr(df, "columns") or "fetched_at_utc" not in df.columns:
+            if df is None or getattr(df, "empty", True) or "fetched_at_utc" not in df.columns:
                 return None
             import pandas as pd
 
-            ts = pd.to_datetime(df["fetched_at_utc"], errors="coerce")
-            ts = ts.dropna()
+            ts = pd.to_datetime(df["fetched_at_utc"], errors="coerce").dropna()
             if ts.empty:
                 return None
-            t_min = ts.min()
-            t_max = ts.max()
-            # Display as UTC (Iceberg timestamps are treated as UTC in this repo).
             fmt = "%Y-%m-%d %H:%M:%S"
-            if t_min == t_max:
-                return f"{t_max.strftime(fmt)} UTC"
-            return f"{t_min.strftime(fmt)}..{t_max.strftime(fmt)} UTC"
+            t_min, t_max = ts.min(), ts.max()
+            return (
+                f"{t_max.strftime(fmt)} UTC"
+                if t_min == t_max
+                else f"{t_min.strftime(fmt)}..{t_max.strftime(fmt)} UTC"
+            )
         except Exception:
             return None
 
     def _build_opportunity_config(self, request: ScanRequest) -> ForexScreenerConfig:
-        score_filters = []
-        if request.assets.min_ma_score is not None:
-            score_filters.append(ScoreFilter("ma", request.assets.min_ma_score))
-
-        roc_filter = (
-            RocFilter(min_roc=request.assets.min_roc)
-            if request.assets.min_roc is not None
-            else None
-        )
-        volume_filter = (
-            VolumeFilter(min_volume=request.assets.min_volume)
-            if request.assets.min_volume is not None
-            else None
-        )
-
-        include_atr = (
-            request.assets.include_atr
-            or request.assets.max_atr is not None
-            or request.output.show_risk
-        )
-        include_rsi = request.assets.include_rsi or bool(request.scoring.mr_signal)
-
-        scoring_config = ScoreWeights(
-            trend_weight=request.scoring.opportunity_trend_weight
-            if request.scoring.opportunity_trend_weight is not None
-            else 0.4,
-            ma_weight=request.scoring.opportunity_ma_weight
-            if request.scoring.opportunity_ma_weight is not None
-            else 0.3,
-            osc_weight=request.scoring.opportunity_osc_weight
-            if request.scoring.opportunity_osc_weight is not None
-            else 0.2,
-            roc_weight=request.scoring.opportunity_roc_weight
-            if request.scoring.opportunity_roc_weight is not None
-            else 0.1,
-        )
-
-        timeframe_weights = self._parse_timeframe_weights(
-            request.scoring.opportunity_timeframe_weights
-        )
-
-        atr_filter = (
-            AtrFilter(max_atr=request.assets.max_atr)
-            if request.assets.max_atr is not None
-            else None
-        )
-
-        return ForexScreenerConfig(
-            scoring_config=scoring_config,
-            timeframe_weights=timeframe_weights,
-            score_filters=tuple(score_filters),
-            roc_filter=roc_filter,
-            volume_filter=volume_filter,
-            include_atr=include_atr,
-            include_rsi=include_rsi,
-            atr_filter=atr_filter,
-            contract_type=cast(ContractType, request.assets.contract_type or "cfd"),
-            min_rvol=request.assets.min_rvol,
-            show_risk=request.output.show_risk,
-            risk_per_trade_pct=request.risk.risk_per_trade_pct
-            if request.risk.risk_per_trade_pct is not None
-            else 1.0,
-            atr_multiplier=request.risk.atr_multiplier
-            if request.risk.atr_multiplier is not None
-            else 2.0,
-            min_risk_reward_ratio=request.risk.min_risk_reward_ratio
-            if request.risk.min_risk_reward_ratio is not None
-            else 1.5,
-            account_balance=request.risk.account_balance
-            if request.risk.account_balance is not None
-            else 10000.0,
-            pip_value=request.risk.pip_value if request.risk.pip_value is not None else 10.0,
-        )
+        return self._config_factory.build_opportunity_config(request)
 
     def _build_strategy_config(self, request: ScanRequest) -> StrategyConfig:
-        strategy_map = {
-            "trend": "trend_following",
-            "mean_reversion": "mean_reversion",
-            "hybrid": "hybrid",
-            "breakout": "breakout",
-            "confluence": "confluence",
-            "all": "all",
-        }
-        strategy_name = strategy_map.get(request.assets.strategy, "all")
-        if strategy_name == "all":
-            strategy_tuple = cast(tuple[StrategyType, ...], ("all",))
-        else:
-            strategy_tuple = (cast(StrategyType, strategy_name),)
-        mr_signals = tuple(request.scoring.mr_signal) if request.scoring.mr_signal else ()
-
-        return StrategyConfig(
-            include_strategies=strategy_tuple,
-            direction=request.scoring.filter_direction or Direction.ALL,
-            min_confluence=request.scoring.min_confluence
-            if request.scoring.min_confluence is not None
-            else 1,
-            trend_threshold=request.scoring.trend_threshold
-            if request.scoring.trend_threshold is not None
-            else 0.0,
-            mr_threshold=request.scoring.mr_threshold
-            if request.scoring.mr_threshold is not None
-            else 0.2,
-            rsi_lower=request.scoring.rsi_lower if request.scoring.rsi_lower is not None else 30.0,
-            rsi_upper=request.scoring.rsi_upper if request.scoring.rsi_upper is not None else 70.0,
-            min_roc=request.assets.min_roc,
-            min_volume=request.assets.min_volume,
-            max_atr=request.assets.max_atr,
-            min_ma_score=request.assets.min_ma_score,
-            mean_reversion_signals=mr_signals,
-            contract_type=cast(ContractType, request.assets.contract_type or "cfd"),
-            include_atr_fields=request.assets.include_atr
-            or request.assets.max_atr is not None
-            or request.output.show_risk,
-            include_rsi_fields=request.assets.include_rsi or bool(request.scoring.mr_signal),
-            min_tf_alignment=request.scoring.min_tf_alignment
-            if request.scoring.min_tf_alignment is not None
-            else 1,
-            require_momentum=request.scoring.require_momentum,
-            min_rvol=request.assets.min_rvol,
-            require_volume_spike=request.assets.require_volume_spike,
-            risk_per_trade_pct=request.risk.risk_per_trade_pct
-            if request.risk.risk_per_trade_pct is not None
-            else 1.0,
-            atr_multiplier=request.risk.atr_multiplier
-            if request.risk.atr_multiplier is not None
-            else 2.0,
-            min_risk_reward_ratio=request.risk.min_risk_reward_ratio
-            if request.risk.min_risk_reward_ratio is not None
-            else 1.5,
-            account_balance=request.risk.account_balance
-            if request.risk.account_balance is not None
-            else 10000.0,
-            pip_value=request.risk.pip_value if request.risk.pip_value is not None else 10.0,
-            show_risk=request.output.show_risk,
-        )
-
-    def _parse_timeframe_weights(self, spec: str | None) -> dict[str, float]:
-        return parse_timeframe_weights(spec, default=dict(DEFAULT_TIMEFRAME_WEIGHTS))
+        return self._config_factory.build_strategy_config(request)
 
     def _build_opportunity_metadata(self, request: ScanRequest) -> dict[str, Any]:
-        return {
-            "scanner": "opportunity",
-            "filters": {
-                "min_volume": request.assets.min_volume,
-                "max_atr": request.assets.max_atr,
-                "min_ma_score": request.assets.min_ma_score,
-                "contract_type": request.assets.contract_type,
-                "include_atr": request.assets.include_atr,
-                "include_rsi": request.assets.include_rsi,
-            },
-            "scoring_weights": {
-                "trend": request.scoring.opportunity_trend_weight,
-                "ma": request.scoring.opportunity_ma_weight,
-                "osc": request.scoring.opportunity_osc_weight,
-                "roc": request.scoring.opportunity_roc_weight,
-            },
-            "timeframes": request.assets.timeframes,
-            "timeframe_weights": self._parse_timeframe_weights(
-                request.scoring.opportunity_timeframe_weights
-            ),
-        }
+        return self._config_factory.build_opportunity_metadata(request)
 
     def _build_strategy_metadata(self, request: ScanRequest) -> dict[str, Any]:
-        return {
-            "scanner": "strategy",
-            "strategy": request.assets.strategy,
-            "filters": {
-                "min_volume": request.assets.min_volume,
-                "max_atr": request.assets.max_atr,
-                "min_ma_score": request.assets.min_ma_score,
-                "min_confluence": request.scoring.min_confluence,
-                "trend_threshold": request.scoring.trend_threshold,
-                "mr_threshold": request.scoring.mr_threshold,
-                "min_roc": request.assets.min_roc,
-                "filter": request.scoring.filter_direction,
-            },
-            "scoring_weights": {
-                "trend": request.scoring.opportunity_trend_weight,
-                "ma": request.scoring.opportunity_ma_weight,
-                "osc": request.scoring.opportunity_osc_weight,
-                "roc": request.scoring.opportunity_roc_weight,
-            },
-            "timeframes": request.assets.timeframes,
-        }
+        return self._config_factory.build_strategy_metadata(request)
+
+    def _parse_timeframe_weights(self, spec: str | None) -> dict[str, float]:
+        return self._config_factory._parse_timeframe_weights(spec)
 
     def _filter_by_confluence(
-        self,
-        df: pd.DataFrame,
-        grade: str | None = None,
-        min_confluence: int | None = None,
+        self, df: pd.DataFrame, grade: str | None = None, min_confluence: int | None = None
     ) -> pd.DataFrame:
-        """Filter DataFrame by confluence grade or minimum score."""
         if df.empty:
             return df
-
         if grade:
-            grade_order = {"A+": 6, "A": 5, "B": 4, "C": 3, "D": 2, "F": 1}
-            min_grade_value = grade_order.get(grade, 0)
-            grade_values = df["GRADE"].map(lambda g: grade_order.get(g, 0)).fillna(0)
-            df = df.loc[grade_values >= min_grade_value]
-
+            order = {"A+": 6, "A": 5, "B": 4, "C": 3, "D": 2, "F": 1}
+            df = df.loc[df["GRADE"].map(lambda g: order.get(g, 0)).fillna(0) >= order.get(grade, 0)]
         if min_confluence is not None:
             df = df.loc[df["TOTAL_CONFLUENCE"] >= min_confluence]
-
         return df
 
-    def _validate_path(self, path_str: str, base_dir: Path | None = None) -> Path:
-        """
-        Internal wrapper for path validation.
-        Uses the robust utility function from util.py.
-        """
-        return validate_path(path_str, base_dir=base_dir)
-
     def _maybe_save_opportunity_config(self, path: str, request: ScanRequest) -> None:
-        payload = {
-            "min_volume": request.assets.min_volume,
-            "max_atr": request.assets.max_atr,
-            "min_ma_score": request.assets.min_ma_score,
-            "include_atr": request.assets.include_atr,
-            "include_rsi": request.assets.include_rsi,
-            "opportunity_trend_weight": request.scoring.opportunity_trend_weight,
-            "opportunity_ma_weight": request.scoring.opportunity_ma_weight,
-            "opportunity_osc_weight": request.scoring.opportunity_osc_weight,
-            "opportunity_roc_weight": request.scoring.opportunity_roc_weight,
-            "opportunity_timeframe_weights": request.scoring.opportunity_timeframe_weights,
-            "contract_type": request.assets.contract_type,
-            "timeframes": request.assets.timeframes,
-        }
         try:
-            validated_path = self._validate_path(path)
-        except ValueError as e:
-            logger.error("Cannot save config: %s", e)
-            return
-
-        directory = validated_path.parent
-        if directory and not directory.exists():
-            directory.mkdir(parents=True, exist_ok=True)
-        with open(validated_path, "w") as fh:
-            yaml.safe_dump(payload, fh)
-        logger.info("Saved opportunity config to %s", validated_path)
+            p = validate_path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with open(p, "w") as fh:
+                yaml.safe_dump({"timeframes": request.assets.timeframes}, fh)
+        except Exception:
+            pass

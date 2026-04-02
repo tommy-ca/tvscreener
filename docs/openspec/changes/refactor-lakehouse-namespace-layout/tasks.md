@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 # Tasks: Refactor lakehouse namespace layout
 
 - [ ] Decide canonical `instrument_type` enums per asset type (forex/crypto/futures)

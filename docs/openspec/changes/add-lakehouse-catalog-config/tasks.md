@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## 1. Settings model (grouped nested config)
 - [x] 1.1 Add `LakehouseSettings` nested group to `tvscreener/config/settings.py`
   - [x] Local catalog model (base_dir/catalog_db/warehouse_dir)

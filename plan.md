@@ -1322,22 +1322,31 @@ Outcomes:
 
 Status: Repository architecture is now "Zero-Fork" verified at the package manager level. The environment is clean and stable.
 
-## 2026-04-01: Repository Review & Exploration (Continuous Refinement)
+## 2026-04-01: Technical Debt Audit & Decomposed Roadmap
 
-Goal: Explore the current state of the repository, identify remaining technical debt, and propose architectural improvements following SOLID, KISS, DRY, and YAGNI.
+Goal: Audit the monolithic `ScreenerController` and define a granular, SRP-compliant refactoring roadmap following SOLID, KISS, DRY, and YAGNI.
 
-Planned Work:
-- **Type Safety Audit**: Address the 100+ `ty` diagnostics found in the `extensions/` source and tests. These are primarily caused by monkeypatching and Narwhals generic type handling.
-- **Architectural Review**:
-    - Evaluate `orchestrator.py` (68KB) for decomposition into smaller, more focused services (SOLID).
-    - Review `scan.py` for potential logic duplication with `runner.py`.
-- **Documentation Parity**: Prune remaining references to deleted legacy directories (`workflows/`, `semantic/`, `todos/`) in old design documents and specifications.
-- **Dependency Audit**: Ensure all dependencies in `extensions/pyproject.toml` are strictly necessary (YAGNI).
+Audit Findings:
+- **`ScreenerController` (1,615 lines)**: Handles subcommand routing, request normalization, ticker discovery (universes), config generation, execution coordination, edge filtering, and artifact export. This is a severe violation of the Single Responsibility Principle.
+- **Tight Coupling**: Universe discovery is tightly coupled to execution, making it difficult to run dry-run audits or mock symbols without triggering full scans.
+- **IO Fragmentation**: File exports and metadata handling are scattered across internal methods.
+
+Audited Roadmap (Phased Refactor):
+- **Phase 1: Extraction & Decoupling** (Completed)
+    - [x] Implement `UniverseResolver` in `tvscreener_ext/services/universe.py`.
+    - [x] Implement `ExportService` in `tvscreener_ext/services/export.py`.
+    - [x] Update `ScreenerController` to delegate to these new services.
+- **Phase 2: Configuration & Logic Pureness** (Current)
+    - [x] Implement `ConfigFactory` in `tvscreener_ext/services/config.py`.
+    - [ ] Extract `ScanWorkflow` to manage the coordination lifecycle.
+- **Phase 3: CLI Hardening**
+    - [ ] Refactor `scan.py` to use a declarative command registry.
+    - [ ] Remove the remaining legacy methods from `ScreenerController`.
 
 Next Steps:
-- Perform surgical type fixes in `extensions/src/tvscreener_ext/`.
-- Propose a refactoring plan for the large `orchestrator.py` module.
-- Scan and fix documentation references to obsolete paths.
+- Complete implementation of `ScanWorkflow` and migrate execution coordination from `ScreenerController`.
+- Mark historical documentation in `docs/openspec/changes/` as `LEGACY`.
+- Audit `extensions/src/tvscreener_ext/scan.py` for subcommand refactoring.
 
 
 

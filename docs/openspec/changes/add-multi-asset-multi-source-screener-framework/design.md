@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## Context (current architecture)
 `tvscreener` runs scanners (opportunity/strategy) against TradingView endpoints, transforms results,
 and persists medallion outputs to an Iceberg lakehouse:

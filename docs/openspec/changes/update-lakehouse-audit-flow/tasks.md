@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## 1. Documentation (lakehouse-first runbook + audit ledger)
 - [x] 1.1 Rewrite `docs/audit/lakehouse-audit-flow.md` as an Iceberg-first runbook
   - [x] Replace any “archive `exports/`” guidance with “no repository snapshots by default”

@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## 1. Document current schemas (source of truth = code)
 - [ ] 1.1 Capture Bronze TradingView screener snapshot schema (required vs optional columns)
 - [ ] 1.2 Capture Silver normalized schema (identity + canonical rename rules)

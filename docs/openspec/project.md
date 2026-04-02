@@ -76,6 +76,16 @@ Packaging reality check:
 - **Refactoring Candidates**: Large modules (e.g. `orchestrator.py` > 50KB) should be periodically evaluated for decomposition following SOLID principles.
 - **Documentation Parity**: Design documents and specifications must be updated to remove references to deleted legacy components or defunct paths.
 
+## Technical Debt & Refactoring (Audited 2026-04-01)
+- **Service Decomposition**: The monolithic `ScreenerController` is being refactored into specialized services defined in `docs/architecture/SERVICES.md`.
+- **Monolithic Controller**: `ScreenerController` in `orchestrator.py` (~1.6k LOC) MUST be decomposed into specialized services to satisfy SRP and improve testability:
+    - **`UniverseResolver`**: Decouples symbol discovery from execution. Responsible for resolving asset types, aliases, and dynamic universes (e.g. Binance).
+    - **`ConfigFactory`**: Translates the public `ScanRequest` API into internal engine configurations (`ForexScreenerConfig`, `StrategyConfig`).
+    - **`ExportService`**: Centralizes IO and metadata handling, ensuring consistent artifact generation across CSV, JSON, and Parquet.
+    - **`ScanWorkflow`**: Coordinates the high-level execution lifecycle (Discovery -> Config -> Fetch -> Filter -> Export).
+- **CLI Boilerplate**: `scan.py` should be refactored to use a command-registry pattern to reduce `argparse` overhead and enforce consistent subcommand interfaces.
+- **Stale Documentation**: Historical specifications in `docs/openspec/changes/` must be audited and marked with a `LEGACY` header to avoid confusion with the current Zero-Fork architecture.
+
 ## Workspace hygiene
 - Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).
 - Local runner state lives under `.prefect-home/` (gitignored); delete it to reset local Prefect state.

@@ -1,3 +1,9 @@
+# [LEGACY DOCUMENTATION]
+
+> **Note**: This document is preserved for historical context. Its contents may refer to deprecated directories (`workflows/`, `semantic/`, `todos/`) or outdated architectural patterns. For the current authoritative project specification, refer to `docs/openspec/project.md` and `docs/architecture/`.
+
+---
+
 ## Context
 The project uses a local Iceberg lakehouse to persist TradingView scan outputs as medallion tables:
 Bronze (raw ingestion), Silver (standardization + identity), and Gold (features/signals for serving).
