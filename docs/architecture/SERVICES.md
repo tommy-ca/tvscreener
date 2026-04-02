@@ -37,7 +37,9 @@ To satisfy the **Single Responsibility Principle (SRP)** and improve testability
 - Manages progress bars and console logging.
 - **Interface**:
   ```python
-  def execute(self, request: ScanRequest) -> int: ...
+  def run_opportunity_scan(self, request: ScanRequest) -> int: ...
+  def run_strategy_scan(self, request: ScanRequest) -> int: ...
+  def run_inspect(self, request: ScanRequest) -> int: ...
   ```
 
 ## 5. MaintenanceService
@@ -51,7 +53,19 @@ To satisfy the **Single Responsibility Principle (SRP)** and improve testability
   def prune_artifacts(self, base_dir: Path, older_than_days: int = 30) -> int: ...
   ```
 
-## 6. CommandRegistry (CLI)
+## 6. ReportingService
+**Responsibility**: Audits, Reports, and Reviews.
+- Executes universe audits and generates structured status reports.
+- Handles legacy report generation via DuckDB.
+- Coordinates audit+report review pipelines.
+- **Interface**:
+  ```python
+  def run_audit(self, args: argparse.Namespace) -> int: ...
+  def run_report(self, args: argparse.Namespace) -> int: ...
+  def run_review(self, args: argparse.Namespace) -> int: ...
+  ```
+
+## 7. CommandRegistry (CLI)
 **Responsibility**: Declarative Subcommand Routing.
 - Replaces the `argparse` switch-case in `scan.py`.
 - Maps subcommand strings to specialized handler methods.

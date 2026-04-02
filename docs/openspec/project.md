@@ -82,6 +82,7 @@ Packaging reality check:
     - **`UniverseResolver`**: Decouples symbol discovery from execution. Responsible for resolving asset types, aliases, and dynamic universes (e.g. Binance).
     - **`ConfigFactory`**: Translates the public `ScanRequest` API into internal engine configurations (`ForexScreenerConfig`, `StrategyConfig`).
     - **`ExportService`**: Centralizes IO and metadata handling, ensuring consistent artifact generation across CSV, JSON, and Parquet.
+    - **`ReportingService`**: Dedicated logic for universe audits, historical reports, and validation reviews.
     - **`ScanWorkflow`**: Coordinates the high-level execution lifecycle (Discovery -> Config -> Fetch -> Filter -> Export).
 - **CLI Boilerplate**: `scan.py` should be refactored to use a command-registry pattern to reduce `argparse` overhead and enforce consistent subcommand interfaces.
 - **Stale Documentation**: Historical specifications in `docs/openspec/changes/` must be audited and marked with a `LEGACY` header to avoid confusion with the current Zero-Fork architecture.

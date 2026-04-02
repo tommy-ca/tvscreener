@@ -1339,7 +1339,8 @@ Audited Roadmap (Phased Refactor):
 - **Phase 2: Configuration & Logic Pureness** (Completed)
     - [x] Implement `ConfigFactory` in `tvscreener_ext/services/config.py`.
     - [x] Extract `ScanWorkflow` to manage the coordination lifecycle.
-    - [x] Update `ScreenerController` to delegate to `ScanWorkflow`.
+    - [x] Extract `ReportingService` to handle audits, reports, and reviews.
+    - [x] Update `ScreenerController` to delegate to these services.
 - **Phase 3: CLI Hardening** (Completed)
     - [x] Refactor `scan.py` to use a declarative command registry (`argparse` subparsers).
     - [x] Decouple CLI parsing from orchestrator initialization.
