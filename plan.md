@@ -1405,7 +1405,22 @@ Outcomes:
 - **Table Artifact Success**: Verified that `results_top_rows.json` and `results_grade_summary.json` are correctly generated and linked in `run_result.json` when `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` is set.
 - **Matrix Persistence**: Fixed an issue where `matrix_path` was missing from `run_result.json`. `ScanWorkflow` now explicitly captures and writes `matrix.txt` before the runner completes.
 - **Validation Script Hardening**: Updated `tvscreener-ext-validate` to enable table artifacts by default, ensuring all future validation runs exercise these paths.
-- **Status**: All service-oriented architectural updates and discovery contract enhancements are verified and stable across the full planned asset universe.
+Status: All service-oriented architectural updates and discovery contract enhancements are verified and stable across the full planned asset universe.
+
+## 2026-04-03: Deployment Verification & Prefect Integration
+
+Goal: Verify that the new service-oriented architecture is correctly integrated with Prefect deployments and workers.
+
+Outcomes:
+- **Deployment Migration**: Successfully migrated and applied Prefect deployments using the new `tvscreener-deploy-schedules` CLI. This confirms that the deployments correctly reference the consolidated batch templates in `extensions/src/tvscreener_ext/prefect/batches/`.
+- **Worker & Pool Hardening**: Verified that the `tvscreener-prefectctl pool` and `worker` commands are operational and correctly configured for the new architecture.
+- **In-Process Flow Validation**: Confirmed that Prefect flow runs (triggered via `--runner prefect`) execute flawlessly using the refactored service layer, with full server-side recording and artifact publication.
+- **Status**: The orchestration layer is fully decoupled and verified. The repository is ready for production scheduling.
+
+Next Steps:
+- Merge `feat/forex-strategy-scanner` into `main`.
+- Perform final workspace cleanup of temporary verification scripts.
+
 
 Next Steps:
 - Merge `feat/forex-strategy-scanner` into `main`.
