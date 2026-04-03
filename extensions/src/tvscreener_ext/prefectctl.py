@@ -212,7 +212,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.server_cmd == "stop":
             try:
-                server_cli.stop()
+                asyncio.run(server_cli.stop())
             except SystemExit as exc:
                 return int(getattr(exc, "code", 1) or 1)
             except Exception as exc:

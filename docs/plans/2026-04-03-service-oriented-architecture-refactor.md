@@ -1514,24 +1514,24 @@ Outcomes:
 
 Status: **Cleanup Cycle Complete**. The repository is in a pristine, architecturally sound state.
 
-## 2026-04-03: Gemini CLI Skills Brainstorming & Rescheduling
+## 2026-04-03: Environment Validator Skill & Stability Audit
 
-Goal: Define a plan for automating common workflows via Gemini CLI Skills and reschedule future architectural goals.
+Goal: Pilot the `environment-validator` Gemini CLI skill and perform a stability audit of the orchestration layer.
 
 Outcomes:
-- **Skills Brainstorm**: Created `docs/brainstorms/2026-04-03-gemini-cli-skills-brainstorm.md` identifying 5 key skills:
-    - `market-scanner`: Guided scan configuration and execution.
-    - `lakehouse-auditor`: Lakehouse inspection and natural language SQL.
-    - `workflow-manager`: Prefect orchestration and queue management.
-    - `strategy-developer`: Scaffolding for new technical indicators.
-    - `environment-validator`: Zero-fork and environment health checks.
-- **Spec Update**: Added a "Gemini CLI Skills" section to `docs/openspec/project.md`.
-- **Rescheduled Tasks**: Confirmed that Strategy Layering (ICT/SMC, Volume Profile) and Logical Tiered Namespaces are moved to the v0.2.0 roadmap.
+- **Skill Implementation**: Created `extensions/skills/environment-validator/SKILL.md`. This skill automates zero-fork checks, Prefect health, and workspace hygiene.
+- **Bug Discovery (Orchestration)**: 
+    - Identified that `tvscreener-prefectctl` was failing to await the `server_cli.stop()` coroutine, leading to orphan processes or incomplete shutdowns. (Fixed)
+    - Observed Prefect 3.x background server instability where processes die immediately despite reporting success. 
+- **Workspace Hygiene**: Confirmed that `clean-workspace.sh --all` correctly purges all non-contractual artifacts, leaving a clean environment for v0.2.0 development.
+- **Roadmap Update**: Added "Prefect Stability" to the `v0.2.0-roadmap.md` to address the discovered orchestration issues.
+
+Status: **Ready for v0.2.0 Cycle**. Core architecture is verified; orchestration hardening is now a prioritized task for the next phase.
 
 Next Steps:
 - Merge `feat/forex-strategy-scanner` into `main`.
-- Implement the `environment-validator` skill as a pilot.
-- Begin ICT/SMC research for the v0.2.0 cycle.
+- Begin execution of `docs/plans/2026-04-03-v0.2.0-roadmap.md`.
+- Stabilize Prefect server startup in local dev environments.
 
 
 
