@@ -89,10 +89,9 @@ Packaging reality check:
 - **Stale Documentation**: Historical specifications in `docs/openspec/changes/` must be audited and marked with a `LEGACY` header to avoid confusion with the current Zero-Fork architecture.
 
 ## Workspace hygiene
-- Keep repo-root noise low: generated outputs belong under `artifacts/` / `exports/` (both gitignored).
-- Local runner state lives under `.prefect-home/` (gitignored); delete it to reset local Prefect state.
-- Local lakehouse state can live under `.tvscreener/lakehouse/` (gitignored) when `TVSCREENER_LAKEHOUSE_BASE_DIR` is
-  set for reproducible local/remote parity.
+- **Root Layout**: The project root MUST be kept clean. Major logic resides in `extensions/`, tests in `tests/`, and documentation in `docs/`.
+- **Live Plan**: The active project plan resides at `docs/plans/2026-04-03-service-oriented-architecture-refactor.md`. A shim `plan.md` exists at the root for convenience.
+- **Gitignore Integrity**: Root-level directories (`/artifacts/`, `/exports/`, `/.prefect-home/`) MUST use absolute paths in `.gitignore` to avoid accidental shadowing of documentation or internal package artifacts.
 - Common safe cleanup (gitignored): `rm -rf __pycache__ .pytest_cache .ruff_cache build *.egg-info .prefect-home.bak-*`
 
 Recommended:
