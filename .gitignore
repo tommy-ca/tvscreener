@@ -2,16 +2,16 @@
 /tvscreener/
 
 # Data exports
-exports/
-artifacts/
-.env
-.prefect-home/
-.prefect-home.bak*/
-.tvscreener/
+/exports/
+/artifacts/
+/.env
+/.prefect-home/
+/.prefect-home.bak*/
+/.tvscreener/
 *.parquet
 *.meta.json
-.tmp/
-.claude/
+/.tmp/
+/.claude/
 nul
 # C extensions
 *.so
@@ -141,8 +141,8 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
-.venv
+/.env
+/.venv
 env/
 venv/
 ENV/
@@ -165,7 +165,7 @@ venv.bak/
 dmypy.json
 
 # ruff
-.ruff_cache/
+/.ruff_cache/
 
 # Pyre type checker
 .pyre/
@@ -191,3 +191,6 @@ debug*.py
 /test_*.py
 /test_*.xml*
 /test_*.json
+
+# Accidental test artifacts
+/MagicMock/
