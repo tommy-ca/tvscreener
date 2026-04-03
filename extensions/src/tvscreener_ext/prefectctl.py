@@ -170,6 +170,14 @@ def main(argv: list[str] | None = None) -> int:
         from prefect.cli import server as server_cli  # ty: ignore
 
         if args.server_cmd == "start":
+            # Check if port is already in use
+            import socket
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex((str(args.host), int(args.port))) == 0:
+                    print(f"server_start=error err='Port {args.port} is already in use.'")
+                    return 1
+
             try:
                 server_cli.start(
                     host=str(args.host),
@@ -186,7 +194,10 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.background:
                 ready_url = f"{_env()['PREFECT_API_URL'].rstrip('/')}/ready"
-                _wait_for_server_ready(url=ready_url, timeout_seconds=30)
+                if not _wait_for_server_ready(url=ready_url, timeout_seconds=60):
+                    print(
+                        "server_start=warning msg='Server started in background but /ready timed out.'"
+                    )
             return 0
 
         if args.server_cmd == "ensure":

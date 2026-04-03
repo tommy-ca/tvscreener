@@ -1528,10 +1528,24 @@ Outcomes:
 
 Status: **Ready for v0.2.0 Cycle**. Core architecture is verified; orchestration hardening is now a prioritized task for the next phase.
 
+## 2026-04-03: Gemini CLI Skills Implementation (Batch 1)
+
+Goal: Implement the first batch of specialized Gemini CLI Skills to automate professional workflows.
+
+Outcomes:
+- **Automation Skills**: Successfully implemented 3 additional skills:
+    - `market-scanner`: Interactive guided scan configuration.
+    - `lakehouse-auditor`: Deep inspection of Medallion tables with DuckDB SQL support.
+    - `workflow-manager`: Prefect orchestration management (server, queues, workers).
+- **Stability Hardening**: 
+    - Updated `tvscreener-prefectctl` to perform pre-start port checks, preventing redundant startup attempts and ambiguous error messages.
+    - Increased `/ready` timeout to 60s for background server initialization.
+- **Roadmap Advancement**: 3/6 initial v0.2.0 success criteria have been met.
+
 Next Steps:
-- Merge `feat/forex-strategy-scanner` into `main`.
-- Begin execution of `docs/plans/2026-04-03-v0.2.0-roadmap.md`.
-- Stabilize Prefect server startup in local dev environments.
+- Implement `strategy-developer` skill.
+- Research ICT/SMC feature extraction logic.
+- Plan migration to tiered logical namespaces.
 
 
 
