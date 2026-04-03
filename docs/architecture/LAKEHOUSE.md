@@ -148,5 +148,5 @@ with EdgeQueryClient() as client:
 Lakehouse maintenance can be performed via the CLI:
 
 ```bash
-uv run tvscreener-scan maintenance --expire-snapshots --days 7 --table tvscreener.gold --config tvscreener.yaml
+uv run tvscreener-ext-scan maintenance --expire-snapshots --days 7 --table tvscreener.gold --config tvscreener.yaml
 ```
