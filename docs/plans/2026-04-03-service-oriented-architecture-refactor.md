@@ -1460,6 +1460,27 @@ Completed Tasks Collection:
 
 Status: **Branch Shippable**. All validation runsets (Forex, Crypto, Stock) are passing with 100% success across 335+ unit tests and Prefect multi-stage flows.
 
+## 2026-04-03: Rescheduled Tasks & Future Roadmap
+
+The following architectural goals and feature expansions have been rescheduled for the next development cycle (v0.2.0+):
+
+### 1. Strategy Layering (Advanced Indicators)
+- Implement ICT/SMC feature extraction (Fair Value Gaps, Liquidity Sweeps, Market Structure Shifts).
+- Add Volume Profile analytics (POC, Value Area High/Low).
+- Support `market_bars` (OHLCV) ingestion stage for higher-resolution technical analysis.
+
+### 2. Cross-Sectional Momentum (Binance)
+- Refine `binance_spot_cs_momentum` and `binance_perp_cs_momentum` universes with market-cap anchored filters.
+- Implement specialized CSMOM/CSMR rankers in the `ReportingService`.
+
+### 3. Pipeline Scalability
+- Migrate from single-level namespace physical tables to logical tiered namespaces (`tvscreener.<asset>.<instrument>.<stage>.<dataset>`).
+- Add support for partitioned Parquet snapshots in the `ExportService`.
+
+Next Steps:
+- Merge `feat/forex-strategy-scanner` into `main`.
+- Initialize `v0.2.0-roadmap` branch for Strategy Layering work.
+
 
 
 
