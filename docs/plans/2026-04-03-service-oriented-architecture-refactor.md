@@ -1475,7 +1475,8 @@ Status: **Architecture Hardened & Verified**. The repository is now a high-fidel
 
 Next Steps:
 - Merge `feat/forex-strategy-scanner` into `main`.
-- Initialize `v0.2.0-roadmap` branch for Strategy Layering work.
+- Begin execution of `docs/plans/2026-04-03-v0.2.0-roadmap.md`.
+- Pilot the `environment-validator` Gemini CLI skill.
 
 ## 2026-04-03: Rescheduled Tasks & Future Roadmap
 
@@ -1496,7 +1497,8 @@ The following architectural goals and feature expansions have been rescheduled f
 
 Next Steps:
 - Merge `feat/forex-strategy-scanner` into `main`.
-- Initialize `v0.2.0-roadmap` branch for Strategy Layering work.
+- Begin execution of `docs/plans/2026-04-03-v0.2.0-roadmap.md`.
+- Pilot the `environment-validator` Gemini CLI skill.
 
 ## 2026-04-03: Documentation Archival & Orchestrator Hardening
 

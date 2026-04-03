@@ -82,7 +82,11 @@ Packaging reality check:
 ## Gemini CLI Skills
 - **Automation**: Common workflows (scanning, auditing, maintenance) SHOULD be automated via specialized Gemini CLI Skills.
 - **Discovery**: Skills should be discoverable via keywords like "scan", "audit", "prefect", or "lakehouse".
-- **Implementation**: Skills are defined in `docs/brainstorms/2026-04-03-gemini-cli-skills-brainstorm.md` and should be implemented as `SKILL.md` files in the repository.
+- **Implementation**: Skills are defined in `docs/brainstorms/2026-04-03-gemini-cli-skills-brainstorm.md` and tracked in the `v0.2.0 Roadmap`.
+
+## Roadmap
+The next development cycle is defined in:
+- `docs/plans/2026-04-03-v0.2.0-roadmap.md`
 
 ## Technical Debt & Refactoring (Audited 2026-04-01)
 - **Service Decomposition**: The monolithic `ScreenerController` is being refactored into specialized services defined in `docs/architecture/SERVICES.md`.
