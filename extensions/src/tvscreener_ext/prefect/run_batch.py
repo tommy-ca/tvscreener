@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 try:
-    from prefect import flow, tags, task
+    from prefect import flow, tags, task  # ty: ignore
 
     _PREFECT_AVAILABLE = True
 except Exception:  # pragma: no cover
@@ -94,7 +94,7 @@ def _maybe_publish_prefect_matrix_artifact(
         return
 
     with contextlib.suppress(Exception):
-        from prefect.artifacts import create_markdown_artifact
+        from prefect.artifacts import create_markdown_artifact  # ty: ignore
 
         from tvscreener_ext.semantic_artifacts import (
             resolve_latest_successful_data_params_hash,
@@ -185,7 +185,7 @@ def _maybe_publish_prefect_results_table_artifact(
     if (os.getenv("TVSCREENER_PUBLISH_TABLE_ARTIFACTS") or "").strip() != "1":
         return
     try:
-        from prefect.artifacts import create_table_artifact
+        from prefect.artifacts import create_table_artifact  # ty: ignore
 
         from tvscreener_ext.semantic_artifacts import (
             resolve_latest_successful_data_params_hash,

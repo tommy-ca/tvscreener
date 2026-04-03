@@ -5,18 +5,10 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from tvscreener_ext.config import load_settings
-from tvscreener_ext.config.universe import AssetUniverse, ConfigurationError
-from tvscreener_ext.lakehouse import get_manager
-from tvscreener_ext.models import (
-    AssetSelection,
-    OutputConfig,
-    RiskConfig,
-    ScanRequest,
-    ScoringConfig,
-)
+from tvscreener_ext.config.universe import AssetUniverse
+from tvscreener_ext.models import ScanRequest
 from tvscreener_ext.screeners.registry import ScreenerFamilyRegistry
 from tvscreener_ext.services.config import ConfigFactory
 from tvscreener_ext.services.export import ExportService
@@ -24,10 +16,7 @@ from tvscreener_ext.services.maintenance import MaintenanceService
 from tvscreener_ext.services.reporting import ReportingService
 from tvscreener_ext.services.universe import UniverseResolver
 from tvscreener_ext.services.workflow import ScanWorkflow
-from tvscreener_ext.utils.logic import (
-    canonicalize_asset_type,
-    validate_path,
-)
+from tvscreener_ext.utils.logic import validate_path
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -79,101 +68,11 @@ class ScreenerController:
 
     def resolve_defaults(self, request: ScanRequest) -> ScanRequest:
         """Fill in missing parameters from settings."""
-        request.assets.asset_type = canonicalize_asset_type(request.assets.asset_type)
-        settings = load_settings(request.output.config_path)
-
-        if request.assets.universe is None:
-            request.assets.universe = settings.default_universe
-
-        if request.assets.timeframes is None:
-            request.assets.timeframes = settings.default_timeframes
-        if request.assets.contract_type is None:
-            request.assets.contract_type = settings.contract_type
-
-        # Default instrument type for crypto universes
-        if (
-            request.assets.asset_type == "crypto"
-            and getattr(request.assets, "instrument_type", None) is None
-        ):
-            if request.assets.universe and "perp" in request.assets.universe:
-                request.assets.instrument_type = "perp"
-            else:
-                request.assets.instrument_type = "spot"
-
-        if request.assets.contract_type is not None:
-            valid_contracts = ("spot", "cfd", "spreadbet", "all")
-            if request.assets.contract_type not in valid_contracts:
-                raise ConfigurationError(
-                    f"Invalid contract type: {request.assets.contract_type}. Valid options: {', '.join(valid_contracts)}"
-                )
-
-        # Scoped defaults: use opportunity settings if scanner is 'opportunity', else fallback to general
-        def _resolve_val(attr: str, scanner: str) -> Any:
-            # Check components
-            for component in [request.assets, request.scoring, request.risk, request.output]:
-                if hasattr(component, attr):
-                    req_val = getattr(component, attr)
-                    if req_val is not None:
-                        return req_val
-
-            # Potential override from settings
-            settings_val = None
-            if scanner == "opportunity":
-                settings_val = getattr(settings.opportunity, attr, None)
-
-            # Fallback to top-level settings
-            if settings_val is None:
-                settings_val = getattr(settings, attr, None)
-
-            return settings_val
-
-        request.assets.min_volume = _resolve_val("min_volume", request.assets.scanner)
-        request.assets.max_atr = _resolve_val("max_atr", request.assets.scanner)
-        request.assets.min_ma_score = _resolve_val("min_ma_score", request.assets.scanner)
-
-        if request.scoring.min_confluence is None:
-            request.scoring.min_confluence = settings.min_confluence
-        if request.scoring.trend_threshold is None:
-            request.scoring.trend_threshold = settings.trend_threshold
-        if request.scoring.mr_threshold is None:
-            request.scoring.mr_threshold = settings.mr_threshold
-        if request.scoring.rsi_lower is None:
-            request.scoring.rsi_lower = settings.rsi_lower
-        if request.scoring.rsi_upper is None:
-            request.scoring.rsi_upper = settings.rsi_upper
-        if request.assets.min_roc is None:
-            request.assets.min_roc = settings.min_roc
-
-        # Opportunity weights
-        if request.scoring.opportunity_trend_weight is None:
-            request.scoring.opportunity_trend_weight = settings.opportunity.trend_weight
-        if request.scoring.opportunity_ma_weight is None:
-            request.scoring.opportunity_ma_weight = settings.opportunity.ma_weight
-        if request.scoring.opportunity_osc_weight is None:
-            request.scoring.opportunity_osc_weight = settings.opportunity.osc_weight
-        if request.scoring.opportunity_roc_weight is None:
-            request.scoring.opportunity_roc_weight = settings.opportunity.roc_weight
-        if request.scoring.opportunity_timeframe_weights is None:
-            request.scoring.opportunity_timeframe_weights = settings.opportunity.timeframe_weights
-
-        # Risk management defaults
-        if request.scoring.min_tf_alignment is None:
-            request.scoring.min_tf_alignment = settings.risk.min_tf_alignment
-
-        if request.risk.risk_per_trade_pct is None:
-            request.risk.risk_per_trade_pct = settings.risk.risk_per_trade_pct
-        if request.risk.atr_multiplier is None:
-            request.risk.atr_multiplier = settings.risk.atr_multiplier
-        if request.risk.min_risk_reward_ratio is None:
-            request.risk.min_risk_reward_ratio = settings.risk.min_risk_reward_ratio
-        if request.risk.account_balance is None:
-            request.risk.account_balance = settings.risk.account_balance
-
-        return request
+        return self._config_factory.normalize_request(request)
 
     def run_scan(self, request: ScanRequest) -> int:
         """Main entry point to run a scan."""
-        request = self.resolve_defaults(request)
+        request = self._config_factory.normalize_request(request)
         return self._family_registry.run(request.assets.scanner, request)
 
     def run_maintenance(self, args: argparse.Namespace) -> int:
@@ -203,6 +102,8 @@ class ScreenerController:
                 self.console.print(f"   [green]Pruned {count} artifact directories.[/green]")
 
         # 3. Lakehouse Maintenance
+        from tvscreener_ext.lakehouse import get_manager
+
         manager = get_manager(getattr(args, "config", None))
         table_name = getattr(args, "table", "forex.opportunities")
 
@@ -278,88 +179,6 @@ class ScreenerController:
             logger.error("Edge Query failed: %s", e)
             return -1
 
-    def run_from_args(self, args: argparse.Namespace) -> int:
-        """Run scan from argparse namespace."""
-        get_manager(getattr(args, "config", None))
-
-        command = getattr(args, "command", "scan")
-        if command == "maintenance":
-            return self.run_maintenance(args)
-        if command == "query":
-            return self.run_query(args)
-        if command == "audit":
-            return self.run_audit(args)
-        if command == "report":
-            return self.run_report(args)
-        if command == "review":
-            return self.run_review(args)
-
-        matrix_mode = getattr(args, "matrix", True)
-        detailed_mode = getattr(args, "detailed", False)
-
-        request = ScanRequest(
-            assets=AssetSelection(
-                scanner=args.scanner,
-                pipeline=getattr(args, "pipeline", "both"),
-                strategy=args.strategy,
-                asset_type=args.asset_type,
-                universe=args.universe,
-                pairs=args.pairs,
-                timeframes=args.timeframes,
-                contract_type=args.contract_type,
-                instrument_type=getattr(args, "instrument_type", None),
-                min_volume=args.min_volume,
-                max_atr=args.max_atr,
-                min_ma_score=args.min_ma_score,
-                min_roc=args.min_roc,
-                min_rvol=args.min_rvol,
-                require_volume_spike=args.require_volume_spike,
-                include_atr=args.include_atr,
-                include_rsi=args.include_rsi,
-            ),
-            scoring=ScoringConfig(
-                opportunity_trend_weight=args.opportunity_trend_weight,
-                opportunity_ma_weight=args.opportunity_ma_weight,
-                opportunity_osc_weight=args.opportunity_osc_weight,
-                opportunity_roc_weight=args.opportunity_roc_weight,
-                opportunity_timeframe_weights=args.opportunity_timeframe_weights,
-                filter_direction=getattr(args, "direction", None),
-                min_confluence=args.min_confluence,
-                trend_threshold=args.trend_threshold,
-                mr_threshold=args.mr_threshold,
-                rsi_lower=args.rsi_lower,
-                rsi_upper=args.rsi_upper,
-                mr_signal=args.mr_signal or [],
-                min_tf_alignment=args.min_tf_alignment,
-                require_momentum=args.require_momentum,
-            ),
-            risk=RiskConfig(
-                risk_per_trade_pct=args.risk_per_trade,
-                atr_multiplier=args.atr_multiplier,
-                min_risk_reward_ratio=args.min_risk_reward,
-                account_balance=args.account_balance,
-            ),
-            output=OutputConfig(
-                output=args.output,
-                detailed=detailed_mode,
-                matrix=matrix_mode,
-                limit=args.limit,
-                head=args.head,
-                metadata_only=args.metadata_only,
-                save_config=args.save_config,
-                config_path=args.config,
-                verbose=args.verbose,
-                show_risk=getattr(args, "show_risk", False),
-                sql=getattr(args, "sql", None),
-                sql_params=getattr(args, "sql_params", {}),
-                filters=getattr(args, "filter", []) or [],
-                confluence_grade=args.confluence_grade,
-                min_opportunity_confluence=args.min_opportunity_confluence,
-            ),
-        )
-
-        return self.run_scan(request)
-
     def run_audit(self, args: argparse.Namespace) -> int:
         """Run audits and write structured reports."""
         return self._reporting_service.run_audit(args)
@@ -374,12 +193,10 @@ class ScreenerController:
 
     def run_opportunity_scan(self, request: ScanRequest) -> int:
         """Run opportunity screener and handle output."""
-        request = self.resolve_defaults(request)
         return self._workflow.run_opportunity_scan(request)
 
     def run_strategy_scan(self, request: ScanRequest) -> int:
         """Run strategy scanner and handle output."""
-        request = self.resolve_defaults(request)
         return self._workflow.run_strategy_scan(request)
 
     def run_inspect_parquet(self, request: ScanRequest) -> int:

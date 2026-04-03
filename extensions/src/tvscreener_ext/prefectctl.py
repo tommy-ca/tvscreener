@@ -167,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
     _load_env()
 
     if args.cmd == "server":
-        from prefect.cli import server as server_cli
+        from prefect.cli import server as server_cli  # ty: ignore
 
         if args.server_cmd == "start":
             try:
@@ -221,8 +221,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
     if args.cmd == "pool":
-        from prefect.client.orchestration import get_client
-        from prefect.client.schemas.actions import WorkPoolCreate
+        from prefect.client.orchestration import get_client  # ty: ignore
+        from prefect.client.schemas.actions import WorkPoolCreate  # ty: ignore
 
         async def _run() -> int:
             async with get_client() as client:
@@ -245,7 +245,7 @@ def main(argv: list[str] | None = None) -> int:
         return int(asyncio.run(_run()))
 
     if args.cmd == "worker":
-        from prefect.workers.process import ProcessWorker
+        from prefect.workers.process import ProcessWorker  # ty: ignore
 
         async def _run() -> None:
             worker = ProcessWorker(
@@ -275,8 +275,8 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     if args.cmd == "prune-late":
-        from prefect.client.orchestration import get_client
-        from prefect.states import Cancelled
+        from prefect.client.orchestration import get_client  # ty: ignore
+        from prefect.states import Cancelled  # ty: ignore
 
         pool_name = str(args.pool)
         work_queue = str(args.work_queue)
@@ -319,8 +319,8 @@ def main(argv: list[str] | None = None) -> int:
         return int(asyncio.run(_run()))
 
     if args.cmd == "artifacts":
-        from prefect.client.orchestration import get_client
-        from prefect.client.schemas.filters import (
+        from prefect.client.orchestration import get_client  # ty: ignore
+        from prefect.client.schemas.filters import (  # ty: ignore
             ArtifactFilter,
             ArtifactFilterKey,
             ArtifactFilterType,

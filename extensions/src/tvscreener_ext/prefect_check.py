@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
-from prefect.client.orchestration import get_client
-from prefect.client.schemas.filters import WorkPoolFilter, WorkPoolFilterName
+from prefect.client.orchestration import get_client  # ty: ignore
+from prefect.client.schemas.filters import WorkPoolFilter, WorkPoolFilterName  # ty: ignore
 
 
 @dataclass(frozen=True, slots=True)

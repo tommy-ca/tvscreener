@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from tvscreener_ext.config import load_settings
+from tvscreener_ext.config.universe import ConfigurationError
 from tvscreener_ext.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
 from tvscreener_ext.enums import Direction
 from tvscreener_ext.models import ScanRequest
@@ -9,11 +11,102 @@ from tvscreener_ext.scoring import ScoringConfig as ScoreWeights
 from tvscreener_ext.screeners.filters import AtrFilter, RocFilter, ScoreFilter, VolumeFilter
 from tvscreener_ext.screeners.forex_opportunity import ContractType, ForexScreenerConfig
 from tvscreener_ext.screeners.forex_strategy import StrategyConfig, StrategyType
-from tvscreener_ext.utils.logic import parse_timeframe_weights
+from tvscreener_ext.utils.logic import canonicalize_asset_type, parse_timeframe_weights
 
 
 class ConfigFactory:
     """Service for pure logic mapping between ScanRequest and engine configurations."""
+
+    def normalize_request(self, request: ScanRequest) -> ScanRequest:
+        """Fill in missing parameters from settings and normalize asset types."""
+        request.assets.asset_type = canonicalize_asset_type(request.assets.asset_type)
+        settings = load_settings(request.output.config_path)
+
+        if request.assets.universe is None:
+            request.assets.universe = settings.default_universe
+
+        if request.assets.timeframes is None:
+            request.assets.timeframes = settings.default_timeframes
+        if request.assets.contract_type is None:
+            request.assets.contract_type = settings.contract_type
+
+        # Default instrument type for crypto universes
+        if (
+            request.assets.asset_type == "crypto"
+            and getattr(request.assets, "instrument_type", None) is None
+        ):
+            if request.assets.universe and "perp" in request.assets.universe:
+                request.assets.instrument_type = "perp"
+            else:
+                request.assets.instrument_type = "spot"
+
+        if request.assets.contract_type is not None:
+            valid_contracts = ("spot", "cfd", "spreadbet", "all")
+            if request.assets.contract_type not in valid_contracts:
+                raise ConfigurationError(
+                    f"Invalid contract type: {request.assets.contract_type}. Valid options: {', '.join(valid_contracts)}"
+                )
+
+        # Scoped defaults logic
+        def _resolve_val(attr: str, scanner: str) -> Any:
+            for component in [request.assets, request.scoring, request.risk, request.output]:
+                if hasattr(component, attr):
+                    req_val = getattr(component, attr)
+                    if req_val is not None:
+                        return req_val
+
+            settings_val = None
+            if scanner == "opportunity":
+                settings_val = getattr(settings.opportunity, attr, None)
+
+            if settings_val is None:
+                settings_val = getattr(settings, attr, None)
+
+            return settings_val
+
+        request.assets.min_volume = _resolve_val("min_volume", request.assets.scanner)
+        request.assets.max_atr = _resolve_val("max_atr", request.assets.scanner)
+        request.assets.min_ma_score = _resolve_val("min_ma_score", request.assets.scanner)
+
+        if request.scoring.min_confluence is None:
+            request.scoring.min_confluence = settings.min_confluence
+        if request.scoring.trend_threshold is None:
+            request.scoring.trend_threshold = settings.trend_threshold
+        if request.scoring.mr_threshold is None:
+            request.scoring.mr_threshold = settings.mr_threshold
+        if request.scoring.rsi_lower is None:
+            request.scoring.rsi_lower = settings.rsi_lower
+        if request.scoring.rsi_upper is None:
+            request.scoring.rsi_upper = settings.rsi_upper
+        if request.assets.min_roc is None:
+            request.assets.min_roc = settings.min_roc
+
+        # Opportunity weights
+        if request.scoring.opportunity_trend_weight is None:
+            request.scoring.opportunity_trend_weight = settings.opportunity.trend_weight
+        if request.scoring.opportunity_ma_weight is None:
+            request.scoring.opportunity_ma_weight = settings.opportunity.ma_weight
+        if request.scoring.opportunity_osc_weight is None:
+            request.scoring.opportunity_osc_weight = settings.opportunity.osc_weight
+        if request.scoring.opportunity_roc_weight is None:
+            request.scoring.opportunity_roc_weight = settings.opportunity.roc_weight
+        if request.scoring.opportunity_timeframe_weights is None:
+            request.scoring.opportunity_timeframe_weights = settings.opportunity.timeframe_weights
+
+        # Risk management defaults
+        if request.scoring.min_tf_alignment is None:
+            request.scoring.min_tf_alignment = settings.risk.min_tf_alignment
+
+        if request.risk.risk_per_trade_pct is None:
+            request.risk.risk_per_trade_pct = settings.risk.risk_per_trade_pct
+        if request.risk.atr_multiplier is None:
+            request.risk.atr_multiplier = settings.risk.atr_multiplier
+        if request.risk.min_risk_reward_ratio is None:
+            request.risk.min_risk_reward_ratio = settings.risk.min_risk_reward_ratio
+        if request.risk.account_balance is None:
+            request.risk.account_balance = settings.risk.account_balance
+
+        return request
 
     def build_opportunity_config(self, request: ScanRequest) -> ForexScreenerConfig:
         """Build configuration for the opportunity screener."""

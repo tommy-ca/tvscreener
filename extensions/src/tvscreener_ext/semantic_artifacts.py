@@ -38,7 +38,7 @@ def semantic_runtime() -> str:
 
     if override in {"sidemantic"}:
         try:
-            import sidemantic  # noqa: F401
+            import sidemantic  # ty: ignore # noqa: F401
 
             return "sidemantic"
         except Exception:
@@ -46,7 +46,7 @@ def semantic_runtime() -> str:
 
     # auto
     try:
-        import sidemantic  # noqa: F401
+        import sidemantic  # ty: ignore # noqa: F401
 
         return "sidemantic"
     except Exception:
@@ -348,7 +348,7 @@ def sidemantic_opportunity_grade_summary(
 
     try:
         import duckdb
-        from sidemantic import SemanticLayer, load_from_directory
+        from sidemantic import SemanticLayer, load_from_directory  # ty: ignore
     except Exception as exc:
         logger.debug("Sidemantic not available: %s", exc)
         return None
@@ -452,7 +452,7 @@ def sidemantic_opportunity_top_rows(
 
     try:
         import duckdb
-        from sidemantic import SemanticLayer, load_from_directory
+        from sidemantic import SemanticLayer, load_from_directory  # ty: ignore
     except Exception as exc:
         logger.debug("Sidemantic not available: %s", exc)
         return None
@@ -570,7 +570,7 @@ def sidemantic_opportunity_health(*, data_params_hash: str) -> dict[str, Any] | 
 
     try:
         import duckdb
-        from sidemantic import SemanticLayer, load_from_directory
+        from sidemantic import SemanticLayer, load_from_directory  # ty: ignore
     except Exception as exc:
         logger.debug("Sidemantic not available: %s", exc)
         return None

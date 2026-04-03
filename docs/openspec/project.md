@@ -26,12 +26,12 @@ to support replayable pipelines, auditable signals, and fast edge analytics.
    - **Analytics pipelines** (`pipeline_mode=analytics`) do reporting: read Iceberg and write artifacts.
 
 ## Terminology
-Canonical terminology and deterministic naming rules live in:
-- `docs/openspec/changes/update-terminology-and-interfaces/specs/terminology/spec.md`
+Canonical terminology and deterministic naming rules are preserved in:
+- `docs/archive/openspec/changes/update-terminology-and-interfaces/specs/terminology/spec.md`
 
 ## Orchestration
-Composable Prefect stage tasks live in:
-- `docs/openspec/changes/refactor-prefect-composable-flows/specs/prefect-composition/spec.md`
+Composable Prefect stage tasks are defined in:
+- `docs/archive/openspec/changes/refactor-prefect-composable-flows/specs/prefect-composition/spec.md`
 
 ## Packaging direction
 - `tvscreener` is the upstream core library + CLI.

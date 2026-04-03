@@ -8,9 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from prefect.runner import Runner
-from prefect.schedules import Cron
-from prefect.types.entrypoint import EntrypointType
+from prefect.runner import Runner  # ty: ignore
+from prefect.schedules import Cron  # ty: ignore
+from prefect.types.entrypoint import EntrypointType  # ty: ignore
 
 from tvscreener_ext.upstream import ensure_upstream_tvscreener
 

@@ -5,10 +5,18 @@ from typing import Any, cast
 from . import runner as pipeline_runner
 from .enums import Direction
 from .lakehouse import LakehouseManager, get_manager
+from .models import (
+    AssetSelection,
+    OutputConfig,
+    RiskConfig,
+    ScanRequest,
+    ScoringConfig,
+)
 from .orchestrator import ScreenerController
 from .prefect import run_batch as prefect_runner
 from .runner import LocalRunner, PipelineRunSpec
-from .scoring import ScoringConfig, ScoringEngine
+from .scoring import ScoringConfig as ScoringWeights
+from .scoring import ScoringEngine
 from .upstream import ensure_upstream_tvscreener
 
 # --- Monkeypatch tvscreener for test compatibility ---
@@ -51,9 +59,7 @@ def _patch_field():
     def __ne__(self, other):
         types = tuple(filter(None, [Field, FieldWithInterval, FieldWithHistory]))
         if isinstance(other, types):
-            return self is not other and getattr(self, "field_name", str(self)) != getattr(
-                other, "field_name", str(other)
-            )
+            return not (self == other)
         return FieldCondition(self, FilterOperator.NOT_EQUAL, other)
 
     def between(self, min_val, max_val):
@@ -201,13 +207,18 @@ _patch_get()
 _patch_range()
 
 __all__ = [
+    "AssetSelection",
+    "OutputConfig",
+    "RiskConfig",
+    "ScanRequest",
+    "ScoringConfig",
+    "ScoringWeights",
     "Direction",
     "LakehouseManager",
     "get_manager",
     "ScreenerController",
     "LocalRunner",
     "PipelineRunSpec",
-    "ScoringConfig",
     "ScoringEngine",
     "ensure_upstream_tvscreener",
     "pipeline_runner",

@@ -3,13 +3,13 @@ import logging
 import pandas as pd
 import yaml
 
-from tvscreener_ext.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
-from tvscreener_ext.orchestrator import (
+from tvscreener_ext import (
     AssetSelection,
     ScanRequest,
     ScoringConfig,
     ScreenerController,
 )
+from tvscreener_ext.constants.forex import DEFAULT_TIMEFRAME_WEIGHTS
 from tvscreener_ext.screeners.export_helpers import export_to_csv, export_to_json
 
 

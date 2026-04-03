@@ -1498,6 +1498,20 @@ Next Steps:
 - Merge `feat/forex-strategy-scanner` into `main`.
 - Initialize `v0.2.0-roadmap` branch for Strategy Layering work.
 
+## 2026-04-03: Documentation Archival & Orchestrator Hardening
+
+Goal: Perform final repository cleanup by archiving legacy documents and completing the orchestrator service extraction.
+
+Outcomes:
+- **Documentation Archival**: Moved all historical brainstorms, old plans, reviews, and validation logs to `docs/archive/`. This declutters the active documentation tree while preserving full audit history.
+- **Orchestrator Hardening**: 
+    - Completed the extraction of request normalization and default resolution logic into `ConfigFactory.normalize_request()`.
+    - Removed `run_from_args` and other dead code paths from `ScreenerController`.
+    - Verified that `ScreenerController` is now a pure, lean facade for the underlying specialized services.
+- **Bug Fix**: Identified and resolved a critical monkeypatch bug in `Field.__ne__` that was causing incorrect boolean results for Enum comparisons.
+
+Status: **Cleanup Cycle Complete**. The repository is in a pristine, architecturally sound state.
+
 
 
 
