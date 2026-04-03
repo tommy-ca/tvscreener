@@ -1460,6 +1460,23 @@ Completed Tasks Collection:
 
 Status: **Branch Shippable**. All validation runsets (Forex, Crypto, Stock) are passing with 100% success across 335+ unit tests and Prefect multi-stage flows.
 
+## 2026-04-03: Final Hardening & Cleanup Collection
+
+Goal: Perform final documentation and repository hardening to ensure long-term stability and clarity.
+
+Completed Hardening Tasks:
+- **Unified Discovery Contract**: Formalized the requirement for `run_result.json` in `docs/openspec/project.md` as a mandatory output for all execution modes.
+- **Gitignore Resilience**: Converted root-level ignores to absolute paths to prevent accidental shadowing of documentation or package subdirectories.
+- **Legacy Documentation Audit**: Bulk-marked all historical brainstorms, plans, and reviews as `LEGACY` to maintain a clean authoritative specification set.
+- **Zero-Fork Mandate**: Codified the mandatory import audit as a verification standard to prevent regression into local library shadowing.
+- **Clean Workspace**: Executed a final deep purge of all temporary shims, artifacts, and local state.
+
+Status: **Architecture Hardened & Verified**. The repository is now a high-fidelity, service-oriented extension distribution.
+
+Next Steps:
+- Merge `feat/forex-strategy-scanner` into `main`.
+- Initialize `v0.2.0-roadmap` branch for Strategy Layering work.
+
 ## 2026-04-03: Rescheduled Tasks & Future Roadmap
 
 The following architectural goals and feature expansions have been rescheduled for the next development cycle (v0.2.0+):

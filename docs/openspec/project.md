@@ -56,7 +56,9 @@ Packaging reality check:
   - **Unit Tests:** `uv run python -m pytest tests/` (verified against site-packages).
   - **Orchestration:** `uv run --project extensions tvscreener-ext-validate --runner prefect` (requires Prefect server + worker).
   - **Prefect Table Artifacts:** Prefect runs SHOULD publish table artifacts for key outputs (Opportunities/Signals) to enable in-browser data review. This is controlled via the `TVSCREENER_PUBLISH_TABLE_ARTIFACTS=1` environment variable.
+  - **Unified Run Result Contract:** Every execution mode (Local, Prefect, or other) MUST produce a standardized `run_result.json` in the artifact directory. This file serves as the definitive, machine-discoverable record of the run's parameters, outcome, and artifact paths.
   - **Import Audit:** `uv run --project extensions python extensions/tools/check_upstream_tvscreener_resolution.py`.
+  - **Zero-Fork Verification:** The project MUST pass the import audit to ensure it is running against the external `site-packages` distribution and not a local source tree.
   - **Pure Upstream:** `git diff v0.2.1 -- tvscreener/` MUST be empty or only contain non-logic files.
 - **Testing & Mocking:**
   - **Extension Imports:** Test modules relying on extension patches MUST explicitly import the extension module (`import tvscreener_ext`), ensuring mock validations override external boundaries.
