@@ -79,6 +79,11 @@ Packaging reality check:
 - **Refactoring Candidates**: Large modules (e.g. `orchestrator.py` > 50KB) should be periodically evaluated for decomposition following SOLID principles.
 - **Documentation Parity**: Design documents and specifications must be updated to remove references to deleted legacy components or defunct paths.
 
+## Gemini CLI Skills
+- **Automation**: Common workflows (scanning, auditing, maintenance) SHOULD be automated via specialized Gemini CLI Skills.
+- **Discovery**: Skills should be discoverable via keywords like "scan", "audit", "prefect", or "lakehouse".
+- **Implementation**: Skills are defined in `docs/brainstorms/2026-04-03-gemini-cli-skills-brainstorm.md` and should be implemented as `SKILL.md` files in the repository.
+
 ## Technical Debt & Refactoring (Audited 2026-04-01)
 - **Service Decomposition**: The monolithic `ScreenerController` is being refactored into specialized services defined in `docs/architecture/SERVICES.md`.
 - **Monolithic Controller**: `ScreenerController` in `orchestrator.py` (~1.6k LOC) MUST be decomposed into specialized services to satisfy SRP and improve testability:

@@ -1512,6 +1512,25 @@ Outcomes:
 
 Status: **Cleanup Cycle Complete**. The repository is in a pristine, architecturally sound state.
 
+## 2026-04-03: Gemini CLI Skills Brainstorming & Rescheduling
+
+Goal: Define a plan for automating common workflows via Gemini CLI Skills and reschedule future architectural goals.
+
+Outcomes:
+- **Skills Brainstorm**: Created `docs/brainstorms/2026-04-03-gemini-cli-skills-brainstorm.md` identifying 5 key skills:
+    - `market-scanner`: Guided scan configuration and execution.
+    - `lakehouse-auditor`: Lakehouse inspection and natural language SQL.
+    - `workflow-manager`: Prefect orchestration and queue management.
+    - `strategy-developer`: Scaffolding for new technical indicators.
+    - `environment-validator`: Zero-fork and environment health checks.
+- **Spec Update**: Added a "Gemini CLI Skills" section to `docs/openspec/project.md`.
+- **Rescheduled Tasks**: Confirmed that Strategy Layering (ICT/SMC, Volume Profile) and Logical Tiered Namespaces are moved to the v0.2.0 roadmap.
+
+Next Steps:
+- Merge `feat/forex-strategy-scanner` into `main`.
+- Implement the `environment-validator` skill as a pilot.
+- Begin ICT/SMC research for the v0.2.0 cycle.
+
 
 
 
