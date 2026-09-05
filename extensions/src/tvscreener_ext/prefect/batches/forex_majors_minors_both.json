@@ -1,0 +1,15 @@
+{
+  "batch_id": "forex-majors-minors-both",
+  "defaults": {
+    "asset_type": "forex",
+    "scanner_family": "opportunity",
+    "pipeline_mode": "both",
+    "timeframes": ["15", "60", "240"],
+    "matrix": true,
+    "limit": 50
+  },
+  "runs": [
+    { "universe": "majors" },
+    { "universe": "minors" }
+  ]
+}

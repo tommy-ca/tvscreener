@@ -1,0 +1,13 @@
+MARKET_RISK_PROXY_TICKERS = [
+    "AMEX:SPY",
+    "NASDAQ:QQQ",
+    "TVC:VIX",
+    "TVC:DXY",
+]
+
+
+MARKET_RISK_FUTURES_TICKERS = [
+    "CME_MINI:ES1!",
+    "CME_MINI:NQ1!",
+    "CBOE:VX1!",
+]

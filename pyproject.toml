@@ -1,59 +1,45 @@
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+[tool.uv]
+managed = true
+package = false
 
-[project]
-name = "tvscreener"
-version = "0.2.0"
-description = "TradingView Screener API"
-readme = "README.md"
-authors = [
-    { name = "DeepEntropy" }
-]
-license = "MIT"
-requires-python = ">=3.10"
-keywords = ["finance", "tradingview", "technical-analysis"]
-dependencies = [
-    "pandas>=1.3.0",
-    "requests>=2.27.1"
-]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Financial and Insurance Industry",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Operating System :: OS Independent",
-    "Topic :: Office/Business :: Financial",
-    "Topic :: Software Development :: Libraries :: Python Modules"
-]
+[tool.uv.workspace]
+members = ["extensions"]
 
-[project.urls]
-Homepage = "https://github.com/deepentropy/tvscreener"
-Repository = "https://github.com/deepentropy/tvscreener"
-Documentation = "https://github.com/deepentropy/tvscreener"
-"Bug Tracker" = "https://github.com/deepentropy/tvscreener/issues"
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+exclude = [".dev", "docs/notebooks"]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "build>=1.0.0",
-    "twine>=4.0.0"
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "B",
+    "C4",
+    "UP",
+    "SIM",
 ]
-mcp = [
-    "mcp[cli]>=1.0.0",
-    "tabulate>=0.9.0"
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tvscreener_ext"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["tests/repro"]
+markers = [
+    "slow: long-running functional tests",
 ]
 
-[project.scripts]
-tvscreener-mcp = "tvscreener.mcp:run"
-
-[tool.setuptools.packages.find]
-include = ["tvscreener*"]
-exclude = ["notebooks", "scripts", "tests"]
-
-[tool.setuptools.package-data]
-tvscreener = ["py.typed"]
+[tool.ty.src]
+include = [
+    "extensions/src",
+    "tests",
+]

@@ -1,0 +1,13 @@
+[
+  {
+    "scanner": "opportunity",
+    "pipeline": "both",
+    "asset_type": "crypto",
+    "instrument_type": "perp",
+    "universe": "binance_perp_top100",
+    "timeframes": "240,60,15",
+    "min_quote_volume_usd": 10000000,
+    "min_volatility_24h_pct": 3.0,
+    "matrix": true
+  }
+]

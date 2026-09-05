@@ -1,0 +1,11 @@
+{
+  "batch_id": "forex-majors-data",
+  "defaults": {
+    "asset_type": "forex",
+    "scanner_family": "opportunity",
+    "pipeline_mode": "data",
+    "timeframes": ["15", "60", "240"],
+    "matrix": false
+  },
+  "runs": [{ "universe": "majors" }]
+}

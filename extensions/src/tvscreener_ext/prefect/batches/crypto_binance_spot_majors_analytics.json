@@ -1,0 +1,13 @@
+{
+  "batch_id": "crypto-binance-spot-majors-analytics",
+  "defaults": {
+    "asset_type": "crypto",
+    "scanner_family": "opportunity",
+    "pipeline_mode": "analytics",
+    "timeframes": ["15", "60", "240"],
+    "matrix": true,
+    "limit": 50,
+    "instrument_type": "spot"
+  },
+  "runs": [{ "universe": "majors" }]
+}

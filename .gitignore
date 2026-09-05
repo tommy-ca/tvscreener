@@ -1,9 +1,17 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-.tmp/
-.claude/
+# Core library (pure upstream, do not fork)
+/tvscreener/
+
+# Data exports
+/exports/
+/artifacts/
+/.env
+/.prefect-home/
+/.prefect-home.bak*/
+/.tvscreener/
+*.parquet
+*.meta.json
+/.tmp/
+/.claude/
 nul
 # C extensions
 *.so
@@ -18,6 +26,12 @@ eggs/
 .eggs/
 lib/
 lib64/
+!/tvscreener/lib/
+!/tvscreener/lib/**
+# Ensure bytecode is never tracked, even in whitelisted directories
+**/__pycache__/
+**/*.py[cod]
+*$py.class
 parts/
 sdist/
 var/
@@ -52,6 +66,11 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 cover/
+
+# Extensions (standalone uv project)
+extensions/.venv/
+extensions/uv.lock
+extensions/src/**/*.egg-info/
 
 # Translations
 *.mo
@@ -122,8 +141,8 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
-.venv
+/.env
+/.venv
 env/
 venv/
 ENV/
@@ -145,6 +164,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# ruff
+/.ruff_cache/
+
 # Pyre type checker
 .pyre/
 
@@ -161,3 +183,14 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 /ignore
+
+# Debug scripts
+debug*.py
+
+# Ad-hoc root-level scratch test files (real tests live in tests/)
+/test_*.py
+/test_*.xml*
+/test_*.json
+
+# Accidental test artifacts
+/MagicMock/

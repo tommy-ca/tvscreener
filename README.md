@@ -5,35 +5,53 @@
 
 -----------------
 
-# TradingView™ Screener API: simple Python library to retrieve data from TradingView™ Screener
+# TradingView™ Screener API: Extensions & Workflows
 
-[![PyPI version](https://badge.fury.io/py/tvscreener.svg)](https://badge.fury.io/py/tvscreener)
-[![Downloads](https://pepy.tech/badge/tvscreener)](https://pepy.tech/project/tvscreener)
-[![Coverage](https://codecov.io/github/deepentropy/tvscreener/coverage.svg?branch=main)](https://codecov.io/gh/deepentropy/tvscreener)
+This repository provides advanced orchestration, edge analytics, and lakehouse integration for the [tvscreener](https://github.com/deepentropy/tvscreener) library. It is designed as an **Extensions Distribution** that adheres to a strict Zero-Fork policy, relying exclusively on the installed upstream package.
 
-## 🚀 Try the Code Generator
+-----------------
 
-**Build screener queries visually and get Python code instantly!**
+## 🧩 Extensions (tvscreener-ext)
 
-[![Code Generator](https://img.shields.io/badge/Try%20it-Code%20Generator-2962ff?style=for-the-badge&logo=python&logoColor=white)](https://deepentropy.github.io/tvscreener/)
+The `tvscreener-ext` package adds professional-grade workflows to the core library:
 
-The Code Generator lets you:
-- Select from 6 screener types (Stock, Crypto, Forex, Bond, Futures, Coin)
-- Build filters visually with 13,000+ fields
-- Generate ready-to-use Python code
-- Copy and run in your environment
+- **Service-Oriented Architecture**: Modular components for universe resolution, configuration, and export.
+- **Medallion Lakehouse**: Local Apache Iceberg storage for structured market data.
+- **Edge Analytics**: High-performance DuckDB queries on local datasets.
+- **Workflow Orchestration**: Support for Local and Prefect-based execution of complex scan batches.
+
+### Installation
+
+```bash
+# Install core library
+pip install tvscreener
+
+# Install extensions (from this repo)
+pip install ./extensions
+```
+
+### CLI Usage
+
+The extensions package provides the `tvscreener-ext-scan` command for advanced screening:
+
+```bash
+# Run a strategy scan locally
+tvscreener-ext-scan scan --runner local --asset-type forex --universe majors --matrix
+
+# Run a batch scan via Prefect
+tvscreener-ext-scan scan --runner prefect --asset-type crypto --universe binance_spot_top100
+```
+
+For more details, see the **[Extensions Guide](docs/guide/extensions.md)**.
 
 ---
 
-![tradingview-screener.png](https://raw.githubusercontent.com/deepentropy/tvscreener/main/.github/img/tradingview-screener.png)
+# Core Library (tvscreener)
 
-Get the results as a Pandas Dataframe
+The underlying core library provides a simple Python interface to retrieve data from TradingView™ Screener.
 
-![dataframe.png](https://github.com/deepentropy/tvscreener/blob/main/.github/img/dataframe.png?raw=true)
-
-## Disclaimer
-
-**This is an unofficial, third-party library and is not affiliated with, endorsed by, or connected to TradingView™ in any way.** TradingView™ is a trademark of TradingView™, Inc. This independent project provides a Python interface to publicly available data from TradingView's screener. Use of this library is at your own risk and subject to TradingView's terms of service.
+[![PyPI version](https://badge.fury.io/py/tvscreener.svg)](https://badge.fury.io/py/tvscreener)
+... (rest of the core library documentation) ...
 
 # What's New in v0.2.0
 
@@ -57,6 +75,9 @@ claude mcp add tvscreener -- tvscreener-mcp
 - `custom_query` - Flexible queries with any fields and filters
 - `search_stocks` / `search_crypto` / `search_forex` - Simplified screeners
 - `get_top_movers` - Get top gainers/losers
+- `scanner_opportunities` - High-confluence opportunity scanner across multiple timeframes
+- `scanner_strategies` - Strategy-specific scanner (Trend, Mean Reversion, etc.)
+- `config_save` / `config_load` - Save and load scanner configurations
 
 ---
 
@@ -336,6 +357,10 @@ for df in ss.stream(interval=30, max_iterations=10):
 - `interval`: Refresh interval in seconds (minimum 1.0 to avoid rate limiting)
 - `max_iterations`: Maximum number of refreshes (None = infinite)
 - `on_update`: Optional callback function called with each DataFrame
+
+## Lakehouse Audit Flow
+
+The lakehouse audit plan ensures `tvscreener.gold` is treated as the canonical signal table and that audits run **directly against Iceberg** (Bronze/Silver/Gold). Optional on-disk snapshots are debugging artifacts only and are written only when you provide an explicit `--output ./snapshots/...` path. Follow `docs/plans/2026-03-03-fix-lakehouse-audit-flow-plan.md` alongside `docs/audit/lakehouse-audit-flow.md` for the scan replay and SQL audit steps needed to prove the matrix view matches the lakehouse data.
 
 ## Documentation
 

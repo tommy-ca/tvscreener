@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tvscreener-ext"
+version = "0.1.0"
+description = "Extensions (workflows, orchestration) for tvscreener"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "tvscreener>=0.2.1",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.0.0",
+  "pyyaml>=6.0.0",
+  "python-dotenv>=1.0.0",
+  "pandas>=2.2.0",
+  "numpy>=1.26.0",
+  "narwhals>=1.27.0",
+  "pandera>=0.20.0",
+  "pyarrow>=23.0.1",
+  "duckdb>=1.4.4",
+  "minijinja>=2.16.0",
+  "pyiceberg[sql-sqlite,pyarrow]>=0.7.0",
+  "rich>=13.0.0",
+  "pytest>=9.0.2",
+  "pytest-cov>=7.0.0",
+]
+
+[project.optional-dependencies]
+prefect = [
+  "prefect[docker]>=3.0.0",
+]
+
+semantic = [
+  # NOTE: sidemantic is AGPL-3.0; keep optional.
+  "sidemantic>=0.8.2; python_version >= '3.11'",
+  "textual>=0.89.1; python_version >= '3.11'",
+  "textual-plotext>=1.0.1; python_version >= '3.11'",
+]
+
+cli = [
+  # Included in base deps; retained for compatibility.
+  "rich>=13.0.0",
+]
+
+[project.scripts]
+tvscreener-ext-scan = "tvscreener_ext.scan:main"
+tvscreener-prefectctl = "tvscreener_ext.prefectctl:main"
+tvscreener-deploy-schedules = "tvscreener_ext.deploy_schedules:main"
+tvscreener-ext-validate = "tvscreener_ext.validate:main"
+tvscreener-ext-audit = "tvscreener_ext.audit:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["tvscreener_ext*"]
+
+[tool.setuptools.package-data]
+tvscreener_ext = ["py.typed", "prefect/batches/*.json"]
